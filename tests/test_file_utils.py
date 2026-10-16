@@ -1,11 +1,14 @@
 """Tests for file_utils operations."""
 
 import os
+import sys
 import shutil
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+
 
 from drift.core.constants import set_test_mode
 from drift.utils.path_utils import (
@@ -20,11 +23,13 @@ from drift.utils.file_inspect import (
     tree_files,
     file_hash,
     contents_differ,
-    find_symlink_ancestor,
     is_concrete_dir,
     is_internal_lock_file,
-    is_diff_candidate,
+    check_is_trackable,
+    check_can_symlink,
 )
+
+CAN_SYMLINK = check_can_symlink()
 from drift.utils.file_ops import (
     prune_empty_parents,
     remove_with_parents,
@@ -94,24 +99,26 @@ class TestFileUtils(unittest.TestCase):
         real_dir.mkdir()
         real_file = self.root / "real_file.txt"
         real_file.write_text("hello")
-
-        dir_symlink = self.root / "dir_symlink"
-        dir_symlink.symlink_to(real_dir)
-        file_symlink = self.root / "file_symlink"
-        file_symlink.symlink_to(real_file)
-        broken_symlink = self.root / "broken_symlink"
-        broken_symlink.symlink_to(self.root / "nonexistent")
         missing_path = self.root / "does_not_exist"
 
         self.assertTrue(is_concrete_dir(real_dir))
         self.assertFalse(is_concrete_dir(real_file))
-        self.assertFalse(is_concrete_dir(dir_symlink))
-        self.assertFalse(is_concrete_dir(file_symlink))
-        self.assertFalse(is_concrete_dir(broken_symlink))
         self.assertFalse(is_concrete_dir(missing_path))
 
-    def test_is_diff_candidate(self) -> None:
-        """Verifies is_diff_candidate filters out concrete directories, temp files, and internal lockfiles."""
+        if CAN_SYMLINK:
+            dir_symlink = self.root / "dir_symlink"
+            dir_symlink.symlink_to(real_dir)
+            file_symlink = self.root / "file_symlink"
+            file_symlink.symlink_to(real_file)
+            broken_symlink = self.root / "broken_symlink"
+            broken_symlink.symlink_to(self.root / "nonexistent")
+
+            self.assertFalse(is_concrete_dir(dir_symlink))
+            self.assertFalse(is_concrete_dir(file_symlink))
+            self.assertFalse(is_concrete_dir(broken_symlink))
+
+    def test_check_is_trackable(self) -> None:
+        """Verifies check_is_trackable filters out concrete directories, temp files, and internal lockfiles."""
         sub_dir = self.root / "sub_dir"
         sub_dir.mkdir()
         valid_file = sub_dir / "valid.txt"
@@ -133,32 +140,32 @@ class TestFileUtils(unittest.TestCase):
         pkg_toml_file = internal_drift_dir / "drift_package.toml"
         pkg_toml_file.write_text("[package]\nname = 'test'\n")
 
-        symlink_to_file = sub_dir / "link_to_file"
-        symlink_to_file.symlink_to(valid_file)
-        symlink_to_dir = sub_dir / "link_to_dir"
-        symlink_to_dir.symlink_to(self.root)
-
         # 1. Direct path checks
-        self.assertTrue(is_diff_candidate(valid_file))
-        self.assertTrue(is_diff_candidate(symlink_to_file))
-        self.assertTrue(is_diff_candidate(symlink_to_dir))          # symlinks are inspectable candidates
-        self.assertFalse(is_diff_candidate(sub_dir))                # concrete directory rejected
-        self.assertFalse(is_diff_candidate(temp_file))              # editor/OS temp file rejected
+        self.assertTrue(check_is_trackable(valid_file))
+        if CAN_SYMLINK:
+            symlink_to_file = sub_dir / "link_to_file"
+            symlink_to_file.symlink_to(valid_file)
+            symlink_to_dir = sub_dir / "link_to_dir"
+            symlink_to_dir.symlink_to(self.root)
+            self.assertTrue(check_is_trackable(symlink_to_file))
+            self.assertTrue(check_is_trackable(symlink_to_dir))          # symlinks are inspectable candidates
+        self.assertFalse(check_is_trackable(sub_dir))                # concrete directory rejected
+        self.assertFalse(check_is_trackable(temp_file))              # editor/OS temp file rejected
 
         # Internal lockfile rejected, but user lockfile and control plane configs accepted
         self.assertTrue(is_internal_lock_file(internal_lock_file))
-        self.assertFalse(is_diff_candidate(internal_lock_file))     # internal lockfile in .drift/ rejected
+        self.assertFalse(check_is_trackable(internal_lock_file))     # internal lockfile in .drift/ rejected
         self.assertFalse(is_internal_lock_file(user_lock_file))
-        self.assertTrue(is_diff_candidate(user_lock_file))          # user file named render_lock.json outside .drift/ accepted
+        self.assertTrue(check_is_trackable(user_lock_file))          # user file named render_lock.json outside .drift/ accepted
         self.assertFalse(is_internal_lock_file(pkg_toml_file))
-        self.assertTrue(is_diff_candidate(pkg_toml_file))           # drift_package.toml in .drift/ accepted
+        self.assertTrue(check_is_trackable(pkg_toml_file))           # drift_package.toml in .drift/ accepted
 
         # 2. Checks with base_dir resolution
-        self.assertTrue(is_diff_candidate(Path("sub_dir/valid.txt"), base_dir=self.root))
-        self.assertFalse(is_diff_candidate(Path("sub_dir"), base_dir=self.root))
-        self.assertFalse(is_diff_candidate(Path("sub_dir/.DS_Store"), base_dir=self.root))
-        self.assertFalse(is_diff_candidate(Path("sub_dir/.drift/render_lock.json"), base_dir=self.root))
-        self.assertTrue(is_diff_candidate(Path("sub_dir/render_lock.json"), base_dir=self.root))
+        self.assertTrue(check_is_trackable(Path("sub_dir/valid.txt"), base_dir=self.root))
+        self.assertFalse(check_is_trackable(Path("sub_dir"), base_dir=self.root))
+        self.assertFalse(check_is_trackable(Path("sub_dir/.DS_Store"), base_dir=self.root))
+        self.assertFalse(check_is_trackable(Path("sub_dir/.drift/render_lock.json"), base_dir=self.root))
+        self.assertTrue(check_is_trackable(Path("sub_dir/render_lock.json"), base_dir=self.root))
 
     def test_translate_dot_prefixes(self) -> None:
         """Verifies encode_dot_prefix converts 'dot-' to leading '.', skips 'dot-'/'dot-.',
@@ -286,45 +293,6 @@ class TestFileUtils(unittest.TestCase):
         # nested "a/b/c" and "a/b" and "a" should be cleaned up
         self.assertFalse((self.root / "a").exists())
 
-    def test_get_symlinked_parent(self) -> None:
-        drift_root = self.root / "drift"
-        drift_root.mkdir()
-        src_dir = drift_root / "src_pkg"
-        src_dir.mkdir()
-        (src_dir / "file.txt").touch()
-
-        # Symlink target range is drift_root
-        target_dir = self.root / "target_dir"
-        target_dir.mkdir()
-        symlink_dir = target_dir / "nested_app"
-        
-        # Link nested_app -> drift/src_pkg
-        symlink_dir.symlink_to(src_dir)
-
-        # File is nested_app/file.txt
-        file_path = symlink_dir / "file.txt"
-
-        parent_symlink = find_symlink_ancestor(file_path, drift_root)
-        self.assertEqual(parent_symlink, symlink_dir)
-
-        # 1. file_path itself is a symlink pointing into link_target_range -> returns file_path
-        file_symlink = target_dir / "direct_symlink"
-        file_symlink.symlink_to(src_dir / "file.txt")
-        self.assertEqual(find_symlink_ancestor(file_symlink, drift_root), file_symlink)
-
-        # 2. No symlinked parent -> returns None
-        normal_file = target_dir / "normal_file.txt"
-        normal_file.touch()
-        self.assertIsNone(find_symlink_ancestor(normal_file, drift_root))
-
-        # 3. Parent is a symlink pointing OUTSIDE of link_target_range -> returns None
-        external_dir = self.root / "external_dir"
-        external_dir.mkdir()
-        external_symlink = target_dir / "external_symlink"
-        external_symlink.symlink_to(external_dir)
-        nested_file_external = external_symlink / "some_file.txt"
-        self.assertIsNone(find_symlink_ancestor(nested_file_external, drift_root))
-
     def test_delete_one_file(self) -> None:
         file_path = self.root / "a" / "b" / "file.txt"
         file_path.parent.mkdir(parents=True)
@@ -352,12 +320,14 @@ class TestFileUtils(unittest.TestCase):
         ensure_dir(path, sudo=False)
         self.assertTrue(path.is_dir())
 
+    @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
     def test_ensure_dir_with_sudo(self, mock_run) -> None:
         path = self.root / "sudo_dir"
         ensure_dir(path, sudo=True)
         mock_run.assert_called_once_with(["sudo", "mkdir", "-p", str(path)], check=True, capture_output=True)
 
+    @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
     def test_remove_tree_file_or_dir_with_sudo(self, mock_run) -> None:
         path = self.root / "file_to_remove"
@@ -365,6 +335,7 @@ class TestFileUtils(unittest.TestCase):
         remove_tree(path, sudo=True)
         mock_run.assert_called_once_with(["sudo", "rm", "-f", str(path)], check=True, capture_output=True)
 
+    @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
     def test_create_symlink_manually_with_sudo(self, mock_run) -> None:
         src = self.root / "src_file"
@@ -373,6 +344,7 @@ class TestFileUtils(unittest.TestCase):
         # Verify run was called with sudo ln -s
         mock_run.assert_any_call(["sudo", "ln", "-s", str(src), str(dst)], check=True, capture_output=True)
 
+    @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
     def test_atomic_copy_file_with_sudo(self, mock_run) -> None:
         src = self.root / "src_file"
@@ -394,6 +366,7 @@ class TestFileUtils(unittest.TestCase):
         copy_file(src, dst, sudo=True)
         mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(dst)], check=True, capture_output=True)
 
+    @unittest.skipIf(sys.platform == "win32", "External cp/mv commands are POSIX-only")
     @patch("subprocess.run")
     def test_copy_or_move_file_or_dir_external(self, mock_run) -> None:
         src = self.root / "src_file"
@@ -444,6 +417,7 @@ class TestFileUtils(unittest.TestCase):
             self.assertFalse(dst_copy.exists())
             mock_run.assert_not_called()
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlink creation requires elevated privileges on Windows")
     def test_copy_symlink(self) -> None:
         # 1. Broken symlink
         src = self.root / "broken_link"
@@ -488,13 +462,22 @@ class TestFileUtils(unittest.TestCase):
                 self.assertEqual(expand_path("%CUSTOM_APP_PATH%/sub"), Path("/custom/path/sub"))
                 self.assertEqual(expand_path("%USERPROFILE%/config"), Path("/custom/user/config"))
 
-            # Test Windows %VAR% expansion with fallback dictionary (when not in os.environ)
-            with patch.dict(os.environ, {}, clear=True):
+            # Test Windows %VAR% expansion with fallback dictionary (when APPDATA/LOCALAPPDATA not in os.environ)
+            with patch.dict(os.environ, {"USERPROFILE": str(home), "HOME": str(home)}, clear=True):
                 res_appdata = expand_path("%APPDATA%/myapp")
                 self.assertEqual(res_appdata, home / "AppData" / "Roaming" / "myapp")
 
                 res_localappdata = expand_path("%LOCALAPPDATA%/myapp")
                 self.assertEqual(res_localappdata, home / "AppData" / "Local" / "myapp")
+
+            # Test that expand_path raises RuntimeError when Path.home() fails
+            with patch.dict(os.environ, {}, clear=True), patch(
+                "pathlib.Path.home", side_effect=RuntimeError("Could not determine home directory.")
+            ):
+                with self.assertRaises(RuntimeError):
+                    expand_path("~/my_config")
+                with self.assertRaises(RuntimeError):
+                    expand_path("%APPDATA%/myapp")
 
         # 4. Test non-Windows platform preserves %VAR% literally
         with patch("sys.platform", "linux"):
@@ -509,7 +492,7 @@ class TestFileUtils(unittest.TestCase):
         from drift.utils.process_utils import has_admin_privileges, run_command
 
         # Linux non-root
-        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000, create=True):
             self.assertFalse(has_admin_privileges())
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
@@ -517,7 +500,7 @@ class TestFileUtils(unittest.TestCase):
                 mock_run.assert_called_with(["sudo", "echo", "hello"], check=True, capture_output=True)
 
         # Linux root
-        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=0):
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=0, create=True):
             self.assertTrue(has_admin_privileges())
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
@@ -528,17 +511,17 @@ class TestFileUtils(unittest.TestCase):
         from drift.utils.process_utils import assert_can_escalate
 
         # Linux root
-        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=0):
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=0, create=True):
             assert_can_escalate()
 
         # Linux non-root success
-        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000, create=True):
             with patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
                 assert_can_escalate()
                 mock_run.assert_called_with(["sudo", "-v"], check=False)
 
         # Linux non-root failure
-        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000, create=True):
             with patch("subprocess.run", return_value=MagicMock(returncode=1)):
                 with self.assertRaises(PermissionError):
                     assert_can_escalate()
@@ -590,7 +573,8 @@ class TestFileUtils(unittest.TestCase):
 
         self.assertTrue(target_file.is_file())
         self.assertEqual(target_file.read_text(encoding="utf-8"), "text content")
-        self.assertTrue(bool(target_file.stat().st_mode & 0o111))
+        if sys.platform != "win32":
+            self.assertTrue(bool(target_file.stat().st_mode & 0o111))
 
     def test_atomic_copy_file_with_sudo_crlf_translation(self) -> None:
         from drift.utils.file_ops import copy_file
@@ -688,12 +672,13 @@ class TestFileUtils(unittest.TestCase):
         self.assertEqual(dst_lf.read_bytes(), b"line1\nline2\n")
 
         # 4. Copy symlink without following
-        symlink_src = self.root / "sym_src.txt"
-        symlink_src.symlink_to(src)
-        dst_sym = self.root / "dest_dir" / "dest_sym.txt"
-        copy_file(symlink_src, dst_sym, follow_symlinks=False)
-        self.assertTrue(dst_sym.is_symlink())
-        self.assertEqual(os.readlink(dst_sym), str(src))
+        if CAN_SYMLINK:
+            symlink_src = self.root / "sym_src.txt"
+            symlink_src.symlink_to(src)
+            dst_sym = self.root / "dest_dir" / "dest_sym.txt"
+            copy_file(symlink_src, dst_sym, follow_symlinks=False)
+            self.assertTrue(dst_sym.is_symlink())
+            self.assertEqual(os.readlink(dst_sym), str(src))
 
     def test_file_permissions_differ_and_mode_only(self) -> None:
         import sys
@@ -735,8 +720,9 @@ class TestFileUtils(unittest.TestCase):
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm: 
-                run_command([sys.executable, "-c", "import sys; sys.stdout.write('hello out\\n'); sys.stderr.write('hello err\\n')"])
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+                with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm: 
+                    run_command([sys.executable, "-c", "import sys; sys.stdout.write('hello out\\n'); sys.stderr.write('hello err\\n')"])
 
             logs = "\n".join(cm.output)
             self.assertIn("[External] ", logs)
@@ -803,12 +789,13 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(canary.is_file())
 
         # 4. copy_symlink to existing directory dst raises IsADirectoryError
-        sym_src = self.root / "sample_symlink"
-        sym_src.symlink_to(src_file)
-        with self.assertRaises(IsADirectoryError):
-            copy_symlink(sym_src, dst_dir)
-        self.assertTrue(dst_dir.is_dir())
-        self.assertTrue(canary.is_file())
+        if CAN_SYMLINK:
+            sym_src = self.root / "sample_symlink"
+            sym_src.symlink_to(src_file)
+            with self.assertRaises(IsADirectoryError):
+                copy_symlink(sym_src, dst_dir)
+            self.assertTrue(dst_dir.is_dir())
+            self.assertTrue(canary.is_file())
 
         # 5. write_file to existing directory dst raises IsADirectoryError
         with self.assertRaises(IsADirectoryError):
@@ -842,26 +829,28 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(non_empty_d.is_dir())
         self.assertTrue(child.is_file())
 
-        # Symlink to file: unlinks symlink, target intact, returns True
-        sym_file = self.root / "sym_to_child"
-        sym_file.symlink_to(child)
-        self.assertTrue(remove_file_or_empty_dir(sym_file))
-        self.assertFalse(sym_file.is_symlink())
-        self.assertTrue(child.is_file())
+        if CAN_SYMLINK:
+            # Symlink to file: unlinks symlink, target intact, returns True
+            sym_file = self.root / "sym_to_child"
+            sym_file.symlink_to(child)
+            self.assertTrue(remove_file_or_empty_dir(sym_file))
+            self.assertFalse(sym_file.is_symlink())
+            self.assertTrue(child.is_file())
 
-        # Symlink to directory: unlinks symlink, directory intact, returns True
-        sym_dir = self.root / "sym_to_dir"
-        sym_dir.symlink_to(non_empty_d)
-        self.assertTrue(remove_file_or_empty_dir(sym_dir))
-        self.assertFalse(sym_dir.is_symlink())
-        self.assertTrue(non_empty_d.is_dir())
+            # Symlink to directory: unlinks symlink, directory intact, returns True
+            sym_dir = self.root / "sym_to_dir"
+            sym_dir.symlink_to(non_empty_d)
+            self.assertTrue(remove_file_or_empty_dir(sym_dir))
+            self.assertFalse(sym_dir.is_symlink())
+            self.assertTrue(non_empty_d.is_dir())
 
-        # Broken symlink returns True
-        broken_sym = self.root / "broken_link"
-        broken_sym.symlink_to(self.root / "missing_target")
-        self.assertTrue(remove_file_or_empty_dir(broken_sym))
-        self.assertFalse(broken_sym.is_symlink())
+            # Broken symlink returns True
+            broken_sym = self.root / "broken_link"
+            broken_sym.symlink_to(self.root / "missing_target")
+            self.assertTrue(remove_file_or_empty_dir(broken_sym))
+            self.assertFalse(broken_sym.is_symlink())
 
+    @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
     def test_remove_file_or_empty_dir_with_sudo(self, mock_run) -> None:
         # File under sudo -> sudo rm -f

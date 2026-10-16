@@ -46,7 +46,7 @@ from ..core.constants import (
 from ..core.exceptions import ConfigError, HookMissingError
 from ..core.mixins import AlwaysTruthy
 from ..core.result_models import HookResult
-from ..utils.path_utils import is_relative_to
+from ..utils.path_utils import check_is_partially_anchored_path, is_relative_to
 from ..utils.config_utils import get_first_from, validate_known_keys
 
 if TYPE_CHECKING:
@@ -73,7 +73,9 @@ def normalize_hook_value(
         if s == "" or s.lower() in ("disable", "disabled"):
             return None
         p = Path(s)
-        if p.is_absolute() or base_dir is None:
+        if check_is_partially_anchored_path(p):
+            raise ConfigError(f"Hook path '{val}' must be a relative or valid absolute Path.")
+        if p.anchor or base_dir is None:
             return p
         return (Path(base_dir) / p).resolve()
     raise ConfigError(f"Hook value must be a string or Path, got {type(val).__name__}")
@@ -318,13 +320,12 @@ class PackageHooks(AlwaysTruthy):
                     norm_val = p_res.relative_to(package_src_dir)
                 else:
                     return p_res, None
-            else:
-                # If the normalized value is relative, we need a base directory to resolve it against
-                if not hook_base_map:
-                    name_str = f" for package '{package_name}'" if package_name else ""
-                    raise ConfigError(
-                        f"base_dir or workspace_config must be provided when constructing PackageHooks{name_str}."
-                    )
+            elif not hook_base_map:
+                # If the normalized value is strictly relative, we need a base directory to resolve it against
+                name_str = f" for package '{package_name}'" if package_name else ""
+                raise ConfigError(
+                    f"base_dir or workspace_config must be provided when constructing PackageHooks{name_str}."
+                )
 
             norm_val = Path(os.path.normpath(str(norm_val)))
             if not is_relative_to(norm_val, Path(DRIFT_HOOKS_DIR_NAME)):

@@ -98,12 +98,12 @@ class RenderOptions(AlwaysTruthy):
         When flags is not explicitly specified, defaults no_hooks to True in dry_run mode
         (zero mutation simulation), and False in normal mode.
         """
-        if self.flags is None:
-            base = HookExecFlags.resolve(None, settings=settings)
-            default_no_hooks = True if self.dry_run else base.no_hooks
-            return replace(base, no_cache=self.no_cache, dry_run=self.dry_run, no_hooks=default_no_hooks)
-        base = HookExecFlags.resolve(self.flags, settings=settings)
-        return replace(base, no_cache=self.no_cache, dry_run=self.dry_run)
+        return HookExecFlags.resolve(
+            self.flags,
+            settings=settings,
+            fallback=HookExecFlags(no_hooks=self.dry_run),
+            override=HookExecFlags(no_cache=self.no_cache, dry_run=self.dry_run),
+        )
 
     @classmethod
     def resolve(

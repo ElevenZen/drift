@@ -412,7 +412,7 @@ class TestConfigClasses(unittest.TestCase):
 
 
     def test_package_config_from_dict(self) -> None:
-        base_dir = Path("/mock/src/my_pkg")
+        base_dir = Path("/mock/src/my_pkg").resolve()
         data = {
             "package": {
                 "install_method": "symlink"
@@ -477,7 +477,7 @@ class TestConfigClasses(unittest.TestCase):
             PackageSectionConfig(name="foo", hook_file=123).validate() # type: ignore
 
     def test_package_hooks_dataclass(self) -> None:
-        base = Path("/workspace/test_pkg")
+        base = Path("/workspace/test_pkg").resolve()
         hooks = PackageHooks(
             pre_source=base / ".drift/hooks/gen.sh",
             pre_install=base / ".drift/hooks/pre.sh",
@@ -501,7 +501,7 @@ class TestConfigClasses(unittest.TestCase):
             "post_install": "drift_hooks/post.sh",
             "timeout": "60"
         }
-        base = Path("/workspace/my_pkg")
+        base = Path("/workspace/my_pkg").resolve()
         hooks = PackageHooks.from_dict(raw, package_name="my_pkg", base_dir=base)
         self.assertEqual(hooks.pre_source, base / ".drift/hooks/gen.sh")
         self.assertEqual(hooks.post_install, base / ".drift/hooks/post.sh")
@@ -541,7 +541,7 @@ class TestConfigClasses(unittest.TestCase):
                 "timeout": 45
             }
         }
-        base = Path("/workspace/pkg_with_hooks")
+        base = Path("/workspace/pkg_with_hooks").resolve()
         config = PackageConfig.from_dict(toml_dict, package_name="pkg_with_hooks", base_dir=base)
         self.assertEqual(config.name, "pkg_with_hooks")
         self.assertEqual(config.package.install_method, "copy")
@@ -573,7 +573,7 @@ class TestConfigClasses(unittest.TestCase):
                     }
                 }
             }
-            base = Path("/workspace/my_pkg")
+            base = Path("/workspace/my_pkg").resolve()
             # On POSIX (Linux/macOS), windows subtable is ignored
             with patch("sys.platform", "linux"):
                 config_linux = PackageConfig.from_dict(toml_dict, package_name="my_pkg", base_dir=base)
@@ -605,7 +605,7 @@ class TestConfigClasses(unittest.TestCase):
                 "post_uninstall": "drift_hooks/uninstall.sh",
             }
         }
-        base = Path("/workspace/pkg_disabled")
+        base = Path("/workspace/pkg_disabled").resolve()
         config = PackageConfig.from_dict(toml_dict, package_name="pkg_disabled", base_dir=base)
         self.assertIsNone(config.hooks.pre_source)
         self.assertIsNone(config.hooks.pre_install)
@@ -637,7 +637,7 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_package_hooks_property_setters_with_disabled(self) -> None:
         """Verifies that setting a hook property to 'disable' or 'disabled' normalizes to None."""
-        base = Path("/workspace/my_pkg")
+        base = Path("/workspace/my_pkg").resolve()
         hooks = PackageHooks(post_install=base / ".drift/hooks/post.sh")
         self.assertEqual(hooks.post_install, base / ".drift/hooks/post.sh")
 
@@ -649,7 +649,7 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_package_source_directory_parsing_and_validation(self) -> None:
         """Verifies parsing, normalization, and validation of package source_directory."""
-        base = Path("/workspace/my_pkg")
+        base = Path("/workspace/my_pkg").resolve()
 
         # 1. Default (omitted) defaults to Path(".")
         cfg_default = PackageConfig.from_dict({"package": {"install_method": "symlink"}}, base_dir=base, package_name="my_pkg")
@@ -680,7 +680,7 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_package_hooks_drift_hooks_isolation_and_symlink_guidance(self) -> None:
         """Verifies hook path resolution enforcing drift_hooks/ and error advice."""
-        base = Path("/workspace/my_pkg")
+        base = Path("/workspace/my_pkg").resolve()
 
         # 1. Hook outside drift_hooks/ raises ConfigError with symlink guidance
         with self.assertRaises(ConfigError) as ctx:
@@ -696,9 +696,9 @@ class TestConfigClasses(unittest.TestCase):
         self.assertIn("hooks inside package directory are restricted", str(ctx_abs.exception))
 
         # 3. External absolute hook executable is allowed without drift_hooks/ restriction
-        ext_path = Path("/usr/local/bin/my_hook")
+        ext_path = Path("/usr/local/bin/my_hook").resolve()
         hooks_ext = PackageHooks.from_dict({"post_install": str(ext_path)}, package_name="my_pkg", base_dir=base)
-        self.assertEqual(hooks_ext.post_install, ext_path.resolve())
+        self.assertEqual(hooks_ext.post_install, ext_path)
         self.assertIsNone(hooks_ext.get_relative_path("post_install"))
 
     def test_build_hook_execution_command(self) -> None:
@@ -708,7 +708,6 @@ class TestConfigClasses(unittest.TestCase):
             build_hook_execution_command_win32,
             build_hook_execution_command_posix,
         )
-
         # 1. Windows direct builder
         self.assertEqual(
             build_hook_execution_command_win32(Path(r"C:\scripts\install.ps1")),
@@ -746,8 +745,9 @@ class TestConfigClasses(unittest.TestCase):
             # Executable file
             exec_file = tmppath / "exec.sh"
             exec_file.write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
-            exec_file.chmod(0o755)
-            self.assertEqual(build_hook_execution_command_posix(exec_file), [str(exec_file)])
+            if sys.platform != "win32":
+                exec_file.chmod(0o755)
+                self.assertEqual(build_hook_execution_command_posix(exec_file), [str(exec_file)])
 
             # Non-executable .sh
             non_exec_sh = tmppath / "hook.sh"
@@ -800,8 +800,9 @@ class TestConfigClasses(unittest.TestCase):
                 )
                 mock_run.assert_called_with(
                     ["/scripts/setup.sh"],
-                    cwd="/opt/app",
+                    cwd=str(Path("/opt/app")),
                     text=True,
+                    encoding="utf-8",
                     timeout=60,
                     streaming=True
                 )
@@ -814,12 +815,14 @@ class TestConfigClasses(unittest.TestCase):
                     cmd=["powershell.exe", "-File", r"C:\scripts\setup.ps1"],
                     cwd=Path(r"C:\app"),
                     timeout_seconds=60,
-                    streaming=False
+                    streaming=False,
+                    encoding="gbk",
                 )
                 mock_run.assert_called_with(
                     ["powershell.exe", "-File", r"C:\scripts\setup.ps1"],
                     cwd=r"C:\app",
                     text=True,
+                    encoding="gbk",
                     timeout=60,
                     streaming=False
                 )
@@ -1045,7 +1048,7 @@ class TestConfigClasses(unittest.TestCase):
             "another_unknown_top_section": {"baz": "qux"}
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_data_unknown_top, package_name="my_pkg", base_dir=Path("/test/pkg"))
+            PackageConfig.from_dict(pkg_data_unknown_top, package_name="my_pkg", base_dir=Path("/test/pkg").resolve())
         self.assertIn("Unknown top-level package config section: 'another_unknown_top_section'", str(ctx.exception))
 
         # 5. PackageConfig unknown package option
@@ -1056,7 +1059,7 @@ class TestConfigClasses(unittest.TestCase):
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_data_unknown_opt, package_name="my_pkg", base_dir=Path("/test/pkg"))
+            PackageConfig.from_dict(pkg_data_unknown_opt, package_name="my_pkg", base_dir=Path("/test/pkg").resolve())
         self.assertIn("Unknown package option: 'unknown_pkg_opt'", str(ctx.exception))
 
         # 6. PackageHooks unknown hook option
@@ -1067,7 +1070,7 @@ class TestConfigClasses(unittest.TestCase):
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_data_unknown_hook, package_name="my_pkg", base_dir=Path("/test/pkg"))
+            PackageConfig.from_dict(pkg_data_unknown_hook, package_name="my_pkg", base_dir=Path("/test/pkg").resolve())
         self.assertIn("Unknown hook option in package [hooks]: 'unknown_hook_opt'", str(ctx.exception))
 
         # 7. PackageHooks unknown platform sub-table hook option
@@ -1080,17 +1083,17 @@ class TestConfigClasses(unittest.TestCase):
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_data_unknown_subtable_hook, package_name="my_pkg", base_dir=Path("/test/pkg"))
+            PackageConfig.from_dict(pkg_data_unknown_subtable_hook, package_name="my_pkg", base_dir=Path("/test/pkg").resolve())
         self.assertIn("Unknown hook option in platform hooks sub-table: 'unknown_win_hook'", str(ctx.exception))
 
     def test_package_config_get_install_method(self) -> None:
         ws_config = WorkspaceConfig(
-            drift_root=Path("/test"),
+            drift_root=Path("/test").resolve(),
             workspace=WorkspaceSectionConfig(default_install_method=InstallMethod.SYMLINK),
             settings=SettingsConfig(enable_symlink_on_windows=False),
         )
         ws_config_win_symlink = WorkspaceConfig(
-            drift_root=Path("/test"),
+            drift_root=Path("/test").resolve(),
             workspace=WorkspaceSectionConfig(default_install_method=InstallMethod.SYMLINK),
             settings=SettingsConfig(enable_symlink_on_windows=True),
         )
@@ -1110,11 +1113,46 @@ class TestConfigClasses(unittest.TestCase):
             self.assertEqual(pkg_config_copy.get_install_method(ws_config), InstallMethod.COPY)
             self.assertEqual(pkg_config_none.get_install_method(ws_config), InstallMethod.COPY)
 
-        # 3. On Windows with enable_symlink_on_windows = True: honors symlink
-        with patch("sys.platform", "win32"):
+        # 3. On Windows with enable_symlink_on_windows = True and check_can_symlink() = True: honors symlink
+        with patch("sys.platform", "win32"), patch("drift.config.package_config.check_can_symlink", return_value=True), patch("drift.config.workspace_config.check_can_symlink", return_value=True):
             self.assertEqual(pkg_config.get_install_method(ws_config_win_symlink), InstallMethod.SYMLINK)
             self.assertEqual(pkg_config_copy.get_install_method(ws_config_win_symlink), InstallMethod.COPY)
             self.assertEqual(pkg_config_none.get_install_method(ws_config_win_symlink), InstallMethod.SYMLINK)
+            self.assertEqual(ws_config_win_symlink.get_default_install_method(), InstallMethod.SYMLINK)
+
+        # 4. On Windows with enable_symlink_on_windows = True and check_can_symlink() = False: raises ConfigError
+        with patch("sys.platform", "win32"), patch("drift.config.package_config.check_can_symlink", return_value=False), patch("drift.config.workspace_config.check_can_symlink", return_value=False):
+            with self.assertRaises(ConfigError) as ctx:
+                pkg_config.get_install_method(ws_config_win_symlink)
+            self.assertIn("enable_symlink_on_windows = true", str(ctx.exception))
+            self.assertEqual(ctx.exception.packages, ["test_pkg"])
+
+            # copy install_method and its package facts still succeed even if check_can_symlink() is False
+            self.assertEqual(pkg_config_copy.get_install_method(ws_config_win_symlink), InstallMethod.COPY)
+            copy_facts = pkg_config_copy.get_drift_package_facts(ws_config_win_symlink)
+            self.assertEqual(copy_facts["drift_package_install_method"], "copy")
+
+            # check_symlink=False bypasses privilege check when querying nominal install_method or facts
+            self.assertEqual(ws_config_win_symlink.get_default_install_method(check_symlink=False), InstallMethod.SYMLINK)
+            self.assertEqual(pkg_config.get_install_method(ws_config_win_symlink, check_symlink=False), InstallMethod.SYMLINK)
+            self.assertEqual(
+                ws_config_win_symlink.get_drift_package_facts("test_pkg")["drift_package_install_method"],
+                "symlink",
+            )
+            self.assertEqual(
+                pkg_config.get_drift_package_facts(ws_config_win_symlink, check_symlink=False)["drift_package_install_method"],
+                "symlink",
+            )
+
+            with self.assertRaises(ConfigError):
+                pkg_config.get_drift_package_facts(ws_config_win_symlink)
+
+            with self.assertRaises(ConfigError):
+                pkg_config_none.get_install_method(ws_config_win_symlink)
+
+            with self.assertRaises(ConfigError) as ws_ctx:
+                ws_config_win_symlink.get_default_install_method()
+            self.assertIn("enable_symlink_on_windows = true", str(ws_ctx.exception))
 
     def test_install_method_default_and_parsing(self) -> None:
         """Verifies InstallMethod.DEFAULT, InstallMethod.default(), and from_str defaults."""
@@ -1135,10 +1173,9 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_package_config_target_directory_windows_and_aliases(self) -> None:
         ws_config = WorkspaceConfig(
-            drift_root=Path("/test"),
-            workspace=WorkspaceSectionConfig(default_target_directory=Path("/default/target")),
+            drift_root=Path("/test").resolve(),
+            workspace=WorkspaceSectionConfig(default_target_directory=Path("/default/target").resolve()),
         )
-        home = Path.home()
 
         for alias in ["windows", "win32", "winos", "win"]:
             data = {
@@ -1150,22 +1187,21 @@ class TestConfigClasses(unittest.TestCase):
             }
             # On Linux/POSIX, returns standard target_directory
             with patch("sys.platform", "linux"):
-                pkg_config = PackageConfig.from_dict(data, package_name="nvim", base_dir=Path("/test/nvim"))
-                self.assertEqual(pkg_config.get_target_directory(ws_config), home / ".config" / "nvim")
+                pkg_config = PackageConfig.from_dict(data, package_name="nvim", base_dir=Path("/test/nvim").resolve())
+                self.assertEqual(pkg_config.get_target_directory(ws_config), Path.home() / ".config" / "nvim")
 
             # On Windows, returns target_directory_<alias> expanded
             with patch("sys.platform", "win32"):
                 with patch.dict(os.environ, {"LOCALAPPDATA": "C:/Users/testuser/AppData/Local"}):
-                    pkg_config = PackageConfig.from_dict(data, package_name="nvim", base_dir=Path("/test/nvim"))
+                    pkg_config = PackageConfig.from_dict(data, package_name="nvim", base_dir=Path("/test/nvim").resolve())
                     self.assertEqual(pkg_config.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Local/nvim"))
 
     def test_target_directory_windows_forward_and_mixed_slashes(self) -> None:
         """Verifies that forward slashes '/' and mixed slashes in target_directory_windows are supported and parsed correctly."""
         ws_config = WorkspaceConfig(
-            drift_root=Path("/test"),
-            workspace=WorkspaceSectionConfig(default_target_directory=Path("/default/target")),
+            drift_root=Path("/test").resolve(),
+            workspace=WorkspaceSectionConfig(default_target_directory=Path("/default/target").resolve()),
         )
-        home = Path.home()
 
         with patch("sys.platform", "win32"):
             with patch.dict(os.environ, {
@@ -1180,7 +1216,7 @@ class TestConfigClasses(unittest.TestCase):
                         "target_directory_windows": "%LOCALAPPDATA%/my_app/config"
                     }
                 }
-                cfg1 = PackageConfig.from_dict(data1, package_name="pkg1", base_dir=Path("/test/pkg1"))
+                cfg1 = PackageConfig.from_dict(data1, package_name="pkg1", base_dir=Path("/test/pkg1").resolve())
                 self.assertEqual(cfg1.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Local/my_app/config"))
 
                 # 2. Pure forward slashes with drive letter
@@ -1190,7 +1226,7 @@ class TestConfigClasses(unittest.TestCase):
                         "target_directory_windows": "C:/Custom/Path/To/App"
                     }
                 }
-                cfg2 = PackageConfig.from_dict(data2, package_name="pkg2", base_dir=Path("/test/pkg2"))
+                cfg2 = PackageConfig.from_dict(data2, package_name="pkg2", base_dir=Path("/test/pkg2").resolve())
                 self.assertEqual(cfg2.get_target_directory(ws_config), Path("C:/Custom/Path/To/App"))
 
                 # 3. Pure forward slashes with ~ (tilde)
@@ -1200,8 +1236,8 @@ class TestConfigClasses(unittest.TestCase):
                         "target_directory_windows": "~/AppData/Local/nvim"
                     }
                 }
-                cfg3 = PackageConfig.from_dict(data3, package_name="pkg3", base_dir=Path("/test/pkg3"))
-                self.assertEqual(cfg3.get_target_directory(ws_config), home / "AppData" / "Local" / "nvim")
+                cfg3 = PackageConfig.from_dict(data3, package_name="pkg3", base_dir=Path("/test/pkg3").resolve())
+                self.assertEqual(cfg3.get_target_directory(ws_config), Path.home() / "AppData" / "Local" / "nvim")
 
                 # 4. Mixed slashes
                 data4 = {
@@ -1210,7 +1246,7 @@ class TestConfigClasses(unittest.TestCase):
                         "target_directory_windows": "%USERPROFILE%\\AppData/Roaming\\alacritty/nested"
                     }
                 }
-                cfg4 = PackageConfig.from_dict(data4, package_name="pkg4", base_dir=Path("/test/pkg4"))
+                cfg4 = PackageConfig.from_dict(data4, package_name="pkg4", base_dir=Path("/test/pkg4").resolve())
                 self.assertEqual(cfg4.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Roaming/alacritty/nested"))
 
 
@@ -1639,13 +1675,13 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         # Test overlay (field-level inheritance)
         pkg_engine_override = RenderEngineConfig(
             name="envst",
-            input_file=Path("/pkg/input.env"),
+            input_file=Path("/pkg/input.env").resolve(),
             suffix="",
             render_command=""
         )
         pkg_registry = RenderEngineRegistry({"envst": pkg_engine_override})
         merged = registry.overlay(pkg_registry)
-        self.assertEqual(merged["envst"].input_file, Path("/pkg/input.env"))
+        self.assertEqual(merged["envst"].input_file, Path("/pkg/input.env").resolve())
         self.assertEqual(merged["envst"].suffix, "envst")  # Inherited
         self.assertEqual(merged["envst"].render_command, "render %i %s")  # Inherited
 
@@ -1943,9 +1979,9 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         with pkg.package_envs():
             self.assertEqual(os.environ.get("drift_package_name"), "my_pkg")
             self.assertEqual(os.environ.get("drift_package_target_dir"), "/custom/target")
-            self.assertEqual(os.environ.get("drift_package_source_dir"), str(config.source_path / "my_pkg"))
-            self.assertEqual(os.environ.get("drift_package_render_dir"), str(config.render_path / "my_pkg"))
-            self.assertEqual(os.environ.get("drift_package_install_dir"), str(config.install_path / "my_pkg"))
+            self.assertEqual(os.environ.get("drift_package_source_dir"), (config.source_path / "my_pkg").as_posix())
+            self.assertEqual(os.environ.get("drift_package_render_dir"), (config.render_path / "my_pkg").as_posix())
+            self.assertEqual(os.environ.get("drift_package_install_dir"), (config.install_path / "my_pkg").as_posix())
             self.assertEqual(os.environ.get("drift_package_install_method"), "copy")
 
         self.assertNotIn("drift_package_name", os.environ)
@@ -1974,10 +2010,10 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         pkg_inherited = PackageConfig(PackageSectionConfig(name="pkg_inherited")).compute_effective_envs(workspace_config)
         with pkg_inherited.package_envs():
             self.assertEqual(os.environ.get("drift_package_name"), "pkg_inherited")
-            self.assertEqual(os.environ.get("drift_package_target_dir"), str(custom_global_target.expanduser()))
-            self.assertEqual(os.environ.get("drift_package_source_dir"), "/dummy/root/src/pkg_inherited")
-            self.assertEqual(os.environ.get("drift_package_render_dir"), "/dummy/root/render/pkg_inherited")
-            self.assertEqual(os.environ.get("drift_package_install_dir"), "/dummy/root/install/pkg_inherited")
+            self.assertEqual(os.environ.get("drift_package_target_dir"), custom_global_target.expanduser().as_posix())
+            self.assertEqual(os.environ.get("drift_package_source_dir"), (workspace_config.source_path / "pkg_inherited").as_posix())
+            self.assertEqual(os.environ.get("drift_package_render_dir"), (workspace_config.render_path / "pkg_inherited").as_posix())
+            self.assertEqual(os.environ.get("drift_package_install_dir"), (workspace_config.install_path / "pkg_inherited").as_posix())
             self.assertEqual(os.environ.get("drift_package_install_method"), "copy")
 
         self.assertNotIn("drift_package_name", os.environ)
@@ -1995,10 +2031,10 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         with pkg_overridden.package_envs():
             self.assertEqual(os.environ.get("drift_package_name"), "pkg_overridden")
             self.assertEqual(os.environ.get("drift_package_target_dir"), "/etc/custom_pkg_target")
-            self.assertEqual(os.environ.get("drift_package_source_dir"), "/dummy/root/src/pkg_overridden")
-            self.assertEqual(os.environ.get("drift_package_render_dir"), "/dummy/root/render/pkg_overridden")
-            self.assertEqual(os.environ.get("drift_package_install_dir"), "/dummy/root/install/pkg_overridden")
-            self.assertEqual(os.environ.get("drift_package_install_method"), "symlink")
+            self.assertEqual(os.environ.get("drift_package_source_dir"), (workspace_config.source_path / "pkg_overridden").as_posix())
+            self.assertEqual(os.environ.get("drift_package_render_dir"), (workspace_config.render_path / "pkg_overridden").as_posix())
+            self.assertEqual(os.environ.get("drift_package_install_dir"), (workspace_config.install_path / "pkg_overridden").as_posix())
+            self.assertEqual(os.environ.get("drift_package_install_method"), "copy" if sys.platform == "win32" else "symlink")
 
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
@@ -2013,10 +2049,10 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         ).compute_effective_envs(workspace_config)
         with pkg_home.package_envs():
             self.assertEqual(os.environ.get("drift_package_name"), "pkg_home")
-            self.assertEqual(os.environ.get("drift_package_target_dir"), str(Path("~/.config/my_app").expanduser()))
-            self.assertEqual(os.environ.get("drift_package_source_dir"), "/dummy/root/src/pkg_home")
-            self.assertEqual(os.environ.get("drift_package_render_dir"), "/dummy/root/render/pkg_home")
-            self.assertEqual(os.environ.get("drift_package_install_dir"), "/dummy/root/install/pkg_home")
+            self.assertEqual(os.environ.get("drift_package_target_dir"), Path("~/.config/my_app").expanduser().as_posix())
+            self.assertEqual(os.environ.get("drift_package_source_dir"), (workspace_config.source_path / "pkg_home").as_posix())
+            self.assertEqual(os.environ.get("drift_package_render_dir"), (workspace_config.render_path / "pkg_home").as_posix())
+            self.assertEqual(os.environ.get("drift_package_install_dir"), (workspace_config.install_path / "pkg_home").as_posix())
             self.assertEqual(os.environ.get("drift_package_install_method"), "copy")  # Inherited copy
 
         self.assertNotIn("drift_package_name", os.environ)
@@ -2028,7 +2064,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         # 1. Default source_directory is Path(".")
         pkg_default = PackageConfig(PackageSectionConfig(name="default_pkg"))
         self.assertEqual(pkg_default.package.source_directory, Path("."))
-        base_dir = Path("/home/user/workspace/src/default_pkg")
+        base_dir = Path("/home/user/workspace/src/default_pkg").resolve()
         self.assertEqual(pkg_default.get_source_directory_to_render(base_dir), base_dir)
 
         # 2. Custom relative source_directory
@@ -2070,7 +2106,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 "fallback": {"FALLBACK_KEY": "default_val"}
             }
         }
-        pkg = PackageConfig.from_dict(data, package_name="test_pkg", base_dir=Path("/test/pkg"))
+        test_pkg_dir = Path("/test/pkg").resolve()
+        pkg = PackageConfig.from_dict(data, package_name="test_pkg", base_dir=test_pkg_dir)
         self.assertEqual(pkg.env_resolve.current.override, {"THEME": "catppuccin", "DEBUG": "1"})
         self.assertEqual(pkg.env_resolve.current.fallback, {"FALLBACK_KEY": "default_val"})
         self.assertEqual(pkg.env_resolve.effective.override, {"THEME": "catppuccin", "DEBUG": "1"})
@@ -2083,7 +2120,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 "overwrite": {"THEME": "nord"}
             }
         }
-        pkg_alias = PackageConfig.from_dict(data_alias, package_name="test_pkg", base_dir=Path("/test/pkg"))
+        pkg_alias = PackageConfig.from_dict(data_alias, package_name="test_pkg", base_dir=test_pkg_dir)
         self.assertEqual(pkg_alias.env_resolve.current.override, {"THEME": "nord"})
         self.assertEqual(pkg_alias.env_resolve.effective.override, {"THEME": "nord"})
 
@@ -2095,15 +2132,15 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             }
         }
         with self.assertRaises(ConfigError):
-            PackageConfig.from_dict(data_flat, package_name="test_pkg", base_dir=Path("/test/pkg"))
+            PackageConfig.from_dict(data_flat, package_name="test_pkg", base_dir=test_pkg_dir)
 
         # 4. Error on non-dict sub-tables
         with self.assertRaises(ConfigError):
-            PackageConfig.from_dict({"package": {}, "env": {"override": "not_a_dict"}}, package_name="err_pkg", base_dir=Path("/test/pkg"))
+            PackageConfig.from_dict({"package": {}, "env": {"override": "not_a_dict"}}, package_name="err_pkg", base_dir=test_pkg_dir)
         with self.assertRaises(ConfigError):
-            PackageConfig.from_dict({"package": {}, "env": {"fallback": "not_a_dict"}}, package_name="err_pkg", base_dir=Path("/test/pkg"))
+            PackageConfig.from_dict({"package": {}, "env": {"fallback": "not_a_dict"}}, package_name="err_pkg", base_dir=test_pkg_dir)
         with self.assertRaises(ConfigError):
-            PackageConfig.from_dict({"package": {}, "env": {"unknown_subtable": {"k": "v"}}}, package_name="err_pkg", base_dir=Path("/test/pkg"))
+            PackageConfig.from_dict({"package": {}, "env": {"unknown_subtable": {"k": "v"}}}, package_name="err_pkg", base_dir=test_pkg_dir)
 
     def test_six_tier_variable_preemption_order(self) -> None:
         """Verifies the complete 6-tier environment variable preemption hierarchy."""
@@ -2216,11 +2253,14 @@ class TestSettingsConfig(unittest.TestCase):
     """Tests for SettingsConfig and [settings] in drift_workspace.toml."""
 
     def test_settings_config_defaults(self) -> None:
+        import locale
         from drift.config.workspace_config import SettingsConfig
         settings = SettingsConfig()
         self.assertTrue(settings.hook_inject_non_interactive_envs)
         self.assertTrue(settings.ensure_hooks_executable_in_src)
         self.assertFalse(settings.enable_symlink_on_windows)
+        expected_sys_enc = locale.getpreferredencoding(False) or "utf-8"
+        self.assertEqual(settings.hook_output_encoding, expected_sys_enc)
 
     def test_settings_config_from_dict(self) -> None:
         from drift.config.workspace_config import SettingsConfig
@@ -2228,12 +2268,15 @@ class TestSettingsConfig(unittest.TestCase):
             "hook_inject_non_interactive_envs": False,
             "ensure_hooks_executable_in_src": False,
             "enable_symlink_on_windows": True,
+            "hook_output_encoding": "gbk",
         })
         self.assertFalse(s1.hook_inject_non_interactive_envs)
         self.assertFalse(s1.ensure_hooks_executable_in_src)
         self.assertTrue(s1.enable_symlink_on_windows)
+        self.assertEqual(s1.hook_output_encoding, "gbk")
 
     def test_settings_config_from_dict_aliases(self) -> None:
+        import locale
         from drift.config.workspace_config import SettingsConfig
         # Test all 4 aliases of ensure_hook[s]_executable_in_source/src
         for key in (
@@ -2267,10 +2310,26 @@ class TestSettingsConfig(unittest.TestCase):
             s_false = SettingsConfig.from_dict({key: "false"})
             self.assertFalse(s_false.enable_symlink_on_windows, f"Failed for string bool key: {key}")
 
+        # Test all 4 aliases of hook[s]_[output_]encoding and "system" keyword
+        for key in (
+            "hook_output_encoding",
+            "hooks_output_encoding",
+            "hook_encoding",
+            "hooks_encoding",
+        ):
+            s_enc = SettingsConfig.from_dict({key: "cp1252"})
+            self.assertEqual(s_enc.hook_output_encoding, "cp1252", f"Failed for key: {key}")
+
+        expected_sys_enc = locale.getpreferredencoding(False) or "utf-8"
+        for sys_kw in ("system", "SYSTEM", "  system  "):
+            s_sys = SettingsConfig.from_dict({"hook_output_encoding": sys_kw})
+            self.assertEqual(s_sys.hook_output_encoding, expected_sys_enc)
+
         s_empty = SettingsConfig.from_dict({})
         self.assertTrue(s_empty.hook_inject_non_interactive_envs)
         self.assertTrue(s_empty.ensure_hooks_executable_in_src)
         self.assertFalse(s_empty.enable_symlink_on_windows)
+        self.assertEqual(s_empty.hook_output_encoding, expected_sys_enc)
 
     def test_settings_config_validation(self) -> None:
         from drift.config.workspace_config import SettingsConfig
@@ -2298,6 +2357,17 @@ class TestSettingsConfig(unittest.TestCase):
             SettingsConfig.from_dict({"ensure_hooks_executable_in_src": "not_a_bool"})
         with self.assertRaises(ConfigError):
             SettingsConfig.from_dict({"enable_symlink_on_windows": "not_a_bool"})
+        with self.assertRaises(ConfigError) as enc_ctx:
+            SettingsConfig.from_dict({"hook_output_encoding": "not_a_real_codec_xyz"})
+        self.assertIn("Unknown encoding 'not_a_real_codec_xyz'", str(enc_ctx.exception))
+        with self.assertRaises(ConfigError):
+            SettingsConfig.from_dict({"hook_output_encoding": "locale"})
+        with self.assertRaises(ConfigError):
+            SettingsConfig.from_dict({"hook_output_encoding": "default"})
+        with self.assertRaises(ConfigError):
+            SettingsConfig.from_dict({"hook_output_encoding": ""})
+        with self.assertRaises(ConfigError):
+            SettingsConfig.from_dict({"hook_output_encoding": 123})
 
     def test_workspace_config_with_settings(self) -> None:
         toml_content = """
@@ -2557,7 +2627,7 @@ class TestPackageSectionConfig(unittest.TestCase):
         self.assertIsNone(sec.hook_file)
 
     def test_package_section_from_dict(self) -> None:
-        base_dir = Path("/tmp/pkg_a")
+        base_dir = Path("/tmp/pkg_a").resolve()
         data = {
             "name": "pkg_custom",
             "source_directory": "custom_src",
@@ -2635,14 +2705,14 @@ class TestPackageSectionConfig(unittest.TestCase):
 
 
 class TestPathSuffixHelpers(unittest.TestCase):
-    def test_path_and_string_suffix_helpers(self) -> None:
+    def test_path_and_filename_suffix_helpers(self) -> None:
         from drift.core.constants import (
             add_suffix_path,
             add_local_path,
             add_envst_path,
-            add_suffix_str,
-            add_local_str,
-            add_envst_str,
+            add_suffix_filename,
+            add_local_filename,
+            add_envst_filename,
         )
 
         p = Path("config/drift_workspace.toml")
@@ -2651,13 +2721,14 @@ class TestPathSuffixHelpers(unittest.TestCase):
         self.assertEqual(add_envst_path(p), Path("config/drift_workspace.envst.toml"))
         self.assertEqual(add_envst_path(Path("config/drift.local.toml")), Path("config/drift.local.envst.toml"))
 
-        self.assertEqual(add_suffix_str("drift_workspace.toml", "local"), "drift_workspace.local.toml")
-        self.assertEqual(add_local_str("drift_workspace.toml"), "drift_workspace.local.toml")
-        self.assertEqual(add_envst_str("drift_workspace.toml"), "drift_workspace.envst.toml")
-        self.assertEqual(
-            add_envst_str("drift_root/config/drift.local.toml"),
-            "drift_root/config/drift.local.envst.toml"
-        )
+        self.assertEqual(add_suffix_filename("drift_workspace.toml", "local"), "drift_workspace.local.toml")
+        self.assertEqual(add_local_filename("drift_workspace.toml"), "drift_workspace.local.toml")
+        self.assertEqual(add_envst_filename("drift_workspace.toml"), "drift_workspace.envst.toml")
+        self.assertEqual(add_envst_filename("drift.local.toml"), "drift.local.envst.toml")
+        with self.assertRaises(ValueError):
+            add_envst_filename("drift_root/config/drift.local.toml")
+        with self.assertRaises(ValueError):
+            add_suffix_filename(r"drift_root\config\drift.toml", "local")
 
 
 class TestLegacyPackageConfigFallback(unittest.TestCase):
@@ -3156,7 +3227,213 @@ class TestAlwaysTruthyConstraints(unittest.TestCase):
         self.assertTrue(bool(lst))
 
 
+class TestAnchoredPathValidationEdgeCases(unittest.TestCase):
+    """Tests strict Path.anchor validation for relative and hybrid (relative-or-absolute) config paths."""
+
+    def test_package_section_config_rejects_anchored_source_directory_and_fully_controlled_dirs(self) -> None:
+        anchored_paths = [Path("/abs/path"), Path("/single_root")]
+        if sys.platform == "win32":
+            anchored_paths.extend([Path("\\backslash_rooted"), Path("C:drive_relative"), Path("C:\\full_abs")])
+
+        for bad_path in anchored_paths:
+            with self.subTest(field="source_directory", path=bad_path):
+                with self.assertRaises(ConfigError) as cm:
+                    PackageSectionConfig(name="pkg", source_directory=bad_path).validate()
+                self.assertIn("must be a relative path", str(cm.exception))
+
+                with self.assertRaises(ConfigError) as cm:
+                    PackageSectionConfig.from_dict({"source_directory": str(bad_path)}, package_name="pkg")
+                self.assertIn("must be a relative path", str(cm.exception))
+
+            with self.subTest(field="fully_controlled_dirs", path=bad_path):
+                with self.assertRaises(ConfigError) as cm:
+                    PackageSectionConfig(name="pkg", fully_controlled_dirs=[bad_path]).validate()
+                self.assertIn("must be a relative path", str(cm.exception))
+
+                with self.assertRaises(ConfigError) as cm:
+                    PackageSectionConfig.from_dict({"fully_controlled_dirs": [str(bad_path)]}, package_name="pkg")
+                self.assertIn("must be a relative path", str(cm.exception))
+
+    def test_package_section_config_hook_file_anchor_resolution_and_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base_dir = Path(td).resolve()
+
+            # 1. Strictly relative hook_file resolves against base_dir
+            rel_sec = PackageSectionConfig.from_dict(
+                {"hook_file": "hooks/pkg_hook.py"},
+                package_name="pkg",
+                base_dir=base_dir,
+            )
+            self.assertEqual(rel_sec.hook_file, (base_dir / "hooks/pkg_hook.py").resolve())
+
+            # 2. Valid absolute hook_file is preserved directly
+            abs_hook = (base_dir / "external_hook.py").resolve()
+            abs_sec = PackageSectionConfig.from_dict(
+                {"hook_file": abs_hook.as_posix()},
+                package_name="pkg",
+                base_dir=base_dir,
+            )
+            self.assertEqual(abs_sec.hook_file, abs_hook)
+
+            # 3. Rooted/drive-relative non-absolute paths on Windows are not joined with base_dir and fail validation
+            if sys.platform == "win32":
+                rel_from_anchor = base_dir.relative_to(base_dir.anchor).as_posix()
+                rooted_variants = [
+                    "/rooted_hook.py",
+                    "\\backslash_hook.py",
+                    "C:drive_rel_hook.py",
+                    f"/{rel_from_anchor}/sneaky_hook.py",
+                ]
+                for bad_hook in rooted_variants:
+                    with self.subTest(bad_hook=bad_hook):
+                        with self.assertRaises(ConfigError) as cm:
+                            PackageSectionConfig.from_dict(
+                                {"hook_file": bad_hook},
+                                package_name="pkg",
+                                base_dir=base_dir,
+                            )
+                        self.assertIn("hook_file must be an absolute Path", str(cm.exception))
+
+    def test_package_hooks_normalize_and_validate_anchor_edge_cases(self) -> None:
+        from drift.config.package_hooks import normalize_hook_value
+
+        with tempfile.TemporaryDirectory() as td:
+            base_dir = Path(td).resolve()
+
+            # 1. Strictly relative hook resolves against base_dir
+            resolved = normalize_hook_value("scripts/install.sh", base_dir=base_dir)
+            self.assertEqual(resolved, (base_dir / "scripts/install.sh").resolve())
+
+            hooks_rel = PackageHooks.from_dict({"post_install": "drift_hooks/install.sh"}, base_dir=base_dir)
+            self.assertEqual(hooks_rel.post_install, (base_dir / ".drift" / "hooks" / "install.sh").resolve())
+            self.assertEqual(hooks_rel.get_relative_path("post_install"), Path("drift_hooks/install.sh"))
+
+            # 2. On Windows, rooted/drive-relative non-absolute paths are rejected immediately at normalization boundary
+            if sys.platform == "win32":
+                rel_from_anchor = base_dir.relative_to(base_dir.anchor).as_posix()
+                for bad_hook in ["/drift_hooks/install.sh", "\\drift_hooks\\install.sh", "C:drift_hooks/install.sh", f"/{rel_from_anchor}/drift_hooks/install.sh"]:
+                    with self.subTest(bad_hook=bad_hook):
+                        with self.assertRaises(ConfigError) as cm:
+                            normalize_hook_value(bad_hook, base_dir=base_dir)
+                        self.assertIn("must be a relative or valid absolute Path", str(cm.exception))
+
+                        with self.assertRaises(ConfigError) as cm:
+                            PackageHooks.from_dict({"post_install": bad_hook}, base_dir=base_dir)
+                        self.assertIn("must be a relative or valid absolute Path", str(cm.exception))
+
+                        with self.assertRaises(ConfigError) as cm:
+                            PackageHooks(post_install=Path(bad_hook))
+                        self.assertIn("must be a relative or valid absolute Path", str(cm.exception))
+
+    def test_workspace_section_config_rejects_anchored_directories_and_invalid_rooted_hook_file(self) -> None:
+        anchored_dirs = [Path("/abs_dir")]
+        if sys.platform == "win32":
+            anchored_dirs.extend([Path("\\rooted_dir"), Path("C:drive_rel_dir"), Path("C:\\abs_dir")])
+
+        for dir_field in ("source_directory", "render_directory", "install_directory", "backup_directory"):
+            for bad_dir in anchored_dirs:
+                with self.subTest(field=dir_field, path=bad_dir):
+                    kwargs: Dict[str, Any] = {dir_field: bad_dir}
+                    with self.assertRaises(ConfigError) as cm:
+                        WorkspaceSectionConfig(**kwargs).validate()
+                    self.assertIn("must be a relative path", str(cm.exception))
+
+        # Relative and valid absolute hook_file succeed
+        with tempfile.TemporaryDirectory() as td:
+            abs_hook = (Path(td) / "ws_hook.py").resolve()
+            WorkspaceSectionConfig(hook_file=Path("custom_ws_hook.py")).validate()
+            WorkspaceSectionConfig(hook_file=abs_hook).validate()
+
+            if sys.platform == "win32":
+                for bad_hook in [Path("/rooted_ws.py"), Path("\\rooted_ws.py"), Path("C:drive_rel_ws.py")]:
+                    with self.subTest(hook_file=bad_hook):
+                        with self.assertRaises(ConfigError) as cm:
+                            WorkspaceSectionConfig(hook_file=bad_hook).validate()
+                        self.assertIn("must be a relative or valid absolute path", str(cm.exception))
+
+    def test_render_engine_registry_input_file_anchor_edge_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base_dir = Path(td).resolve()
+
+            # 1. Valid absolute path inside base_dir is accepted
+            abs_inside = (base_dir / "sub" / "input.json").resolve()
+            reg = RenderEngineRegistry.from_dict(
+                {"test": {"suffix": "t", "render_command": "cmd", "input_file": abs_inside.as_posix()}},
+                base_dir=base_dir,
+            )
+            self.assertEqual(reg["test"].input_file, abs_inside)
+
+            # 2. On Windows, a rooted non-absolute path that mirrors base_dir's path from drive root must still be rejected
+            if sys.platform == "win32":
+                rel_from_anchor = base_dir.relative_to(base_dir.anchor).as_posix()
+                sneaky_rooted = f"/{rel_from_anchor}/sub/input.json"
+                for bad_input in [sneaky_rooted, "\\rooted\\input.json", "C:drive_rel.json"]:
+                    with self.subTest(bad_input=bad_input):
+                        with self.assertRaises(ConfigError) as cm:
+                            RenderEngineRegistry.from_dict(
+                                {"test": {"suffix": "t", "render_command": "cmd", "input_file": bad_input}},
+                                base_dir=base_dir,
+                            )
+                        self.assertIn("cannot resolve outside base directory", str(cm.exception))
+
+                        with self.assertRaises(ConfigError) as cm:
+                            RenderEngineConfig(
+                                name="test",
+                                suffix="t",
+                                render_command="cmd",
+                                input_file=Path(bad_input),
+                            ).validate()
+                        self.assertIn("must be a relative or valid absolute path", str(cm.exception))
+
+    def test_three_state_path_predicates_and_render_core_resolution(self) -> None:
+        from drift.utils.path_utils import (
+            check_is_relative_path,
+            check_is_partially_anchored_path,
+            encode_dot_prefix,
+            decode_dot_prefix,
+        )
+        from drift.render.render_core import resolve_render_input_file
+        from drift.core.exceptions import RenderError
+
+        # State 1: Strictly relative
+        for rel in [Path("src"), Path("a/b/c"), Path("../up"), Path(".")]:
+            self.assertTrue(check_is_relative_path(rel))
+            self.assertFalse(check_is_partially_anchored_path(rel))
+            self.assertFalse(rel.is_absolute())
+
+        # State 3: Strictly absolute
+        with tempfile.TemporaryDirectory() as td:
+            abs_p = Path(td).resolve()
+            self.assertFalse(check_is_relative_path(abs_p))
+            self.assertFalse(check_is_partially_anchored_path(abs_p))
+            self.assertTrue(abs_p.is_absolute())
+
+            with self.assertRaises(AssertionError):
+                encode_dot_prefix(abs_p)
+            with self.assertRaises(AssertionError):
+                decode_dot_prefix(abs_p)
+
+            # State 2: Partially anchored (Windows-only)
+            if sys.platform == "win32":
+                for part_p in [Path("/rooted"), Path("\\rooted"), Path("C:drive_rel")]:
+                    self.assertFalse(check_is_relative_path(part_p))
+                    self.assertTrue(check_is_partially_anchored_path(part_p))
+                    self.assertFalse(part_p.is_absolute())
+                    with self.assertRaises(AssertionError):
+                        encode_dot_prefix(part_p)
+                    with self.assertRaises(AssertionError):
+                        decode_dot_prefix(part_p)
+
+                    bad_engine = RenderEngineConfig(
+                        name="bad",
+                        suffix="t",
+                        render_command="cmd %i %s",
+                        input_file=part_p,
+                    )
+                    with self.assertRaises(RenderError) as cm:
+                        resolve_render_input_file(bad_engine, abs_p)
+                    self.assertIn("must be a relative or valid absolute path", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
-
-

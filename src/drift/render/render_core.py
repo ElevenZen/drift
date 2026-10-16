@@ -15,7 +15,7 @@ Layer 3: File Output Compilation (Public Entry Point)
 
 Layer 2: Core Render Execution
     render_template(engine_config, drift_root, template_file_path, input_file_path)
-        1. Internal Engine Path (is_internal or fallback):
+        1. Internal Engine Path (is_internal):
             render_template_internal [Layer 2]
                 python_envsubst
         2. External Engine Validation & Input Resolution:
@@ -23,7 +23,6 @@ Layer 2: Core Render Execution
             resolve_render_input_file [Layer 1]
         3. Subprocess Command Execution:
             run_command (with %i and %s placeholder substitution)
-            Fallback to render_template_internal on envsubst failure
 
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
@@ -88,11 +87,16 @@ def resolve_render_input_file(
     if engine_config.is_disabled or engine_config.input_file is None:
         raise RenderError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
 
-    config_path = engine_config_input_relative_to / engine_config.input_file
+    input_file = engine_config.input_file
+    if input_file.anchor and not input_file.is_absolute():
+        raise RenderError(
+            f"Render engine '{engine_config.name}' input_file '{input_file}' must be a relative or valid absolute path."
+        )
+    config_path = input_file if input_file.anchor else (engine_config_input_relative_to / input_file)
     if not config_path.exists():
         msg = (
-            f"Input file specified in engine config does not exist: {engine_config.input_file}"
-            if config_path.is_absolute()
+            f"Input file specified in engine config does not exist: {input_file}"
+            if input_file.anchor
             else f"Input file specified in engine config does not exist under '{CONFIG_DIR_NAME}' folder: {config_path}"
         )
         raise FileNotFoundError(msg)
@@ -124,8 +128,7 @@ def render_template(
 
     The engine configuration provides the render command (e.g. "bash -c 'source %i && envsubst < %s'"),
     where %i is replaced with the path to the input file and %s with the template file.
-    If the engine is internal (render_command="internal") or if the engine is 'envsubst'
-    and 'bash' or 'envsubst' is not available, falls back to python_envsubst.
+    If the engine is internal (render_command="internal"), uses python_envsubst directly.
 
     Args:
         engine_config: The RenderEngineConfig instance to use.
@@ -145,10 +148,6 @@ def render_template(
         logger.debug(f"Using internal python_envsubst engine for '{template_file_path}'")
         return render_template_internal(template_file_path)
 
-    if engine_config.name == "envsubst" and (shutil.which("bash") is None or shutil.which("envsubst") is None):
-        logger.info(f"Using internal python_envsubst engine for '{template_file_path}' (bash or envsubst not found)")
-        return render_template_internal(template_file_path)
-
     validate_render_template_args(engine_config, template_file_path)
     resolved_input_file = resolve_render_input_file(
         engine_config=engine_config,
@@ -162,14 +161,9 @@ def render_template(
     )
 
     try:
-        result = run_command(cmd, shell=True, text=True, suppress_output=True)
+        result = run_command(cmd, render=True, text=True, suppress_output=True)
         return result.stdout
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        if engine_config.name == "envsubst":
-            logger.warning(
-                f"External envsubst command failed ({e}). Falling back to internal python_envsubst for '{template_file_path}'."
-            )
-            return render_template_internal(template_file_path)
         err_msg = (
             f"Render command failed with exit code {getattr(e, 'returncode', 'unknown')}.\n"
             f"Command: {cmd}\n"

@@ -7,6 +7,28 @@ from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Dict, FrozenSet, Iterable, List, Optional, Set, Union, Tuple
 
+def add_suffix_filename(filename: str, suffix: str) -> str:
+    """Returns a filename string with the given suffix injected before the file extension.
+
+    Example:
+        add_suffix_filename("drift_workspace.toml", "local")
+        # -> "drift_workspace.local.toml"
+    """
+    if "/" in filename or "\\" in filename:
+        raise ValueError(
+            f"add_suffix_filename expects a bare filename without path separators, got: '{filename}'"
+        )
+    stem, ext = os.path.splitext(filename)
+    return f"{stem}.{suffix}{ext}"
+
+def add_local_filename(filename: str) -> str:
+    """Appends '.local' before the file extension of a filename string."""
+    return add_suffix_filename(filename, 'local')
+
+def add_envst_filename(filename: str) -> str:
+    """Appends '.envst' before the file extension of a filename string."""
+    return add_suffix_filename(filename, 'envst')
+
 def add_suffix_path(file: Path, suffix: str) -> Path:
     """Returns a new Path with the given suffix injected before the file extension.
 
@@ -14,7 +36,7 @@ def add_suffix_path(file: Path, suffix: str) -> Path:
         add_suffix_path(Path("config/drift_workspace.toml"), "local")
         # -> Path("config/drift_workspace.local.toml")
     """
-    return file.with_name(file.stem + "." + suffix + file.suffix)
+    return file.with_name(add_suffix_filename(file.name, suffix))
 
 def add_local_path(file: Path) -> Path:
     """Appends '.local' before the file extension of a Path object."""
@@ -24,33 +46,15 @@ def add_envst_path(file: Path) -> Path:
     """Appends '.envst' before the file extension of a Path object."""
     return add_suffix_path(file, 'envst')
 
-def add_suffix_str(file: str, suffix: str) -> str:
-    """Returns a path string with the given suffix injected before the file extension.
-
-    Example:
-        add_suffix_str("drift_workspace.toml", "local")
-        # -> "drift_workspace.local.toml"
-    """
-    stem, ext = os.path.splitext(os.path.basename(file))
-    return os.path.join(os.path.dirname(file), stem + "." + suffix + ext)
-
-def add_local_str(file: str) -> str:
-    """Appends '.local' before the file extension of a path string."""
-    return add_suffix_str(file, 'local')
-
-def add_envst_str(file: str) -> str:
-    """Appends '.envst' before the file extension of a path string."""
-    return add_suffix_str(file, 'envst')
-
 
 CONFIG_DIR_NAME = "config"
 WORKSPACE_CONFIG_FILE_NAME = "drift_workspace.toml"
-WORKSPACE_CONFIG_LOCAL_FILE_NAME = add_local_str(WORKSPACE_CONFIG_FILE_NAME)
+WORKSPACE_CONFIG_LOCAL_FILE_NAME = add_local_filename(WORKSPACE_CONFIG_FILE_NAME)
 CURRENT_WORKSPACE_CONFIG_FILE_NAMES = (
     WORKSPACE_CONFIG_FILE_NAME,
-    add_envst_str(WORKSPACE_CONFIG_FILE_NAME),
+    add_envst_filename(WORKSPACE_CONFIG_FILE_NAME),
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
-    add_envst_str(WORKSPACE_CONFIG_LOCAL_FILE_NAME),
+    add_envst_filename(WORKSPACE_CONFIG_LOCAL_FILE_NAME),
 )
 LEGACY_WORKSPACE_CONFIG_FILE_NAMES = (
     "drift.toml",
@@ -342,11 +346,11 @@ HOOK_CONFIG_OPTION_SET = set(HOOK_CONFIG_OPTIONS)
 DEFAULT_HOOK_TIMEOUT: int = 120
 DEFAULT_HOOK_TIMEOUT_SECONDS: int = DEFAULT_HOOK_TIMEOUT
 
-IN_TEST_MODE: bool = os.environ.get("DRIFT_TEST_MODE", "0") == "1"
+IN_TEST_MODE: bool = os.environ.get("drift_test_mode", os.environ.get("DRIFT_TEST_MODE", "0")) == "1"
 
 DEFAULT_HOOK_COMMON_ENVS: Dict[str, str] = {
-    "DRIFT_HOOK": "1",
-    "DRIFT_NON_INTERACTIVE": "1",
+    "drift_hook": "1",
+    "drift_non_interactive": "1",
 }
 
 DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS: Dict[str, str] = {
@@ -429,10 +433,6 @@ TEMPORARY_FILE_PATTERNS = (
     "*.un~",
     "*.DS_Store*",
     "*Thumbs.db*",
-)
-
-DEFAULT_DIFF_EXCLUDE_PATTERNS = tuple(f":(exclude){p}" for p in TEMPORARY_FILE_PATTERNS) + (
-    f":(exclude,glob)**/{DRIFT_INTERNAL_DIR_NAME}/{RENDER_LOCK_FILE_NAME}",
 )
 
 DEFAULT_INTERNAL_GITIGNORE_CONTENT = (

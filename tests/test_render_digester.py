@@ -20,6 +20,11 @@ from drift.core.constants import (
     DRIFT_KEEP_FILE_NAME,
     set_test_mode,
 )
+
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
+
 from drift.core.file_action import FileAction, FileActionType, format_action_line
 from drift.render.render_cache import NodeHashes, RenderCache
 from drift.render.render_lock import RenderLockfile, RenderBucket
@@ -910,6 +915,7 @@ class TestRenderActionLogging(unittest.TestCase):
             set_test_mode(True, enable_logging=False)
 
 
+@unittest.skipUnless(CAN_SYMLINK, "Symlinks not supported or permitted on this platform")
 class TestSymlinkAndMacOsPathResolution(unittest.TestCase):
     """Regression unit and two-pass idempotency tests for symlinked roots and macOS /var -> /private/var topologies."""
 

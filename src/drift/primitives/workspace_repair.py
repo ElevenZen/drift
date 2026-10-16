@@ -54,7 +54,7 @@ from typing import List, Iterable, Tuple
 from ..core.exceptions import ConfigError
 from ..core.constants import (
     add_envst_path,
-    add_envst_str,
+    add_envst_filename,
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
@@ -124,8 +124,8 @@ def repair_workspace_config(
     legacy_mappings = [
         ("drift.toml", WORKSPACE_CONFIG_FILE_NAME),
         ("drift.local.toml", WORKSPACE_CONFIG_LOCAL_FILE_NAME),
-        ("drift.envst.toml", add_envst_str(WORKSPACE_CONFIG_FILE_NAME)),
-        ("drift.local.envst.toml", add_envst_str(WORKSPACE_CONFIG_LOCAL_FILE_NAME)),
+        ("drift.envst.toml", add_envst_filename(WORKSPACE_CONFIG_FILE_NAME)),
+        ("drift.local.envst.toml", add_envst_filename(WORKSPACE_CONFIG_LOCAL_FILE_NAME)),
     ]
 
     # in dry-run mode, we cannot rename file, so we need to load legacy config files if they exist.
@@ -148,7 +148,7 @@ def repair_workspace_config(
             config_dir.mkdir(parents=True, exist_ok=True)
             old_path.rename(target_path)
         else:
-            if old_name in ('drift.toml', add_envst_str('drift.toml')):
+            if old_name in ('drift.toml', add_envst_filename('drift.toml')):
                 use_legacy_main = True
             else:
                 use_legacy_local = True
@@ -170,7 +170,7 @@ def repair_workspace_config(
     # 3. Check and restore drift_workspace.local.toml template if missing
     local_config_files = [
         local_config_file,
-        config_dir / add_envst_str(WORKSPACE_CONFIG_LOCAL_FILE_NAME),
+        config_dir / add_envst_filename(WORKSPACE_CONFIG_LOCAL_FILE_NAME),
     ]
     local_config_occupied = any(f.exists() for f in local_config_files)
     if not local_config_occupied and not use_legacy_local:

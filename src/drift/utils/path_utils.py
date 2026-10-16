@@ -8,6 +8,8 @@ All functions in this module are pure (no filesystem I/O except Path.home()
 for tilde expansion). They operate on path representations only.
 
     expand_path(path_input) — Expands ~, $VAR, %VAR% in path strings.
+    check_is_relative_path(path) — True iff path has no drive or root anchor (State 1).
+    check_is_partially_anchored_path(path) — True iff path has an anchor but is not absolute (State 2 on Windows).
     is_relative_to(path, other) — Polyfill for Path.is_relative_to (Python <3.9).
     encode_dot_prefix(relative_path) — Converts 'dot-config' → '.config' in path segments.
     decode_dot_prefix(relative_path) — Converts '.config' → 'dot-config' in path segments.
@@ -19,6 +21,7 @@ for tilde expansion). They operate on path representations only.
 """
 
 import os
+import posixpath
 import sys
 import re
 from pathlib import Path
@@ -26,19 +29,23 @@ from typing import Union, Optional
 
 
 COMMON_WINDOWS_PATH_ENVS = {
-    "USERPROFILE": lambda: str(Path.home()),
-    "APPDATA": lambda: str(Path.home() / "AppData" / "Roaming"),
-    "LOCALAPPDATA": lambda: str(Path.home() / "AppData" / "Local"),
+    "USERPROFILE": lambda: rf"{Path.home()}",
+    "APPDATA": lambda: rf"{Path.home()}\AppData\Roaming",
+    "LOCALAPPDATA": lambda: rf"{Path.home()}\AppData\Local",
     "PROGRAMDATA": lambda: r"C:\ProgramData",
     "HOMEDRIVE": lambda: Path.home().drive or "C:",
-    "HOMEPATH": lambda: str(Path.home().relative_to(Path.home().anchor)) if Path.home().drive else str(Path.home()),
-    "TEMP": lambda: os.environ.get("TEMP") or os.environ.get("TMP") or str(Path.home() / "AppData" / "Local" / "Temp"),
-    "TMP": lambda: os.environ.get("TMP") or os.environ.get("TEMP") or str(Path.home() / "AppData" / "Local" / "Temp"),
-    "SYSTEMROOT": lambda: os.environ.get("SYSTEMROOT") or r"C:\Windows",
-    "WINDIR": lambda: os.environ.get("WINDIR") or r"C:\Windows",
-    "ALLUSERSPROFILE": lambda: os.environ.get("ALLUSERSPROFILE") or r"C:\ProgramData",
-    "PROGRAMFILES": lambda: os.environ.get("PROGRAMFILES") or r"C:\Program Files",
-    "PROGRAMFILES(X86)": lambda: os.environ.get("PROGRAMFILES(X86)") or r"C:\Program Files (x86)",
+    "HOMEPATH": lambda: (
+        rf"\{Path.home().relative_to(Path.home().anchor)}"
+        if Path.home().drive
+        else rf"{Path.home()}"
+    ),
+    "TEMP": lambda: rf"{Path.home()}\AppData\Local\Temp",
+    "TMP": lambda: rf"{Path.home()}\AppData\Local\Temp",
+    "SYSTEMROOT": lambda: r"C:\Windows",
+    "WINDIR": lambda: r"C:\Windows",
+    "ALLUSERSPROFILE": lambda: r"C:\ProgramData",
+    "PROGRAMFILES": lambda: r"C:\Program Files",
+    "PROGRAMFILES(X86)": lambda: r"C:\Program Files (x86)",
 }
 
 
@@ -64,22 +71,32 @@ def expand_path(path_input: Union[str, Path]) -> Path:
         raw = re.sub(r"%([A-Za-z0-9_()]+)%", replace_win_env, raw)
 
     # 2. Expand $VAR / ${VAR} syntax
-    raw = os.path.expandvars(raw)
+    raw = posixpath.expandvars(raw)
 
-    # 3. Expand ~ or ~/ or ~\ at beginning of path cleanly across platforms
-    if raw == "~":
-        return Path.home()
-    if raw.startswith("~/") or raw.startswith("~\\"):
-        subpath = raw[2:].lstrip("/\\")
-        parts = [p for p in re.split(r"[/\\]+", subpath) if p]
-        return Path.home().joinpath(*parts)
-
-    # 4. Normalize backslashes to forward slashes for cross-platform consistency
+    # 3. Normalize backslashes to forward slashes for cross-platform consistency
     if sys.platform == "win32" and "\\" in raw:
         raw = raw.replace("\\", "/")
 
+    # 4. Expand ~ or ~/ at beginning of path cleanly across platforms
+    if raw == "~":
+        return Path.home()
+    if raw.startswith("~/"):
+        subpath = raw[2:].lstrip("/")
+        parts = [p for p in subpath.split("/") if p]
+        return Path.home().joinpath(*parts)
+
     # 5. Final expanduser call to ensure clean Path conversion
     return Path(raw).expanduser()
+
+
+def check_is_relative_path(path: Path) -> bool:
+    """Returns True if path is strictly relative (State 1: has neither drive nor root anchor)."""
+    return not path.anchor
+
+
+def check_is_partially_anchored_path(path: Path) -> bool:
+    """Returns True if path has a drive or root anchor without being a full absolute path (State 2 on Windows)."""
+    return bool(path.anchor) and not path.is_absolute()
 
 
 def is_relative_to(path: Path, other: Path) -> bool:
@@ -96,6 +113,7 @@ def encode_dot_prefix(relative_path: Path) -> Path:
 
     Does not translate 'dot-' or 'dot-.' segments (only segments with suffix after 'dot-').
     """
+    assert not relative_path.anchor, f"encode_dot_prefix expects a strictly relative path without anchor, got '{relative_path}'."
     translated_parts = ["." + p[4:]
                         if p.startswith("dot-") and p not in ("dot-", "dot-.") else p
                         for p in relative_path.parts]
@@ -108,6 +126,7 @@ def decode_dot_prefix(relative_path: Path) -> Path:
 
     Does not translate '.' and '..' segments.
     """
+    assert not relative_path.anchor, f"decode_dot_prefix expects a strictly relative path without anchor, got '{relative_path}'."
     translated_parts = ["dot-" + p[1:]
                         if p.startswith(".") and p not in (".", "..") else p
                         for p in relative_path.parts]

@@ -21,8 +21,8 @@ from .file_inspect import (
     is_temp_file,
     is_concrete_dir,
     is_internal_lock_file,
-    is_diff_candidate,
-    find_symlink_ancestor,
+    check_is_trackable,
+    check_can_symlink,
 )
 from .file_ops import (
     copy_file,
@@ -47,6 +47,7 @@ from .process_utils import (
     format_output,
     strip_ansi,
     has_admin_privileges,
+    normalize_windows_drift_env,
 )
 from .toml_utils import (
     parse_toml,
@@ -85,6 +86,7 @@ from .env_utils import (
 from .git_utils import (
     GitRename,
     GitStatusDiff,
+    unquote_git_path,
     parse_git_status_porcelain,
     commit_repo_changes,
     is_git_tracked,
@@ -148,8 +150,8 @@ __all__ = [
     "is_temp_file",
     "is_concrete_dir",
     "is_internal_lock_file",
-    "is_diff_candidate",
-    "find_symlink_ancestor",
+    "check_is_trackable",
+    "check_can_symlink",
     "copy_file",
     "copy_symlink",
     "copy_permissions",
@@ -169,6 +171,7 @@ __all__ = [
     "format_output",
     "strip_ansi",
     "has_admin_privileges",
+    "normalize_windows_drift_env",
     "parse_toml",
     "dump_toml",
     "merge_toml",
@@ -199,6 +202,7 @@ __all__ = [
     "interpolate_config_dict",
     "GitRename",
     "GitStatusDiff",
+    "unquote_git_path",
     "parse_git_status_porcelain",
     "commit_repo_changes",
     "is_git_tracked",

@@ -6,6 +6,11 @@ import unittest
 from pathlib import Path
 from typing import Union, Optional
 
+from drift.core.constants import set_test_mode
+
+# Ensure test mode is active across test runs
+set_test_mode(True, enable_logging=False)
+
 
 def strip_ansi(text: str) -> str:
     """Strips ANSI escape codes from the given string."""

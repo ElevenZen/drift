@@ -41,6 +41,7 @@ class TestDiff(unittest.TestCase):
             subprocess.run(["git", "init"], cwd=str(d), capture_output=True, check=True)
             subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(d), capture_output=True, check=True)
             subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(d), capture_output=True, check=True)
+            subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=str(d), capture_output=True, check=True)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -64,7 +65,7 @@ class TestDiff(unittest.TestCase):
         
         from drift.core.result_models import DiffType
         # 3. Run Diff A
-        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
             self.assertIn("modified content", stdout.getvalue())
 
@@ -91,7 +92,7 @@ class TestDiff(unittest.TestCase):
         (self.system_target_dir / "file.txt").write_text("drifted content")
         
         # 3. Run Diff B
-        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
             self.assertIn("drifted content", stdout.getvalue())
 
@@ -118,7 +119,7 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("new version content")
         
         # 3. Run Diff Δ
-        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             self.assertIn("new version content", stdout.getvalue())
 
@@ -146,7 +147,7 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="symlink"\n')
 
         # 3. Diff A (Template Evolution) should show change in drift_package.toml
-        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
             out = stdout.getvalue()
             self.assertIn("drift_package.toml", out)
@@ -154,7 +155,7 @@ class TestDiff(unittest.TestCase):
             self.assertIn("symlink", out)
 
         # 4. Diff Δ (Pending Delta) should show change in drift_package.toml
-        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             out = stdout.getvalue()
             self.assertIn("drift_package.toml", out)
@@ -186,7 +187,7 @@ class TestDiff(unittest.TestCase):
         self.assertEqual(tree_files(self.install_dir / pkg), tree_files(self.render_dir / pkg))
 
         # 2. Diff Δ should be completely empty
-        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             out = stdout.getvalue()
             self.assertNotIn("diff --git", out)
@@ -194,7 +195,7 @@ class TestDiff(unittest.TestCase):
     def test_diff_enum_types(self):
         """Verifies run_primitive_15_workspace_diff accepts DiffType enum members."""
         from drift.core.result_models import DiffType
-        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
@@ -333,7 +334,7 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("v2\n")
 
         # 4. Run Diff Δ
-        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             out = stdout.getvalue()
             self.assertIn("v2", out)
@@ -484,13 +485,168 @@ class TestDiff(unittest.TestCase):
         internal_lock.write_text('{"internal_state": "changed"}\n')
 
         # 3. Diff Δ (Pending Delta) must display user render_lock.json, but NOT .drift/render_lock.json
-        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             out = stdout.getvalue()
             self.assertIn("custom/render_lock.json", out)
             self.assertIn("user_config", out)
             self.assertNotIn(".drift/render_lock.json", out)
             self.assertNotIn("internal_state", out)
+
+        # 4. Diff Δ with stat=True must also display custom/render_lock.json and exclude .drift/render_lock.json
+        with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, stat=True)
+            stat_out = stdout.getvalue()
+            self.assertIn("custom/render_lock.json", stat_out)
+            self.assertNotIn(".drift/render_lock.json", stat_out)
+
+    def test_extract_paths_from_diff_header_corner_cases(self) -> None:
+        """Verifies extract_paths_from_diff_header handles git, no-index, quotes, and ANSI color codes."""
+        from drift.primitives.workspace_diff import extract_paths_from_diff_header
+
+        # 1. Standard `diff --git` with `a/` and `b/` prefixes
+        self.assertEqual(
+            extract_paths_from_diff_header("diff --git a/pkg_a/file.txt b/pkg_a/file.txt"),
+            ("pkg_a/file.txt", "pkg_a/file.txt"),
+        )
+        # 2. `diff --no-index` without `a/` or `b/` prefixes
+        self.assertEqual(
+            extract_paths_from_diff_header("diff --no-index install/pkg_a/file.txt render/pkg_a/file.txt"),
+            ("install/pkg_a/file.txt", "render/pkg_a/file.txt"),
+        )
+        # 3. Quoted paths containing spaces
+        self.assertEqual(
+            extract_paths_from_diff_header('diff --git "a/pkg_a/my file.txt" "b/pkg_a/my file.txt"'),
+            ("pkg_a/my file.txt", "pkg_a/my file.txt"),
+        )
+        # 4. Leading and trailing ANSI color escape sequences
+        self.assertEqual(
+            extract_paths_from_diff_header("\x1b[1mdiff --git a/pkg_a/.drift/render_lock.json b/pkg_a/.drift/render_lock.json\x1b[m"),
+            ("pkg_a/.drift/render_lock.json", "pkg_a/.drift/render_lock.json"),
+        )
+        # 5. Non-header line
+        self.assertEqual(
+            extract_paths_from_diff_header(" pkg_a/file.txt | 2 +-"),
+            (None, None),
+        )
+
+    def test_is_stat_line_candidate_corner_cases(self) -> None:
+        """Verifies is_stat_line_candidate across single-path, brace-compressed, and unbraced arrow formats."""
+        from drift.primitives.workspace_diff import is_stat_line_candidate
+
+        # 1. Single path format (repo `git diff --stat`)
+        self.assertTrue(is_stat_line_candidate(" pkg_a/file.txt | 2 +-"))
+        self.assertTrue(is_stat_line_candidate(" pkg_a/.drift/drift_package.toml | 1 +"))
+        self.assertTrue(is_stat_line_candidate(" pkg_a/custom/render_lock.json | 1 +"))
+        self.assertFalse(is_stat_line_candidate(" pkg_a/.drift/render_lock.json | 1 +"))
+        self.assertFalse(is_stat_line_candidate(" pkg_a/.file.txt.swp | 1 +"))
+        self.assertFalse(is_stat_line_candidate(" pkg_a/.DS_Store | 1 +"))
+
+        # 2. Brace-compressed arrow format with spaces around `=>` (`{install => render}/...`)
+        # Crucially verifies that the shared suffix after `}` is preserved on BOTH paths.
+        self.assertTrue(is_stat_line_candidate(" {install => render}/pkg_a/file.txt | 2 +-"))
+        self.assertTrue(is_stat_line_candidate(" {install => render}/pkg_a/custom/render_lock.json | 2 +-"))
+        self.assertFalse(is_stat_line_candidate(" {install => render}/pkg_a/.drift/render_lock.json | 2 +-"))
+        self.assertFalse(is_stat_line_candidate(" {install => render}/pkg_a/.DS_Store | 1 +"))
+        self.assertFalse(is_stat_line_candidate(" pkg_a/{valid.txt => .valid.txt.swp} | 0"))
+        self.assertFalse(is_stat_line_candidate(" pkg_a/{.valid.txt.swp => valid.txt} | 0"))
+
+        # 3. Unbraced arrow format (`/dev/null => ...` or disjoint directories)
+        self.assertTrue(is_stat_line_candidate(" /dev/null => render/pkg_a/file.txt | 1 +"))
+        self.assertTrue(is_stat_line_candidate(" install/pkg_a/file.txt => /dev/null | 1 -"))
+        self.assertFalse(is_stat_line_candidate(" /dev/null => render/pkg_a/.drift/render_lock.json | 1 +"))
+        self.assertFalse(is_stat_line_candidate(" install/pkg_a/.drift/render_lock.json => /dev/null | 1 -"))
+        self.assertFalse(is_stat_line_candidate(" /tmp/empty => render/pkg_a/.DS_Store | 1 +"))
+
+        # 4. ANSI escape sequences, C-quoted Windows backslash paths, and summary footer lines
+        self.assertFalse(is_stat_line_candidate("\x1b[32m {install => render}/pkg_a/.drift/render_lock.json\x1b[m | 2 +-"))
+        self.assertFalse(is_stat_line_candidate(' .../render_lock.json" => "render\\\\pkg_a/.drift/render_lock.json" | 4 ++--'))
+        self.assertTrue(is_stat_line_candidate(' .../render_lock.json" => "render\\\\pkg_a/custom/render_lock.json" | 2 +-'))
+        self.assertTrue(is_stat_line_candidate(" 2 files changed, 4 insertions(+), 1 deletion(-)"))
+
+    def test_filter_diff_output_patch_and_stat_corner_cases(self) -> None:
+        """Verifies filter_diff_output handles single-chunk patches, multi-chunk patches, and --stat output."""
+        from drift.primitives.workspace_diff import filter_diff_output
+
+        # 1. Single-file patch containing ONLY an excluded lockfile -> filtered to empty string
+        single_excluded_patch = (
+            "\x1b[1mdiff --git a/pkg_a/.drift/render_lock.json b/pkg_a/.drift/render_lock.json\x1b[m\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/pkg_a/.drift/render_lock.json\n"
+            "+++ b/pkg_a/.drift/render_lock.json\n"
+            "@@ -1 +1 @@\n"
+            "-{}\n"
+            '+{"a": 1}\n'
+        )
+        self.assertEqual(filter_diff_output(single_excluded_patch), "")
+
+        # 2. Single-file patch containing a valid file -> preserved intact
+        single_valid_patch = (
+            "\x1b[1mdiff --git a/pkg_a/file.txt b/pkg_a/file.txt\x1b[m\n"
+            "--- a/pkg_a/file.txt\n"
+            "+++ b/pkg_a/file.txt\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        self.assertEqual(filter_diff_output(single_valid_patch), single_valid_patch)
+
+        # 3. Multi-chunk patch mixing valid files and excluded temp/lock files
+        temp_patch = (
+            "\x1b[1mdiff --no-index install/pkg_a/.DS_Store render/pkg_a/.DS_Store\x1b[m\n"
+            "Binary files differ\n"
+        )
+        combined_patch = single_excluded_patch + single_valid_patch + temp_patch
+        self.assertEqual(filter_diff_output(combined_patch), single_valid_patch)
+
+        # 4. Stat output mixing valid and excluded lines
+        stat_text = (
+            " {install => render}/pkg_a/.drift/render_lock.json | 2 +-\n"
+            " {install => render}/pkg_a/custom/render_lock.json | 2 +-\n"
+            " {install => render}/pkg_a/.DS_Store               | 1 +\n"
+            " {install => render}/pkg_a/file.txt                | 2 +-\n"
+            " 4 files changed, 4 insertions(+), 3 deletions(-)\n"
+        )
+        filtered_stat = filter_diff_output(stat_text)
+        self.assertNotIn(".drift/render_lock.json", filtered_stat)
+        self.assertNotIn(".DS_Store", filtered_stat)
+        self.assertIn("custom/render_lock.json", filtered_stat)
+        self.assertIn("pkg_a/file.txt", filtered_stat)
+        self.assertIn("4 files changed", filtered_stat)
+
+    def test_unquote_git_path_and_porcelain_octal_utf8(self) -> None:
+        """Verifies unquote_git_path decodes C-style escapes and octal UTF-8 sequences in git status and diff headers."""
+        from drift.utils.git_utils import unquote_git_path, parse_git_status_porcelain
+        from drift.primitives.workspace_diff import extract_paths_from_diff_header
+
+        # 1. Direct unquote_git_path cases
+        self.assertEqual(unquote_git_path("pkg/normal.txt"), "pkg/normal.txt")
+        self.assertEqual(unquote_git_path('"pkg/my file.txt"'), "pkg/my file.txt")
+        self.assertEqual(
+            unquote_git_path('"render\\\\pkg/.drift/render_lock.json"'),
+            "render\\pkg/.drift/render_lock.json",
+        )
+        # Octal UTF-8 for "中文" (\344\270\255\346\226\207)
+        self.assertEqual(
+            unquote_git_path(r'"pkg/\344\270\255\346\226\207.txt"'),
+            "pkg/中文.txt",
+        )
+        self.assertEqual(
+            extract_paths_from_diff_header(r'diff --git "a/pkg/\344\270\255\346\226\207.swp" "b/pkg/\344\270\255\346\226\207.swp"'),
+            ("pkg/中文.swp", "pkg/中文.swp"),
+        )
+
+        # 2. End-to-end git status --porcelain with non-ASCII filename and temp file
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+            pkg_dir = repo / "pkg_utf8"
+            pkg_dir.mkdir()
+            (pkg_dir / "中文配置.conf").write_text("val=1\n", encoding="utf-8")
+            (pkg_dir / "中文临时.swp").write_text("swap\n", encoding="utf-8")
+
+            status_diff = parse_git_status_porcelain(repo, "pkg_utf8")
+            self.assertEqual(status_diff.added, [Path("中文配置.conf")])
 
 
 if __name__ == "__main__":

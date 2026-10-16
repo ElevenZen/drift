@@ -134,15 +134,8 @@ logger = logging.getLogger(__name__)
 
 def get_drifted_packages(workspace_config: WorkspaceConfig) -> List[str]:
     """Scans the install/ repository status to identify which packages have uncommitted drifts."""
-    lines = get_git_status_porcelain(workspace_config.install_path)
-    changed_names = set()
-    for line in lines:
-        if len(line) < 4:
-            continue
-        path_str = line[3:].strip()
-        parts = Path(path_str).parts
-        if parts:
-            changed_names.add(parts[0])
+    diff = parse_git_status_porcelain(workspace_config.install_path)
+    changed_names = {p.parts[0] for p in diff.all_paths() if p.parts}
 
     installed_packages = set(workspace_config.get_package_names_from_dir(workspace_config.install_path))
     source_packages = set(workspace_config.get_package_names_from_source_dir())
@@ -184,6 +177,10 @@ def assert_source_file_clean(
     )
 
 
+def check_patch_has_hunks(patch_content: str) -> bool:
+    """Read-only check returning True if patch_content contains at least one unified diff hunk header ('@@ ')."""
+    return any(line.startswith("@@ ") or line == "@@" for line in patch_content.splitlines())
+
 
 def generate_unified_patch(install_base: Path,
                            pkg_rel_path: Path,
@@ -191,10 +188,10 @@ def generate_unified_patch(install_base: Path,
     """Generates the unified patch string for a given drifted file in install/."""
     cmd = ["git", "-C", str(install_base), "diff", "HEAD", "--"]
     if old_rel_path:
-        cmd.append(str(old_rel_path))
-    cmd.append(str(pkg_rel_path))
+        cmd.append(old_rel_path.as_posix())
+    cmd.append(pkg_rel_path.as_posix())
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
         return res.stdout
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to generate unified patch for {pkg_rel_path}: {e}")
@@ -208,7 +205,12 @@ def generate_adjusted_patch(
     old_rel_path: Optional[Path] = None,
     target_src_filename: Optional[str] = None
 ) -> str:
-    """Generates a unified patch and adjusts its diff headers to point to a target source file name."""
+    """Generates a unified patch and adjusts its diff headers to point to a target source file name.
+
+    Header lines are only stripped or rewritten before the first '@@' hunk header so that
+    diff body lines starting with '--- ' (deleted '-- ' lines) or '+++ ' (added '++ ' lines)
+    are preserved verbatim.
+    """
     patch_content = generate_unified_patch(
         install_base,
         Path(pkg) / new_rel_path,
@@ -219,18 +221,18 @@ def generate_adjusted_patch(
 
     lines = patch_content.splitlines()
     adjusted_lines = []
+    in_hunk = False
     for line in lines:
-        if (line.startswith("diff --git") or 
-            line.startswith("similarity index") or 
-            line.startswith("rename from") or 
-            line.startswith("rename to") or 
-            line.startswith("index ")):
-            continue
-        if line.startswith("--- "):
-            adjusted_lines.append(f"--- a/{target_src_filename}")
-            continue
-        if line.startswith("+++ "):
-            adjusted_lines.append(f"+++ b/{target_src_filename}")
+        if not in_hunk:
+            if line.startswith("@@ ") or line == "@@":
+                in_hunk = True
+                adjusted_lines.append(line)
+            elif line.startswith("--- "):
+                adjusted_lines.append(f"--- a/{target_src_filename}")
+            elif line.startswith("+++ "):
+                adjusted_lines.append(f"+++ b/{target_src_filename}")
+            # All other pre-hunk lines (diff --git, index, similarity index, rename from/to,
+            # old/new/deleted file mode) are Git extended headers and are skipped.
             continue
         adjusted_lines.append(line)
     return "\n".join(adjusted_lines) + "\n"
@@ -243,11 +245,11 @@ def check_patch_conflicts(src_file: Path, patch_content: str) -> bool:
     (lines starting with '@@') and errors if passed a hunkless diff (e.g. mode-only git diffs).
     If patch_content lacks '@@' hunks, returns False (no conflicts) immediately without calling patch.
     """
-    if not any(line.startswith("@@") for line in patch_content.splitlines()):
+    if not check_patch_has_hunks(patch_content):
         return False
     cmd = ["patch", "--dry-run", "--no-backup-if-mismatch", str(src_file)]
     try:
-        subprocess.run(cmd, input=patch_content, capture_output=True, text=True, check=True)
+        subprocess.run(cmd, input=patch_content, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
         return False
     except subprocess.CalledProcessError:
         return True
@@ -261,7 +263,7 @@ def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: boo
     returns True immediately without executing the external patch binary, allowing file permissions
     to be applied via _sync_file_mode.
     """
-    if not any(line.startswith("@@") for line in patch_content.splitlines()):
+    if not check_patch_has_hunks(patch_content):
         return True
     cmd = ["patch", "--no-backup-if-mismatch"]
     if accept_conflicts:
@@ -269,7 +271,7 @@ def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: boo
     cmd.append(str(src_file))
     
     try:
-        subprocess.run(cmd, input=patch_content, capture_output=True, text=True, check=True)
+        subprocess.run(cmd, input=patch_content, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
         return True
     except subprocess.CalledProcessError:
         return False
@@ -381,7 +383,7 @@ def get_package_drifts(
         for rel_mod in modifications:
             pkg_rel_path = Path(pkg) / rel_mod
             patch_content = generate_unified_patch(install_base, pkg_rel_path)
-            patches[str(rel_mod)] = patch_content
+            patches[rel_mod.as_posix()] = patch_content
 
         for old_rel, new_rel in renames:
             old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel)
@@ -393,7 +395,7 @@ def get_package_drifts(
                 old_rel_path=old_rel,
                 target_src_filename=target_name,
             )
-            patches[f"{old_rel}->{new_rel}"] = adj_patch
+            patches[f"{old_rel.as_posix()}->{new_rel.as_posix()}"] = adj_patch
     finally:
         # Guarantee unstage in install/ repo so working index remains clean
         res_rst = subprocess.run(
@@ -459,7 +461,7 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
     rel_install_base = Path(install_pkg_dir.name) / rel_path
     # check=False is intentional: file may not be tracked in the git index yet.
     res_rm = subprocess.run(
-        ["git", "-C", str(install_base), "rm", "-r", "--cached", "-f", "--", str(rel_install_base)],
+        ["git", "-C", str(install_base), "rm", "-r", "--cached", "-f", "--", rel_install_base.as_posix()],
         capture_output=True,
         text=True,
         check=False,
@@ -619,9 +621,9 @@ def dry_run_adopt(plan: PackageAdoptPlan) -> None:
                 continue
 
             # If the resolved source file is templated, check for conflicts
-            is_templated = src_file.suffix in [".sh", ".toml", ".json", ".conf"] or ".envst" in src_file.name or ".mustache" in src_file.name
+            is_templated = plan.render_engines.find_engine_for_file(src_file.name) is not None
             if is_templated:
-                patch_content = plan.patches.get(str(file))
+                patch_content = plan.patches.get(file.as_posix())
                 if patch_content is None:
                     install_file = plan.install_pkg_dir / file
                     pkg_rel_path = Path(plan.package) / file
@@ -1316,14 +1318,14 @@ def handle_single_modification(
 
     assert_source_file_clean(src_file, force=force, pkg=pkg)
 
-    is_templated = ".envst" in src_file.name or ".mustache" in src_file.name
+    is_templated = render_engines.find_engine_for_file(src_file.name) is not None
     if precomputed_patch is not None:
         patch_content = precomputed_patch
     else:
         patch_content = generate_unified_patch(install_base, pkg_rel_path)
 
     # Check if there are content diff hunks in the patch
-    has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
+    has_content_hunks = check_patch_has_hunks(patch_content)
 
     if not is_templated:
         # For static files, adopting simply overwrites src_file with install_file (including permissions)
@@ -1403,7 +1405,7 @@ def execute_package_adopt(
 
     # 3. Process Renames
     for old_rel_path, new_rel_path in plan.renames:
-        patch_content = plan.patches.get(f"{old_rel_path}->{new_rel_path}")
+        patch_content = plan.patches.get(f"{old_rel_path.as_posix()}->{new_rel_path.as_posix()}")
         resolved = handle_single_rename(
             plan.render_engines, plan.package, plan.src_pkg_dir, plan.src_dir_to_render,
             plan.install_pkg_dir, workspace_config.install_path,
@@ -1420,7 +1422,7 @@ def execute_package_adopt(
 
     # 4. Process Modifications
     for rel_path in plan.modifications:
-        patch_content = plan.patches.get(str(rel_path))
+        patch_content = plan.patches.get(rel_path.as_posix())
         resolved = handle_single_modification(
             plan.render_engines, plan.package, plan.src_pkg_dir, plan.src_dir_to_render,
             plan.install_pkg_dir, workspace_config.install_path,

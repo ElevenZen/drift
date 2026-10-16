@@ -16,6 +16,9 @@ from drift.core.folder_diff import (
     check_circular_dest_symlink,
 )
 from drift.core.ignore import DriftIgnore
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
 
 
 class TestFolderDiffBasic(unittest.TestCase):
@@ -435,6 +438,7 @@ class TestFolderDiffIgnoreHandler(unittest.TestCase):
         self.assertEqual(diff.added, [])
         self.assertEqual(diff.deleted, [])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_ignored_symlink_to_directory_with_trailing_slash_rule(self) -> None:
         """Verifies trailing slash ignore pattern matches symlink to directory regardless of resolve_symlinks flag."""
         target = self.base / "real_dir"
@@ -453,6 +457,7 @@ class TestFolderDiffIgnoreHandler(unittest.TestCase):
         self.assertEqual(diff_raw.added, [])
 
 
+@unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
 class TestFolderDiffSymlinks(unittest.TestCase):
     """Tests for symlink handling with resolve_symlinks=True and False."""
 
@@ -618,6 +623,7 @@ class TestFolderDiffTypeMismatchesAndRoots(unittest.TestCase):
         self.assertEqual(diff.deleted, [Path("item")])
         self.assertEqual(diff.added, [Path("item"), Path("item/child.txt")])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_src_dir_dst_symlink_mismatch_resolve_symlinks_false(self) -> None:
         self.src.mkdir(parents=True, exist_ok=True)
         self.dst.mkdir(parents=True, exist_ok=True)
@@ -727,6 +733,7 @@ class TestFolderDiffSpecialEdgeCases(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, translate_mode="forward")
         self.assertEqual(diff.matches, [Path("dot-/dot-bashrc")])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_broken_symlink_in_add_children_as_added(self) -> None:
         # Non-existent dst root, src has a broken symlink
         nonexistent_target = self.base / "ghost.txt"
@@ -736,6 +743,7 @@ class TestFolderDiffSpecialEdgeCases(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
         self.assertEqual(diff.added, [Path("broken_link.txt")])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_broken_symlink_in_add_children_as_deleted(self) -> None:
         # Non-existent src root, dst has a broken symlink
         nonexistent_target = self.base / "ghost.txt"
@@ -745,6 +753,7 @@ class TestFolderDiffSpecialEdgeCases(unittest.TestCase):
         diff = compare_folders(self.src, self.dst)
         self.assertEqual(diff.deleted, [Path("broken_link.txt")])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_symlink_target_cycle_handled_gracefully(self) -> None:
         # Circular symlinks (link1 -> link2 -> link1)
         l1 = self.src / "cycle1"
@@ -840,6 +849,7 @@ class TestListFolderPaths(unittest.TestCase):
         paths = list_folder_paths(f, base_rel=Path("single.txt"))
         self.assertEqual(paths, [Path("single.txt")])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_list_folder_paths_symlinked_dir_resolved(self) -> None:
         target_dir = self.base / "target_dir"
         target_dir.mkdir()
@@ -869,6 +879,7 @@ class TestListFolderPaths(unittest.TestCase):
         self.assertEqual(paths_from_root, [Path("link_dir")])
 
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_list_folder_paths_dest_dir_circular_symlink_guard(self) -> None:
         """Verifies that an anomalous directory symlink resolving into dest_dir differing from
         its counterpart is warned and skipped, while canonical symlinks are traversed."""
@@ -924,6 +935,7 @@ class TestFolderDiffCyclicReferences(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_compare_folders_self_referencing_cyclic_symlink(self) -> None:
         """Verifies that self-referencing symlinks in src and dst do not cause infinite recursion."""
         (self.src / "loop").symlink_to(self.src)
@@ -937,6 +949,7 @@ class TestFolderDiffCyclicReferences(unittest.TestCase):
         self.assertEqual(diff.added, [])
         self.assertEqual(diff.deleted, [])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_compare_folders_mutual_referencing_cyclic_symlinks(self) -> None:
         """Verifies that mutual circular symlinks between subdirectories do not cause infinite recursion."""
         sub_a = self.src / "dir_a"
@@ -959,6 +972,7 @@ class TestFolderDiffCyclicReferences(unittest.TestCase):
         self.assertIn(Path("dir_a/file_a.txt"), diff.matches)
         self.assertEqual(diff.modified, [])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_compare_folders_cyclic_symlink_in_src_only(self) -> None:
         """Verifies that cyclic symlinks in added src directories do not hang in add_children_as_added."""
         (self.src / "loop").symlink_to(self.src)
@@ -968,6 +982,7 @@ class TestFolderDiffCyclicReferences(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
         self.assertIn(Path("valid.txt"), diff.added)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_compare_folders_cyclic_symlink_in_dst_only(self) -> None:
         """Verifies that cyclic symlinks in deleted dst directories do not hang in add_children_as_deleted."""
         (self.dst / "loop").symlink_to(self.dst)
@@ -977,6 +992,7 @@ class TestFolderDiffCyclicReferences(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
         self.assertIn(Path("deleted.txt"), diff.deleted)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_compare_folders_dag_multiple_links_to_shared_target(self) -> None:
         """Verifies that DAG structures (multiple symlinks pointing to the same directory)
         are correctly evaluated without false loop aborts.
@@ -1000,6 +1016,7 @@ class TestFolderDiffCyclicReferences(unittest.TestCase):
         self.assertIn(Path("link_2/shared.txt"), diff.matches)
         self.assertEqual(diff.modified, [])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_compare_folders_dst_symlink_pointing_to_src(self) -> None:
         """Verifies compare_folders behavior when dst contains a symlink pointing back to src."""
         (self.src / "app.conf").write_text("hello", encoding="utf-8")
@@ -1126,6 +1143,7 @@ class TestCompareFoldersDirMode(unittest.TestCase):
         diff_none = compare_folders(empty_dir, missing_dst, dir_mode=DirMode.NO_DIR)
         self.assertEqual(diff_none.added, [])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_compare_folders_dir_symlink_with_no_dir_unresolved(self) -> None:
         """Verifies that symlinks pointing to directories are preserved as terminal leaf items
         when resolve_symlinks=False, even under dir_mode=NO_DIR."""
@@ -1184,6 +1202,7 @@ class TestFolderListingHelpers(unittest.TestCase):
             check_circular_dest_symlink(dir_path, self.dest_dir, Path("real_dir"))
         )
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_check_circular_dest_symlink_external_target(self) -> None:
         external_target = self.base / "external"
         external_target.mkdir()
@@ -1193,6 +1212,7 @@ class TestFolderListingHelpers(unittest.TestCase):
             check_circular_dest_symlink(link_path, self.dest_dir, Path("link"))
         )
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_check_circular_dest_symlink_canonical_target(self) -> None:
         canonical_target = self.dest_dir / "plugins" / "foo"
         canonical_target.mkdir(parents=True, exist_ok=True)
@@ -1202,6 +1222,7 @@ class TestFolderListingHelpers(unittest.TestCase):
             check_circular_dest_symlink(link_path, self.dest_dir, Path("plugins/foo"))
         )
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_check_circular_dest_symlink_anomalous_loop(self) -> None:
         repo_sub = self.dest_dir / "plugins"
         repo_sub.mkdir(parents=True, exist_ok=True)

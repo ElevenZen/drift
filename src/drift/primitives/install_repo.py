@@ -175,8 +175,11 @@ class InstallOptions(AlwaysTruthy):
 
     def get_hook_flags(self, settings=None) -> HookExecFlags:
         """Derives HookExecFlags, assigning dry_run from InstallOptions to HookExecFlags."""
-        base = HookExecFlags.resolve(self.flags, settings=settings)
-        return replace(base, dry_run=self.dry_run)
+        return HookExecFlags.resolve(
+            self.flags,
+            settings=settings,
+            override=HookExecFlags(dry_run=self.dry_run),
+        )
 
 
 @dataclass(frozen=True)

@@ -17,8 +17,8 @@ without modifying it.
     is_temp_file(file_name_or_path) — Editor/OS temp file pattern matching.
     is_concrete_dir(path) — Read-only check returning True if the path is a concrete directory (not a symlink).
     is_internal_lock_file(path, base_dir) — Read-only check returning True if path is the internal render lockfile in .drift/.
-    is_diff_candidate(path, base_dir) — Read-only check returning True if path is a candidate file/symlink for diffing.
-    find_symlink_ancestor(file_path, link_target_range) — Walks up to find symlink pointing into range.
+    check_is_trackable(path, base_dir) — Read-only check returning True if path is a trackable file/symlink for diffing and status.
+    check_can_symlink() — Read-only probe returning True if the current process/OS can create symlinks.
 
 ===============================================================================
 """
@@ -28,6 +28,8 @@ import sys
 import hashlib
 import fnmatch
 import logging
+import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Union, List, Sequence
 
@@ -168,11 +170,11 @@ def is_internal_lock_file(path: Path, base_dir: Optional[Path] = None) -> bool:
     )
 
 
-def is_diff_candidate(
+def check_is_trackable(
     path: Path,
     base_dir: Optional[Path] = None,
 ) -> bool:
-    """Read-only predicate determining if an entry is a valid candidate file or symlink for diffing.
+    """Read-only predicate determining if an entry is a valid trackable file or symlink for diffing and status.
 
     Returns False if the entry matches the internal render lockfile (.drift/render_lock.json)
     or temporary file patterns, or if it is a concrete directory (not a symlink).
@@ -183,30 +185,16 @@ def is_diff_candidate(
     return not is_concrete_dir(target)
 
 
-def find_symlink_ancestor(file_path: Path, link_target_range: Path) -> Optional[Path]:
-    """Finds the nearest ancestor (or self) that is a symlink pointing into link_target_range.
+@lru_cache(maxsize=1)
+def check_can_symlink() -> bool:
+    """Checks whether the current process and platform have privileges to create symbolic links."""
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "src"
+        dst = Path(td) / "dst"
+        src.write_text("x", encoding="utf-8")
+        try:
+            dst.symlink_to(src)
+            return True
+        except (OSError, NotImplementedError):
+            return False
 
-    Traverses up the directory tree from file_path. Returns the symlink Path itself
-    (not its resolved target), or None if no such ancestor is found.
-    """
-    cursor = file_path
-    home_dir = Path.home()
-    abs_drift_root = link_target_range.resolve()
-    while cursor and cursor != Path("/") and cursor != home_dir:
-        if cursor.is_symlink():
-            try:
-                link_str = cursor.readlink()
-                abs_link_target = (cursor.parent / link_str).resolve()
-
-                if is_relative_to(abs_link_target, abs_drift_root):
-                    return cursor
-            except Exception:
-                # because it's a parent dir, very unlikely to fail the resolve process,
-                # but if it does, we ignore and continue up the tree
-                pass
-        # iterate up the directory tree
-        parent = cursor.parent
-        if parent == cursor:
-            break
-        cursor = parent
-    return None

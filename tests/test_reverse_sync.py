@@ -16,6 +16,11 @@ from drift.core.constants import (
     BackupSubfolder,
     set_test_mode,
 )
+
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
+
 from drift.config.workspace_config import WorkspaceConfig
 from drift.config.package_config import PackageConfig
 from drift.core.ignore import DriftIgnore
@@ -280,6 +285,7 @@ class TestReverseSync(unittest.TestCase):
         self.assertTrue((test_file / "sub_file.txt").is_file())
         self.assertEqual((test_file / "sub_file.txt").read_text(encoding="utf-8"), "sub file content")
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks not supported or permitted on this platform")
     def test_reverse_sync_broken_symlink_copying(self) -> None:
         """Verifies that if a symlink on the system is broken, its counterpart in install/ is deleted."""
         pkg = "pkg_broken_link"
@@ -308,8 +314,10 @@ class TestReverseSync(unittest.TestCase):
         # Counterpart in install/ should be deleted when system target is a broken symlink
         self.assertFalse(test_file.exists())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks not supported or permitted on this platform")
     def test_reverse_sync_fcd_file_and_broken_link_at_root(self) -> None:
         """Verifies that if an FCD target path is a file it is synced back, while broken symlinks are not created."""
+
         pkg = "pkg_fcd_root"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -521,6 +529,7 @@ class TestReverseSync(unittest.TestCase):
         self.assertTrue(synced_theme.exists())
         self.assertEqual(synced_theme.read_text(encoding="utf-8"), "body { color: black; }")
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks not supported or permitted on this platform")
     def test_reverse_sync_fcd_symlink_preservation(self) -> None:
         """Verifies that valid symlinks created inside an FCD on host are synced back
         while broken symlinks are safely ignored and not copied to install/.
@@ -844,6 +853,7 @@ class TestReverseSync(unittest.TestCase):
         self.assertEqual(dep_dir, [Path("dot-app/sub.json")])
         self.assertEqual(depl_dir, [Path("dot-app")])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks not supported or permitted on this platform")
     def test_reverse_sync_package_fcd_with_symlink_to_source(self) -> None:
         """Verifies that reverse-syncing an FCD directory with additions and an anomalous symlink back to repo
         warns about the circular self-referential symlink, skips recursive duplication, applies additions
@@ -1120,7 +1130,7 @@ class TestReverseSync(unittest.TestCase):
         self.assertEqual(expected_keep.read_bytes(), b"")
 
         # Verify recorded in synced and drifted files
-        rel_str = str(Path("dot-config") / "my_app" / "empty_sub" / DRIFT_KEEP_FILE_NAME)
+        rel_str = (Path("dot-config") / "my_app" / "empty_sub" / DRIFT_KEEP_FILE_NAME).as_posix()
         self.assertIn(rel_str, result.synced_files)
 
     def test_reverse_sync_fcd_empty_dir_deleted_on_host_prunes_keep_file(self) -> None:

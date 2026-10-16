@@ -1,7 +1,9 @@
 """Tests for rendering and compiling engines using pathlib."""
 
 import os
+import sys
 import shutil
+import tests  # noqa: F401
 import tempfile
 import unittest
 import subprocess
@@ -1172,9 +1174,6 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_default_package_envs_available_in_templates(self) -> None:
         """Verifies drift_package_name, drift_package_target_dir, and drift_package_install_method are available in templates."""
-        if not shutil.which("envsubst"):
-            self.skipTest("envsubst is not available")
-
         # 1. Setup workspace config
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -1194,12 +1193,13 @@ class TestRenderPackage(unittest.TestCase):
 
         pkg_dir = self.drift_root / "src" / "pkg_env_test"
         pkg_dir.mkdir(parents=True, exist_ok=True)
+        custom_target = (self.drift_root / "custom" / "target" / "dir").as_posix()
 
-        (pkg_dir / "drift_package.toml").write_text("""
+        (pkg_dir / "drift_package.toml").write_text(f"""
             [package]
             name = "pkg_env_test"
             install_method = "copy"
-            target_directory = "/custom/target/dir"
+            target_directory = "{custom_target}"
         """, encoding="utf-8")
 
         template_file = pkg_dir / "config.envst.json"
@@ -1215,7 +1215,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue(rendered_output.exists())
         content = rendered_output.read_text(encoding="utf-8")
         self.assertIn('"name": "pkg_env_test"', content)
-        self.assertIn('"target": "/custom/target/dir"', content)
+        self.assertIn(f'"target": "{custom_target}"', content)
         self.assertIn('"method": "copy"', content)
 
         # Ensure envs are cleaned up after rendering
@@ -1313,9 +1313,6 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
 
     def test_pre_source_hook_rendered_in_render_dir_and_executed_with_src_cwd(self) -> None:
         """Verifies that a pre_source hook located inside src/ is rendered into render/ before executing with cwd=hook_path.parent."""
-        if not shutil.which("envsubst"):
-            self.skipTest("envsubst command is not available on this system")
-
         from drift.hooks.lifecycle_hooks import trigger_pre_source_hook
 
         # Setup workspace config with envsubst engine
@@ -1396,8 +1393,13 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
             python_envsubst("Missing: ${NOT_SET_VAR}", error_cls=ConfigError, env=env)
         self.assertIn("Environment variable '$NOT_SET_VAR' referenced in template was not found", str(ctx.exception))
 
-    def test_render_template_envsubst_internal_fallback(self) -> None:
+    def test_render_template_envsubst_external_failure_no_fallback(self) -> None:
+        """Verifies that external envsubst engine raises RenderError on failure without falling back to internal renderer."""
         from drift.render.render_core import render_template
+
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "envsubst.bash").write_text("export FALLBACK_VAR=should_not_fallback\n", encoding="utf-8")
 
         template_path = self.drift_root / "template.envst.txt"
         template_path.write_text("Value: ${FALLBACK_VAR}", encoding="utf-8")
@@ -1406,29 +1408,16 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
             name="envsubst",
             input_file=Path("envsubst.bash"),
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
+            render_command="bash -c 'source %i && nonexistent_envsubst_binary_xyz < %s'"
         )
 
         with patch.dict(os.environ, {"FALLBACK_VAR": "internal_rendered"}):
-            # When shutil.which("bash") or shutil.which("envsubst") returns None
-            with patch("shutil.which", return_value=None):
-                out = render_template(
+            with self.assertRaises(RenderError):
+                render_template(
                     engine_config=engine_config,
                     drift_root=self.drift_root,
                     template_file_path=template_path
                 )
-                self.assertEqual(out, "Value: internal_rendered")
-
-            # When missing variable, internal fallback raises RenderError
-            with patch("shutil.which", return_value=None):
-                bad_template = self.drift_root / "bad.envst.txt"
-                bad_template.write_text("Value: ${UNKNOWN_VAR_XYZ}", encoding="utf-8")
-                with self.assertRaises(RenderError):
-                    render_template(
-                        engine_config=engine_config,
-                        drift_root=self.drift_root,
-                        template_file_path=bad_template
-                    )
 
     def test_render_template_internal_var_engine(self) -> None:
         """Verifies an internal render engine (e.g. [render.var] with render_command='internal')."""
@@ -1457,6 +1446,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
             self.assertIn('theme = "dracula"', out)
             self.assertIn('port = 9000', out)
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX file modes / chmod not supported on Windows")
     def test_rendered_file_preserves_template_permissions(self) -> None:
         """Verifies that rendered files preserve the exact file permissions (modes) of their template files."""
         from drift.render.render_core import render_template_to_file
@@ -1667,12 +1657,13 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         pkg_config = PackageConfig.from_source_dir(pkg_src_dir, workspace_config)
         self.assertEqual(pkg_config.name, "my_templated_pkg")
-        self.assertEqual(str(pkg_config.package.target_directory), "/custom/my_templated_pkg")
+        assert pkg_config.package.target_directory is not None
+        self.assertEqual(pkg_config.package.target_directory.as_posix(), "/custom/my_templated_pkg")
         self.assertIn("RESOLVED_OS", pkg_config.env_resolve.effective.override)
         self.assertEqual(pkg_config.env_resolve.effective.override["RESOLVED_OS"], get_cached_system_facts()["drift_os"])
-        self.assertEqual(pkg_config.env_resolve.effective.override["PKG_SRC_DIR"], str(self.drift_root / "src" / "my_templated_pkg"))
-        self.assertEqual(pkg_config.env_resolve.effective.override["PKG_RENDER_DIR"], str(self.drift_root / "render" / "my_templated_pkg"))
-        self.assertEqual(pkg_config.env_resolve.effective.override["PKG_INSTALL_DIR"], str(self.drift_root / "install" / "my_templated_pkg"))
+        self.assertEqual(pkg_config.env_resolve.effective.override["PKG_SRC_DIR"], (self.drift_root / "src" / "my_templated_pkg").as_posix())
+        self.assertEqual(pkg_config.env_resolve.effective.override["PKG_RENDER_DIR"], (self.drift_root / "render" / "my_templated_pkg").as_posix())
+        self.assertEqual(pkg_config.env_resolve.effective.override["PKG_INSTALL_DIR"], (self.drift_root / "install" / "my_templated_pkg").as_posix())
 
         # Verify drift_package_* variables are cleanly unloaded after config loading
         self.assertNotIn("drift_package_name", os.environ)

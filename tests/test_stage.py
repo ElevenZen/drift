@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import unittest
 import logging
@@ -6,6 +7,11 @@ from io import StringIO
 from pathlib import Path
 from typing import Optional, List, Any, Sequence
 from unittest.mock import patch
+
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
+
 
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
@@ -716,6 +722,7 @@ class TestStageRepo(unittest.TestCase):
             run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_name])
         self.assertIn("not a regular file", str(cm.exception))
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks not supported or permitted on this platform")
     def test_stage_processes_additions_before_deletions_with_symlink_corner_case(self) -> None:
         """Verifies that physical staging processes additions and modifications before deletions,
         ensuring that symlinks in install/ pointing back to render/ do not cause premature data destruction.
@@ -1013,24 +1020,26 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(action_map["updated.txt"].action_type, FileActionType.UPDATE_COPY)
         self.assertEqual(action_map["perm.txt"].action_type, FileActionType.UPDATE_PERMISSION)
 
-        # 4. Directory with differing permissions in modified -> UPDATE_PERMISSION
-        (src_dir / "mod_dir").mkdir(parents=True, exist_ok=True)
-        (dst_dir / "mod_dir").mkdir(parents=True, exist_ok=True)
-        (src_dir / "mod_dir").chmod(0o700)
-        (dst_dir / "mod_dir").chmod(0o755)
+        # 4. Directory with differing permissions in modified -> UPDATE_PERMISSION (POSIX only)
+        if sys.platform != "win32":
+            (src_dir / "mod_dir").mkdir(parents=True, exist_ok=True)
+            (dst_dir / "mod_dir").mkdir(parents=True, exist_ok=True)
+            (src_dir / "mod_dir").chmod(0o700)
+            (dst_dir / "mod_dir").chmod(0o755)
 
-        diff_dir_perm = FolderDiff(modified=[Path("mod_dir")])
-        dir_actions = plan_actions_from_folder_diff(diff_dir_perm, src_dir, dst_dir)
-        self.assertEqual(len(dir_actions), 1)
-        self.assertEqual(dir_actions[0].action_type, FileActionType.UPDATE_PERMISSION)
-        self.assertEqual(dir_actions[0].dst_path, dst_dir / "mod_dir")
-        self.assertIn("Permissions changed", dir_actions[0].reason or "")
+            diff_dir_perm = FolderDiff(modified=[Path("mod_dir")])
+            dir_actions = plan_actions_from_folder_diff(diff_dir_perm, src_dir, dst_dir)
+            self.assertEqual(len(dir_actions), 1)
+            self.assertEqual(dir_actions[0].action_type, FileActionType.UPDATE_PERMISSION)
+            self.assertEqual(dir_actions[0].dst_path, dst_dir / "mod_dir")
+            self.assertIn("Permissions changed", dir_actions[0].reason or "")
 
-        # 5. Directory with matching permissions in modified -> raises RuntimeError
-        (dst_dir / "mod_dir").chmod(0o700)
-        with self.assertRaises(RuntimeError) as ctx:
-            plan_actions_from_folder_diff(diff_dir_perm, src_dir, dst_dir)
-        self.assertIn("Impossible state in plan_actions_from_folder_diff", str(ctx.exception))
+            # 5. Directory with matching permissions in modified -> raises RuntimeError
+            (dst_dir / "mod_dir").chmod(0o700)
+            with self.assertRaises(RuntimeError) as ctx:
+                plan_actions_from_folder_diff(diff_dir_perm, src_dir, dst_dir)
+            self.assertIn("Impossible state in plan_actions_from_folder_diff", str(ctx.exception))
+
 
     def test_stage_hook_or_config_modification_detected(self) -> None:
         """Verifies that modifying hook script or drift_package.toml produces stage changes with has_changes=True."""

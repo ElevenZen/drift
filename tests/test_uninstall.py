@@ -21,8 +21,12 @@ from drift.primitives.uninstall_repo import (
 )
 from drift.core.file_action import FileActionType
 from drift.core.result_models import PackageUninstallPlan
-from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod, BackupSubfolder
+from drift.hooks.lifecycle_hooks import HookExecFlags
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
+
 
 class TestUninstall(unittest.TestCase):
     def setUp(self):
@@ -63,6 +67,7 @@ class TestUninstall(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self.original_environ)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks not supported or permitted on this platform")
     def test_uninstall_basic_symlink(self):
         """Verifies basic uninstallation of a symlinked package."""
         pkg = "pkg_symlink"
@@ -205,6 +210,7 @@ class TestUninstall(unittest.TestCase):
         updated_registry = load_state_registry(state_file)
         self.assertNotIn(pkg, updated_registry.packages)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks not supported or permitted on this platform")
     def test_uninstall_detach_symlink(self):
         """Verifies that detaching a symlinked package replaces the symlink with a copy, and keeps backup folders intact."""
         pkg = "pkg_symlink"
@@ -289,16 +295,16 @@ class TestUninstall(unittest.TestCase):
 
         pre_hook = scripts_dir / "pre_uninstall.sh"
         pre_hook.write_text(f"""#!/bin/sh
-if [ -f "{system_target}" ]; then
-    echo "PRE_UNINSTALL_${{drift_package_name}}_IN_$(pwd)" > "{pre_hook_out}"
+if [ -f "{system_target.as_posix()}" ]; then
+    echo "PRE_UNINSTALL_${{drift_package_name}}_IN_$(pwd)" > "{pre_hook_out.as_posix()}"
 fi
 """, encoding="utf-8")
         pre_hook.chmod(0o755)
 
         post_hook = scripts_dir / "post_uninstall.sh"
         post_hook.write_text(f"""#!/bin/sh
-if [ ! -f "{system_target}" ]; then
-    echo "POST_UNINSTALL_${{drift_package_name}}_IN_$(pwd)" > "{post_hook_out}"
+if [ ! -f "{system_target.as_posix()}" ]; then
+    echo "POST_UNINSTALL_${{drift_package_name}}_IN_$(pwd)" > "{post_hook_out.as_posix()}"
 fi
 """, encoding="utf-8")
         post_hook.chmod(0o755)
@@ -336,17 +342,16 @@ fi
 
         # 2. pre_uninstall executed before file removal with cwd=hook_path.parent
         self.assertTrue(pre_hook_out.is_file())
-        self.assertEqual(
-            pre_hook_out.read_text(encoding="utf-8").strip(),
-            f"PRE_UNINSTALL_{pkg}_IN_{pre_hook.parent}"
-        )
+        pre_content = pre_hook_out.read_text(encoding="utf-8").strip()
+        self.assertTrue(pre_content.startswith(f"PRE_UNINSTALL_{pkg}_IN_"))
+        self.assertTrue(pre_content.endswith(f"drift_workspace/install/{pkg}/.drift/hooks"))
 
         # 3. post_uninstall executed after file removal with cwd=install_dir
         self.assertTrue(post_hook_out.is_file())
-        self.assertEqual(
-            post_hook_out.read_text(encoding="utf-8").strip(),
-            f"POST_UNINSTALL_{pkg}_IN_{post_hook.parent}"
-        )
+        post_content = post_hook_out.read_text(encoding="utf-8").strip()
+        self.assertTrue(post_content.startswith(f"POST_UNINSTALL_{pkg}_IN_"))
+        self.assertTrue(post_content.endswith(f"drift_workspace/install/{pkg}/.drift/hooks"))
+
 
     def test_uninstall_fails_if_hook_file_missing_in_install(self):
         """Verifies that uninstall pre-flight checks fail if a configured hook file is missing."""
@@ -1000,6 +1005,7 @@ fi
         second_removals = [a.dst_path for a in plan_second.removed]
         self.assertIn(self.system_target_dir / shared_file, second_removals)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks not supported or permitted on this platform")
     def test_plan_symlink_conversions_skips_directory_items(self):
         """Verifies plan_symlink_conversions ignores directories and only converts symlinked files."""
         from drift.core.folder_delivery import plan_symlink_conversions

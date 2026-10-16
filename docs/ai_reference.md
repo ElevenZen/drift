@@ -252,6 +252,14 @@ This document provides a concise, high-density architecture reference, primitive
     *   `drift plan` and `drift deploy --dry-run` simulate the entire multi-stage deployment pipeline in an ephemeral sandbox directory (`tmp_sandbox/render/`) without mutating `render/`, `install/`, host files, or Git state ($\Delta \mathcal{W} = \varnothing$).
     *   **Symlink Path Masking**: Evaluates host symlink identity against canonical `install/` destination paths (`source_dir_mask`), preventing false conflict warnings on existing symlinks.
     *   **Fault Isolation**: Decouples render, stage, and install planning per package with dependency checking turned off during per-package loops. Intra-batch collisions are checked upfront and surfaced via a prominent pipeline failure banner. For complete specifications, consult [`docs/plan_engine.md`](plan_engine.md).
+14. **3-State Path Taxonomy & Cross-Platform Anchor Invariant**:
+    *   `pathlib.Path` objects are partitioned into **3 states** via `(bool(p.anchor), p.is_absolute())`:
+        1. **Strictly Relative (`not p.anchor`)**: e.g. `Path("src")`, `Path("drift_hooks/run.sh")` ([`check_is_relative_path(p)`](../src/drift/utils/path_utils.py)).
+        2. **Partially Anchored (`bool(p.anchor) and not p.is_absolute()`)**: Windows-only rooted (`Path("/foo")`, `Path("\\foo")`) or drive-relative (`Path("C:foo")`) paths ([`check_is_partially_anchored_path(p)`](../src/drift/utils/path_utils.py)).
+        3. **Strictly Absolute (`p.is_absolute()`)**: e.g. `Path("/home/user")` on POSIX or `Path("C:/Users/user")` on Windows.
+    *   **Strictly Relative Fields** (`WorkspaceSectionConfig.{source,render,install,backup}_directory`, `PackageSectionConfig.{source_directory,fully_controlled_dirs}`) enforce `not p.anchor`.
+    *   **Strictly Absolute Fields** (`default_target_directory`, `target_directory`, post-resolution `hook_file` and `PackageHooks` entries) enforce `p.is_absolute()`.
+    *   **Hybrid (Relative-or-Absolute) Inputs** (`hook_file`, `PackageHooks.from_dict`, `RenderEngineRegistry.from_dict(input_file=...)`, `resolve_render_input_file`) reject State 2 (`p.anchor and not p.is_absolute()`) and resolve via `p if p.anchor else (base_dir / p)` so Windows rooted paths never silently strip `base_dir`.
 
 ---
 

@@ -5,9 +5,14 @@ import tempfile
 import unittest
 import subprocess
 from io import StringIO
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 from typing import Optional, List, Dict, Set, Sequence, Any
+
+
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
 
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
@@ -111,7 +116,7 @@ class TestInstallRepo(unittest.TestCase):
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.system_target_dir
             ),
-            settings=SettingsConfig(enable_symlink_on_windows=True),
+            settings=SettingsConfig(enable_symlink_on_windows=CAN_SYMLINK),
             packages_enable={
                 "pkg_symlink": True,
                 "pkg_copy": True,
@@ -217,6 +222,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIsNone(default_state.install_method)
         self.assertEqual(default_state.deployed_files, [])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_install_symlink_incremental_deployment(self) -> None:
         """Verifies symlink incremental file-by-file manual symlinking deployment."""
         pkg = "pkg_symlink"
@@ -288,6 +294,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse(target_file.is_symlink())
         self.assertEqual(target_file.read_text(encoding="utf-8"), "demoted content")
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_install_symlink_collision_guard(self) -> None:
         """Verifies Symlink Collision Guard backs up pre-existing physical files at target."""
         pkg = "pkg_symlink"
@@ -573,7 +580,11 @@ class TestInstallRepo(unittest.TestCase):
                 )
                 called_cmd = mock_run.call_args[0][0]
                 self.assertNotEqual(called_cmd[0], "sudo", f"Hook '{hook_name}' should NOT run with sudo even when sudo=True")
-                self.assertEqual(called_cmd[0], str(hook_path))
+                if sys.platform == "win32":
+                    self.assertIn("bash", called_cmd[0].lower())
+                    self.assertEqual(called_cmd[-1], PureWindowsPath(hook_path).as_posix())
+                else:
+                    self.assertEqual(called_cmd[0], str(hook_path))
 
     def test_lifecycle_hook_non_executable_runs_via_interpreter_fallback(self) -> None:
         """Verifies that execute_hook_script falls back to interpreter without mutating disk permissions."""
@@ -660,7 +671,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Verifies workspace_config default target directory was properly passed and not clobbered
         self.assertEqual(captured_envs.get("drift_package_name"), pkg)
-        self.assertEqual(captured_envs.get("drift_package_target_dir"), str(Path(self.system_target_dir).expanduser()))
+        self.assertEqual(captured_envs.get("drift_package_target_dir"), Path(self.system_target_dir).expanduser().as_posix())
         self.assertEqual(captured_envs.get("drift_package_install_method"), "copy")
 
         # Confirm envs were unloaded cleanly
@@ -707,6 +718,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse(os.path.exists(config_file), "drift_package.toml should not be copied")
         self.assertFalse(os.path.exists(ignore_file_on_target), ".drift_ignore should not be copied")
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_symlinked_parent_safety_abort(self) -> None:
         """Verifies that a symlinked parent directory outside the package's target_dir raises a RuntimeError to prevent deleting/recreating unrelated system folders."""
         pkg = "pkg_symlink"
@@ -747,6 +759,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("Safety Abort", str(ctx.exception))
         self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx.exception))
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_symlinked_parent_rebuilt_inside_target_dir(self) -> None:
         """Verifies that a parent symlink situated INSIDE the package's target_dir is successfully backed up, deleted, and rebuilt as a physical folder."""
         pkg = "pkg_symlink"
@@ -796,6 +809,7 @@ class TestInstallRepo(unittest.TestCase):
             os.path.abspath(os.path.join(nested_src_dir, "config.json"))
         )
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_run_full_symlink_deployment(self) -> None:
         """Verifies that plan_package_install and execute_package_actions link deployable files natively."""
         from drift.core.ignore import DriftIgnore
@@ -942,6 +956,7 @@ class TestInstallRepo(unittest.TestCase):
         registry2 = load_state_registry(state_file)
         self.assertEqual(registry2.get_package_deployed_files(pkg), [Path("file1.txt")])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_standalone_apply_prunes_stale_symlink_links(self) -> None:
         """Verifies that standalone deploy_package with install_method="symlink" unlinks/deletes stale symlinks,
         but does NOT attempt to create a backup of a broken symlink (which has no target data).
@@ -987,6 +1002,7 @@ class TestInstallRepo(unittest.TestCase):
         backup_pruned = self.backup_dir / pkg / "deleted_files" / "file2.txt"
         self.assertFalse(backup_pruned.exists())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_collision_guard_handles_internal_and_external_symlinks(self) -> None:
         """Verifies collision guard behavior with internal (dangling/valid) and external symlinks.
 
@@ -1075,7 +1091,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.drift_root}"
+            target_directory = "{self.drift_root.as_posix()}"
             """)
 
         # Execute deployment and assert InstallCollisionError
@@ -1091,7 +1107,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{polluted_dir}"
+            target_directory = "{polluted_dir.as_posix()}"
             """)
 
         # Execute deployment and assert InstallCollisionError
@@ -1386,6 +1402,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse((self.system_target_dir / DRIFT_IGNORE_FILE_NAME).exists())
         self.assertFalse((self.system_target_dir / PACKAGE_CONFIG_FILE_NAME).exists())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_collision_guard_ignored_file_matching_drift_root_symlink_not_collided(self) -> None:
         """Verifies collision guard behavior:
         1. Valid symlink link pointing to this package's file is NOT removed.
@@ -1450,6 +1467,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(system_rogue.resolve(), (pkg_install_dir / "rogue_link.txt").resolve())
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "rogue_link.txt").exists())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_symlink_link_pointing_to_different_file_in_same_pkg_updated_full_deploy(self) -> None:
         """Verifies that under full deployment, if a host symlink points to a different file in the same package's install dir,
         it is recognized as valid for this package and updated to the desired target file upon deployment.
@@ -1486,6 +1504,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(system_file_b.is_symlink())
         self.assertEqual(system_file_b.resolve(), (pkg_install_dir / "file_b.txt").resolve())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_symlink_link_pointing_to_different_file_in_same_pkg_updated_partial_deploy(self) -> None:
         """Verifies that under partial/incremental deployment (via PackageStagePlan),
         a host symlink pointing to a different file in the same package is safely updated to the desired target file.
@@ -1517,6 +1536,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(system_file_a.is_symlink())
         self.assertEqual(system_file_a.resolve(), (pkg_install_dir / "file_a.txt").resolve())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_internal_symlink_directory_children_processed_paths(self) -> None:
         """Verifies that when an internal symlink points to drift_root for a directory,
         its children in install_pkg_dir are added to processed_paths, avoiding double collision handling.
@@ -1560,6 +1580,7 @@ class TestInstallRepo(unittest.TestCase):
         # 3. Collision backup was recorded for the symlink
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "my_dir").exists())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_copy_mode_update_target_symlink_backed_up_and_replaced(self) -> None:
         """Verifies that in copy mode, even during an update (not first time),
         if the target on host is a symlink, it is detected as a collision, backed up,
@@ -1617,6 +1638,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "app.conf").exists())
         self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res.packages[0].plan.overwritten_backups if a.src_path is not None], ["app.conf"])
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_switch_method_from_symlink_to_copy_backs_up_and_replaces_symlinks(self) -> None:
         """Verifies that when a package deployed with 'symlink' switches to 'copy',
         the collision handler backs up the previous symlinks/files into overwritten/
@@ -1672,6 +1694,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "config.json").exists())
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "sub" / "tool.sh").exists())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_switch_method_from_copy_to_symlink_backs_up_and_replaces_physical_files(self) -> None:
         """Verifies that when a package deployed with 'copy' switches to 'symlink',
         the collision handler backs up the previous physical files into overwritten/
@@ -1775,6 +1798,7 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install(self.workspace_config, [pkg])
         self.assertIn("not a regular file", str(cm.exception))
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_plan_package_install_detects_internal_symlink_conflicts(self) -> None:
         """Verifies plan_package_install detects internal ancestor symlinks and leaf symlink collisions."""
         from drift.core.ignore import DriftIgnore
@@ -1829,6 +1853,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(len(root_overwrites), 1)
         self.assertEqual(root_overwrites[0].reason, "Colliding external symlink")
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_plan_and_execute_internal_symlink_directory_conflict(self) -> None:
         """Verifies planning and executing an internal symlink directory conflict replaces it with a real dir."""
         from drift.core.ignore import DriftIgnore
@@ -1874,6 +1899,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue((system_target / "file.txt").is_file())
         self.assertEqual((system_target / "file.txt").read_text(encoding="utf-8"), "file content")
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_plan_and_execute_ancestor_symlink_with_nested_descendants(self) -> None:
         """Verifies that when shallow ancestor 'a' is a symlink to a folder on host, only 'a' is backed up,
         subsequent deeper ancestors emit ENSURE_DIR, and leaf files emit creation actions without duplicate backups."""
@@ -1940,6 +1966,7 @@ class TestInstallRepo(unittest.TestCase):
 
         shutil.rmtree(external_folder, ignore_errors=True)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_plan_and_execute_dotfile_ancestor_symlink_with_nested_descendants(self) -> None:
         """Verifies that dotfile prefixes like dot-config as host symlinks trigger backup only on .config,
         with proper dot-prefix translation for backup paths and ENSURE_DIR for subpaths."""
@@ -2005,6 +2032,7 @@ class TestInstallRepo(unittest.TestCase):
 
         shutil.rmtree(external_folder, ignore_errors=True)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_plan_intermediate_ancestor_symlink_deduplication(self) -> None:
         """Verifies that when a deeper ancestor 'a/b' is a symlink (with 'a' being a regular dir),
         only 'a/b' is backed up, while other siblings of 'a' are inspected normally."""
@@ -2056,6 +2084,7 @@ class TestInstallRepo(unittest.TestCase):
 
         shutil.rmtree(external_folder, ignore_errors=True)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_plan_skips_valid_relative_symlink(self) -> None:
         """Verifies that a valid relative symlink pointing to the current package is planned as SKIP_IDENTICAL."""
         from drift.core.ignore import DriftIgnore
@@ -2095,6 +2124,7 @@ class TestInstallRepo(unittest.TestCase):
         execute_package_actions(context=context, plan=plan)
         self.assertTrue(system_target.is_symlink())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_plan_and_execute_internal_symlink_conflicts(self) -> None:
         """Verifies planning and executing detects, backs up, and removes internal symlinks."""
         from drift.core.ignore import DriftIgnore
@@ -2158,6 +2188,7 @@ class TestInstallRepo(unittest.TestCase):
         # external.conf was NOT in package files -> untouched
         self.assertTrue((self.system_target_dir / "external.conf").is_symlink())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_plan_and_execute_valid_symlink_link_preserved(self) -> None:
         """Verifies that a valid relative symlink pointing to the same package install dir is preserved."""
         from drift.core.ignore import DriftIgnore
@@ -2223,6 +2254,7 @@ class TestInstallRepo(unittest.TestCase):
             )
         self.assertIn("Safety Abort: Target directory", str(cm.exception))
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_plan_and_execute_internal_symlink_invariant_holds(self) -> None:
         """Verifies planning and execution handles internal symlink conflicts and valid symlinks together."""
         from drift.core.ignore import DriftIgnore
@@ -2271,6 +2303,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(system_valid.resolve(), (pkg_install_dir / "valid_link.txt").resolve())
 
     @patch("drift.core.file_action.create_symlink")
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_execute_single_action_skips_when_already_pointing_to_source(self, mock_create_symlink) -> None:
         """Verifies execute_single_action and plan_package_install skip recreating symlink if target already points to source."""
         from drift.core.ignore import DriftIgnore
@@ -2327,6 +2360,7 @@ class TestInstallRepo(unittest.TestCase):
             execute_single_action(context.file_action_context, act)
         self.assertEqual(mock_create_symlink.call_count, 1)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_ensure_dir_raises_on_non_directory_and_symlink(self) -> None:
         """Verifies ensure_dir and execute_single_action raise NotADirectoryError when target is a file or symlink."""
         from drift.utils.file_ops import ensure_dir
@@ -3093,6 +3127,7 @@ class TestInstallRepo(unittest.TestCase):
         registry = load_state_registry(self.install_dir / "state.toml")
         self.assertIsNone(registry.get_package_state(pkg))
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX file permissions not supported on Windows")
     def test_plan_and_execute_update_permission_action(self) -> None:
         """Verifies plan_package_install plans UPDATE_PERMISSION when file content matches but permissions differ,
         and execute_package_actions updates host file permissions."""
@@ -3151,6 +3186,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(len(plan2.skipped), 1)
         self.assertEqual(plan2.skipped[0].action_type, FileActionType.SKIP_IDENTICAL)
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX file permissions not supported on Windows")
     def test_plan_folder_delivery_updates_directory_permissions(self) -> None:
         """Verifies plan_folder_delivery generates UPDATE_PERMISSION when directory permissions differ,
         across forward install, reverse sync, and leaf directory deliveries."""
@@ -3296,16 +3332,17 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(target_sub.is_dir())
 
         # 2. Target directory exists with differing permissions -> plans UPDATE_PERMISSION
-        target_sub.chmod(0o755)
-        actions_perm = plan_folder_delivery(
-            context=delivery_ctx,
-            deployable_files=[Path("dot-config/empty_sub")],
-            deployed_files=(),
-        )
-        perm_actions = [a for a in actions_perm if a.action_type == FileActionType.UPDATE_PERMISSION]
-        self.assertEqual(len(perm_actions), 1)
-        self.assertEqual(perm_actions[0].dst_path, target_sub)
-        self.assertEqual(perm_actions[0].src_path, empty_dir)
+        if sys.platform != "win32":
+            target_sub.chmod(0o755)
+            actions_perm = plan_folder_delivery(
+                context=delivery_ctx,
+                deployable_files=[Path("dot-config/empty_sub")],
+                deployed_files=(),
+            )
+            perm_actions = [a for a in actions_perm if a.action_type == FileActionType.UPDATE_PERMISSION]
+            self.assertEqual(len(perm_actions), 1)
+            self.assertEqual(perm_actions[0].dst_path, target_sub)
+            self.assertEqual(perm_actions[0].src_path, empty_dir)
 
         # 3. Target path is blocked by a physical file -> plans BACKUP_OVERWRITE + ENSURE_DIR
         target_sub.rmdir()
@@ -3394,6 +3431,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(actions[0].src_path, pkg_install_dir / "app.conf")
         self.assertEqual(actions[0].dst_path, self.system_target_dir / "app.conf")
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_delivery_inspection_reverse_mode_symlink_semantics(self) -> None:
         """Verifies reverse_mode symlink handling: skip identical drift links, delete broken links, handle dir links, compare external file links."""
         pkg = "pkg_rev_symlinks"
@@ -3584,6 +3622,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(backed_up_tree.is_dir())
         self.assertEqual((backed_up_tree / "nested.txt").read_text(encoding="utf-8"), "saved content\n")
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_install_defers_sudo_check_when_dry_run_or_no_changes(self) -> None:
         """Verifies that assert_can_escalate is deferred to execution and NOT called during planning, dry-run, or when a sudo package has no changes."""
         from unittest.mock import patch
@@ -4214,6 +4253,7 @@ class TestNativeSymlinkComputation(unittest.TestCase):
         rel = compute_relative_symlink_target(source, parent)
         self.assertEqual((parent / rel).resolve(), source.resolve())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_compute_relative_symlink_target_with_external_symlinked_parent(self) -> None:
         """When link_parent_dir is a symlink pointing to an external directory, relative path must resolve from the external directory."""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -4254,7 +4294,7 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
             dst_path=Path("/tmp/target.txt"),
         )
         self.assertEqual(action.src_path, Path("/tmp/source.txt"))
-        self.assertIn("/tmp/source.txt -> /tmp/target.txt", format_action_line(action))
+        self.assertIn(f"{Path('/tmp/source.txt')} -> {Path('/tmp/target.txt')}", format_action_line(action))
 
     def test_delivery_action_logging_info_and_debug(self) -> None:
         set_test_mode(True, enable_logging=True)

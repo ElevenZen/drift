@@ -164,7 +164,7 @@ def _display_action_path(path: Optional[Path], drift_root: Optional[Path] = None
     if path is None:
         return ""
     if drift_root is None:
-        return str(path)
+        return path.as_posix()
     return to_relative_posix(path, drift_root)
 
 

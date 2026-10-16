@@ -74,6 +74,10 @@ class RenderEngineConfig(AlwaysTruthy):
         if not self.is_internal:
             if self.input_file is None:
                 raise ConfigError("input_file must be specified for non-internal render engine.")
+        if self.input_file is not None and self.input_file.anchor and not self.input_file.is_absolute():
+            raise ConfigError(
+                f"Render engine '{self.name}' input_file '{self.input_file}' must be a relative or valid absolute path."
+            )
 
     @property
     def is_disabled(self) -> bool:
@@ -269,7 +273,12 @@ class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]
             input_path: Optional[Path] = None
             if raw_input is not None:
                 raw_input_str = str(raw_input).strip()
-                input_path = base_dir / Path(raw_input_str)
+                raw_path = Path(raw_input_str)
+                if raw_path.anchor and not raw_path.is_absolute():
+                    raise ConfigError(
+                        f"Render engine '{name}' input_file '{raw_input_str}' cannot resolve outside base directory '{base_dir}'."
+                    )
+                input_path = raw_path if raw_path.anchor else (base_dir / raw_path)
                 resolved_base = base_dir.resolve()
                 resolved_input = input_path.resolve()
 

@@ -3,6 +3,9 @@ import tempfile
 import unittest
 import subprocess
 from pathlib import Path
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
 
 from drift.config.package_config import (
     PackageConfig,
@@ -307,18 +310,19 @@ class TestPackageAssertions(unittest.TestCase):
         self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx_exact.exception))
 
         # Target directory is a symlink pointing into drift_root
-        symlink_to_drift = Path(self.temp_dir.name) / "symlink_target_dir"
-        symlink_to_drift.symlink_to(self.drift_root / "nested")
-        meta_symlink = PackageConfig.from_dict(
-            {"package": {"name": "pkg_symlink", "target_directory": str(symlink_to_drift)}},
-            "pkg_symlink",
-            self.source_dir / "pkg_symlink",
-            workspace_config=self.workspace_config,
-        )
-        with self.assertRaises(InstallCollisionError) as ctx_symlink:
-            assert_packages_target_dirs_valid({"pkg_symlink": meta_symlink}, self.workspace_config)
-        self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx_symlink.exception))
-        self.assertIn("resolved to", str(ctx_symlink.exception))
+        if CAN_SYMLINK:
+            symlink_to_drift = Path(self.temp_dir.name) / "symlink_target_dir"
+            symlink_to_drift.symlink_to(self.drift_root / "nested")
+            meta_symlink = PackageConfig.from_dict(
+                {"package": {"name": "pkg_symlink", "target_directory": str(symlink_to_drift)}},
+                "pkg_symlink",
+                self.source_dir / "pkg_symlink",
+                workspace_config=self.workspace_config,
+            )
+            with self.assertRaises(InstallCollisionError) as ctx_symlink:
+                assert_packages_target_dirs_valid({"pkg_symlink": meta_symlink}, self.workspace_config)
+            self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx_symlink.exception))
+            self.assertIn("resolved to", str(ctx_symlink.exception))
 
     def test_assert_packages_target_dirs_writable(self) -> None:
         """Verifies assert_packages_target_dirs_writable checks permissions on target directories."""

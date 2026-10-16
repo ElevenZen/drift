@@ -307,14 +307,14 @@ Compares configuration layers across templates, sandbox compilations, state data
 2.  **Five-Layer Architecture (`workspace_diff.py`)**:
     *   **Layer 1 (Worklist Classification)**: `get_pending_delta_worklist` parses `install/state.toml` and compares rendered vs installed files.
     *   **Layer 2 (Diff Pair Collectors)**: `collect_repo_diff_pairs` and `collect_pending_delta_pairs` extract side-by-side file pairs (generating synthetic empty temp files for added/deleted items).
-    *   **Layer 3 (Terminal Git Diff Runners)**: `run_repo_diff` and `run_pending_delta_diff` invoke `git diff --no-index` with `exclude_patterns = DEFAULT_DIFF_EXCLUDE_PATTERNS`.
+    *   **Layer 3 (Terminal Git Diff Runners)**: `run_repo_diff` and `run_pending_delta_diff` invoke `git diff` / `git diff --no-index` and filter output chunks and `--stat` lines via `filter_diff_output` and `check_is_trackable`.
     *   **Layer 4 (Diff Strategy Dispatchers)**: `run_side_by_side_diff` and `run_terminal_diff` route execution based on `-y` / `--side-by-side`.
     *   **Layer 5 (Primitive Entry Point)**: `run_primitive_15_workspace_diff` coordinates state synchronization and dispatches to visual or terminal mode.
 3.  **Interactive Side-by-Side Visual Diffing (`-y` / `--side-by-side`)**:
     *   Automatically probes user environment (`$VISUAL`, `$EDITOR`, Neovim, Vim, VS Code, GNU Emacs).
     *   Formulates editor-specific invocation flags (e.g. `nvim -p -d fileA fileB`, `vim -p -d fileA fileB`, `code --wait --diff fileA fileB`, `emacs -nw --eval '(ediff-files ...)'`) across multi-tab split viewports.
-4.  **Pathspec Exclusion Rules**:
-    *   Uses `DEFAULT_DIFF_EXCLUDE_PATTERNS` (`:(exclude)*<pattern>*`) to filter internal synthetic artifacts (`.gitignore*`) and editor/OS temp files (`TEMPORARY_FILE_PATTERNS`), while preserving user-authored package configuration modifications (`drift_package.toml`, `.drift_ignore`).
+4.  **Trackable Candidate Filtering**:
+    *   Uses `check_is_trackable` (and `filter_diff_output` for terminal diffs) to filter out internal synthetic artifacts (`.drift/render_lock.json`), editor/OS temp files (`TEMPORARY_FILE_PATTERNS`), and concrete directories, while preserving user-authored package configuration modifications (`drift_package.toml`, `.drift_ignore`) and symlinks.
 
 ### Primitive 16: Workspace Status Inspection [High-level: `drift status`]
 Aggregates and audits current workspace alignment across three distinct dimensions (Template Evolution `[A]`, Active System Drift `[B]`, and Staged Pending Delta `[Δ]`), providing instant health and drift visibility.
@@ -1357,6 +1357,26 @@ To prevent target directory mismatches and permission corruption across internal
     *   *Granular Privilege Elevation (Recommended)*: If specific packages need elevated permissions to deploy files into system directories (e.g., `/etc/`), configure `sudo = true` inside the individual `src/<package>/drift_package.toml`. Drift will selectively elevate only the physical file copying, symlinking, and pruning operations via `sudo` while keeping workspace databases cleanly owned by the user and preserving correct `$HOME` target resolution.
     *   *Dedicated Root Dotfiles*: If the workspace is specifically intended to manage root dotfiles, place the repository in root's home directory (e.g., `/root/...`).
     *   *Explicit Override*: If the user intentionally wishes to manage a root-owned workspace, they can chown the workspace directory via `sudo chown -R root:root <drift_root>`.
+
+### K. Cross-Platform 3-State Path Taxonomy & Boundary Validation
+Across POSIX and Windows, `pathlib.Path` does not form a simple binary split between relative and absolute paths. Because `p.anchor` combines `p.drive` and `p.root`, every `Path` instance belongs to one of **three mutually exclusive states**:
+
+| State | Classification | Predicate | POSIX Examples | Windows Examples | Effect of `base_dir / p` |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **State 1** | **Strictly Relative** | `not p.anchor` (`check_is_relative_path(p)`) | `Path("src")`, `Path("a/b")` | `Path("src")`, `Path("a\\b")` | Safely appends `p` beneath `base_dir` |
+| **State 2** | **Partially Anchored** *(Rooted or Drive-Relative)* | `bool(p.anchor) and not p.is_absolute()` (`check_is_partially_anchored_path(p)`) | *(None)* | `Path("/foo")`, `Path("\\foo")`, `Path("C:foo")` | **Hazardous**: discards `base_dir`'s path or drive when joined with `/`, yet evaluates `p.is_absolute() == False` |
+| **State 3** | **Strictly Absolute** | `p.is_absolute()` (`bool(p.anchor)` is always `True`) | `Path("/home/user")` | `Path("C:\\Users\\user")`, `Path("\\\\srv\\sh\\d")` | Replaces `base_dir` completely |
+
+To prevent subtle cross-platform bugs where State 2 paths on Windows pass `not p.is_absolute()` checks or silently strip `base_dir` during `base_dir / p` joins, Drift enforces three explicit boundary contracts:
+1.  **Contract A — Strictly Relative Paths (State 1 Only)**:
+    *   Applies to workspace subdirectory names (`source_directory`, `render_directory`, `install_directory`, `backup_directory`), package `source_directory`, `fully_controlled_dirs`, and dot-prefix translation helpers (`encode_dot_prefix`, `decode_dot_prefix`).
+    *   Validated via **`not p.anchor`** (rejecting both State 2 and State 3).
+2.  **Contract B — Strictly Absolute Paths (State 3 Only)**:
+    *   Applies to host target directories (`default_target_directory`, `target_directory` after `expand_path`) and canonicalized post-ingestion hook paths (`PackageSectionConfig.hook_file`, `PackageHooks` fields).
+    *   Validated via **`p.is_absolute()`** (rejecting both State 1 and State 2).
+3.  **Contract C — Hybrid Relative-or-Absolute Inputs (State 1 or State 3; Reject State 2)**:
+    *   Applies to configuration fields that accept either a path relative to a base directory or an external absolute path (`[workspace].hook_file`, `[package].hook_file`, `[hooks].*`, `[render.<engine>].input_file`).
+    *   At ingestion boundaries, State 2 paths (`p.anchor and not p.is_absolute()`) are rejected with `ConfigError` / `RenderError`, and resolution checks `if not p.anchor:` before joining `base_dir / p`.
 
 ---
 

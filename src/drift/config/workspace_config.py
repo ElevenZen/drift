@@ -24,7 +24,10 @@ Layer 1: Workspace Specifications & Settings Models
 
 from __future__ import annotations
 
+import codecs
+import locale
 import os
+import sys
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +61,7 @@ from ..utils.env_utils import (
     resolve_env_configs,
 )
 from ..utils.path_utils import expand_path
+from ..utils.file_inspect import check_can_symlink
 from ..utils.config_utils import (
     partition,
     get_first_from,
@@ -96,10 +100,17 @@ class SettingsConfig(AlwaysTruthy):
         "allow_symlink_on_windows",
         "allow_symlinks_on_windows",
     )
+    HOOK_OUTPUT_ENCODING_KEYS: ClassVar[Tuple[str, ...]] = (
+        "hook_output_encoding",
+        "hooks_output_encoding",
+        "hook_encoding",
+        "hooks_encoding",
+    )
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
         *HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
         *ENSURE_HOOKS_EXECUTABLE_IN_SRC_KEYS,
         *ENABLE_SYMLINK_ON_WINDOWS_KEYS,
+        *HOOK_OUTPUT_ENCODING_KEYS,
         "git_user_name",
         "git_user_email",
     )
@@ -107,17 +118,36 @@ class SettingsConfig(AlwaysTruthy):
     hook_inject_non_interactive_envs: bool = True
     ensure_hooks_executable_in_src: bool = True
     enable_symlink_on_windows: bool = False
+    hook_output_encoding: str = "system"
     git_user_name: Optional[str] = None
     git_user_email: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        if isinstance(self.hook_output_encoding, str) and self.hook_output_encoding.strip().lower() == "system":
+            self.hook_output_encoding = locale.getpreferredencoding(False) or "utf-8"
+
     def validate(self) -> None:
-        """Validates settings types."""
+        """Validates settings types and normalizes encoding values."""
         if not isinstance(self.hook_inject_non_interactive_envs, bool):
             raise ConfigError(f"hook_inject_non_interactive_envs under [settings] must be a boolean, got {type(self.hook_inject_non_interactive_envs).__name__}.")
         if not isinstance(self.ensure_hooks_executable_in_src, bool):
             raise ConfigError(f"ensure_hooks_executable_in_src under [settings] must be a boolean, got {type(self.ensure_hooks_executable_in_src).__name__}.")
         if not isinstance(self.enable_symlink_on_windows, bool):
             raise ConfigError(f"enable_symlink_on_windows under [settings] must be a boolean, got {type(self.enable_symlink_on_windows).__name__}.")
+        if not isinstance(self.hook_output_encoding, str) or not self.hook_output_encoding.strip():
+            raise ConfigError(f"hook_output_encoding under [settings] must be a non-empty string, got {self.hook_output_encoding!r}.")
+        enc_clean = self.hook_output_encoding.strip()
+        if enc_clean.lower() == "system":
+            self.hook_output_encoding = locale.getpreferredencoding(False) or "utf-8"
+        else:
+            try:
+                codecs.lookup(enc_clean)
+            except LookupError as exc:
+                raise ConfigError(
+                    f"Unknown encoding '{enc_clean}' for hook_output_encoding under [settings]. "
+                    "Specify a valid Python codec (e.g. 'utf-8', 'gbk', 'cp1252') or 'system'."
+                ) from exc
+            self.hook_output_encoding = enc_clean
         if self.git_user_name is not None and not isinstance(self.git_user_name, str):
             raise ConfigError(f"git_user_name under [settings] must be a string, got {type(self.git_user_name).__name__}.")
         if self.git_user_email is not None and not isinstance(self.git_user_email, str):
@@ -155,6 +185,11 @@ class SettingsConfig(AlwaysTruthy):
             cls.ENABLE_SYMLINK_ON_WINDOWS_KEYS,
             default=False,
         )
+        raw_hook_encoding = get_first_from(
+            data,
+            cls.HOOK_OUTPUT_ENCODING_KEYS,
+            default="system",
+        )
         git_user_name = data.get("git_user_name")
         git_user_email = data.get("git_user_email")
 
@@ -177,6 +212,7 @@ class SettingsConfig(AlwaysTruthy):
                 strict=True,
                 context="[settings] enable_symlink_on_windows",
             ),
+            hook_output_encoding=raw_hook_encoding,
             git_user_name=git_user_name,
             git_user_email=git_user_email,
         )
@@ -239,20 +275,33 @@ class WorkspaceSectionConfig(AlwaysTruthy):
 
     def validate(self) -> None:
         """Validates [workspace] section configuration values."""
-        if not isinstance(self.source_directory, Path) or str(self.source_directory) == ".":
+        if not isinstance(self.source_directory, Path) or self.source_directory == Path("."):
             raise ConfigError("source_directory must be a non-empty path.")
-        if not isinstance(self.render_directory, Path) or str(self.render_directory) == ".":
+        if self.source_directory.anchor:
+            raise ConfigError(f"source_directory '{self.source_directory}' must be a relative path.")
+        if not isinstance(self.render_directory, Path) or self.render_directory == Path("."):
             raise ConfigError("render_directory must be a non-empty path.")
-        if not isinstance(self.install_directory, Path) or str(self.install_directory) == ".":
+        if self.render_directory.anchor:
+            raise ConfigError(f"render_directory '{self.render_directory}' must be a relative path.")
+        if not isinstance(self.install_directory, Path) or self.install_directory == Path("."):
             raise ConfigError("install_directory must be a non-empty path.")
-        if not isinstance(self.backup_directory, Path) or str(self.backup_directory) == ".":
+        if self.install_directory.anchor:
+            raise ConfigError(f"install_directory '{self.install_directory}' must be a relative path.")
+        if not isinstance(self.backup_directory, Path) or self.backup_directory == Path("."):
             raise ConfigError("backup_directory must be a non-empty path.")
-        if not isinstance(self.default_target_directory, Path) or str(self.default_target_directory) == ".":
+        if self.backup_directory.anchor:
+            raise ConfigError(f"backup_directory '{self.backup_directory}' must be a relative path.")
+        if not isinstance(self.default_target_directory, Path) or self.default_target_directory == Path("."):
             raise ConfigError("default_target_directory must be a non-empty path.")
         if not self.default_target_directory.is_absolute():
             raise ConfigError(f"default_target_directory must be an absolute path, got: '{self.default_target_directory}'")
         if not isinstance(self.default_install_method, InstallMethod):
             raise ConfigError(f"default_install_method must be 'symlink' or 'copy', got '{self.default_install_method}'")
+        if self.hook_file is not None:
+            if not isinstance(self.hook_file, Path):
+                raise ConfigError(f"hook_file must be a Path, got {type(self.hook_file).__name__}")
+            if self.hook_file.anchor and not self.hook_file.is_absolute():
+                raise ConfigError(f"hook_file '{self.hook_file}' must be a relative or valid absolute path.")
 
     @classmethod
     def from_dict(cls, data: Any) -> "WorkspaceSectionConfig":
@@ -442,21 +491,36 @@ class WorkspaceConfig(AlwaysTruthy):
             )
         return sorted(valid_packages)
 
+    def get_default_install_method(self, check_symlink: bool = True) -> InstallMethod:
+        method = self.workspace.default_install_method
+        if sys.platform == "win32":
+            if not self.settings.enable_symlink_on_windows:
+                if method == InstallMethod.SYMLINK:
+                    return InstallMethod.COPY
+            elif check_symlink and method == InstallMethod.SYMLINK and not check_can_symlink():
+                raise ConfigError(
+                    "Symlink installation on Windows is enabled ('enable_symlink_on_windows = true'), "
+                    "but the current process lacks privileges to create symbolic links. "
+                    "Please enable Windows Developer Mode or run with Administrator privileges."
+                )
+        return method
+
     def get_drift_package_facts(
         self,
         pkg_name: str,
         render_dir_override: Optional[Path] = None,
         install_dir_override: Optional[Path] = None,
+        check_symlink: bool = False,
     ) -> Dict[str, str]:
         render_base = render_dir_override or self.render_path_mask or self.render_path
         install_base = install_dir_override or self.install_path_mask or self.install_path
         return {
             'drift_package_name': pkg_name,
-            'drift_package_source_dir': str(self.source_path / pkg_name),
-            'drift_package_src_dir': str(self.source_path / pkg_name),
-            'drift_package_render_dir': str(render_base / pkg_name),
-            'drift_package_install_dir': str(install_base / pkg_name),
-            'drift_package_install_method': str(self.workspace.default_install_method),
+            'drift_package_source_dir': (self.source_path / pkg_name).as_posix(),
+            'drift_package_src_dir': (self.source_path / pkg_name).as_posix(),
+            'drift_package_render_dir': (render_base / pkg_name).as_posix(),
+            'drift_package_install_dir': (install_base / pkg_name).as_posix(),
+            'drift_package_install_method': str(self.get_default_install_method(check_symlink=check_symlink)),
             'drift_package_target_dir': self.workspace.default_target_directory.as_posix(),
         }
 

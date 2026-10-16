@@ -8,9 +8,9 @@ from typing import List, Optional, Tuple, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..render.render_package import run_primitive_2_render_packages
 from .reverse_sync import run_primitive_1_reverse_sync
-from ..core.constants import DirMode, DEFAULT_DIFF_EXCLUDE_PATTERNS
+from ..core.constants import DirMode
 from ..core.folder_diff import compare_folders, FolderDiff
-from ..utils.file_inspect import is_diff_candidate
+from ..utils.file_inspect import check_is_trackable
 from ..utils.git_utils import parse_git_status_porcelain, GitStatusDiff
 from ..utils.process_utils import run_command
 from ..core.state_registry import load_state_registry
@@ -23,7 +23,6 @@ def audit_repo_package_status(
     repo_path: Path,
     pkg: str,
     dirty_label: str,
-    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> Tuple[str, Optional[GitStatusDiff]]:
     """Audits a package's git repository status in render/ or install/."""
     pkg_dir = repo_path / pkg
@@ -34,7 +33,7 @@ def audit_repo_package_status(
     # Note: Negative pathspecs (e.g. `:(exclude)*.swp`) cannot be passed directly to `git ls-files`
     # because Git's pathspec engine prunes directory descent, returning empty output even for tracked
     # packages. Instead, we run `ls-files` on the package dir and filter candidate files using
-    # `is_diff_candidate` in Python.
+    # `check_is_trackable` in Python.
     res_tracked = run_command(
         ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"],
         text=True,
@@ -45,13 +44,13 @@ def audit_repo_package_status(
         return "NEW", None
 
     has_tracked_candidates = any(
-        is_diff_candidate(Path(line))
+        check_is_trackable(Path(line))
         for line in res_tracked.stdout.splitlines()
     )
     if not has_tracked_candidates:
         return "NEW", None
 
-    git_status = parse_git_status_porcelain(repo_path, pkg, exclude_patterns=exclude_patterns)
+    git_status = parse_git_status_porcelain(repo_path, pkg)
     if not git_status.has_changes:
         return "CLEAN", None
     return dirty_label, git_status
@@ -65,9 +64,9 @@ def calculate_pending_delta(
     if render_pkg_dir.exists() and install_pkg_dir.exists():
         diff = compare_folders(render_pkg_dir, install_pkg_dir, dir_mode=DirMode.NO_DIR)
         # Filter out internally generated synthetic files from the pending delta view
-        diff.added = [p for p in diff.added if is_diff_candidate(render_pkg_dir / p)]
-        diff.modified = [p for p in diff.modified if is_diff_candidate(render_pkg_dir / p) and is_diff_candidate(install_pkg_dir / p)]
-        diff.deleted = [p for p in diff.deleted if is_diff_candidate(install_pkg_dir / p)]
+        diff.added = [p for p in diff.added if check_is_trackable(render_pkg_dir / p)]
+        diff.modified = [p for p in diff.modified if check_is_trackable(render_pkg_dir / p) and check_is_trackable(install_pkg_dir / p)]
+        diff.deleted = [p for p in diff.deleted if check_is_trackable(install_pkg_dir / p)]
         diff.permissions_differ = [p for p in diff.permissions_differ if p in diff.modified]
 
         if not diff.added and not diff.modified and not diff.deleted:
@@ -129,7 +128,6 @@ def build_list_only_status(
 def build_full_status(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
-    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> StatusResult:
     """Runs complete status audit across active packages with reverse-sync and render."""
     discovered_in_install = workspace_config.get_package_names_from_dir(workspace_config.install_path)
@@ -183,12 +181,12 @@ def build_full_status(
 
         # Status A: Template Status
         status.template_status, status.template_changes = audit_repo_package_status(
-            workspace_config.render_path, pkg, dirty_label="MODIFIED", exclude_patterns=exclude_patterns
+            workspace_config.render_path, pkg, dirty_label="MODIFIED"
         )
 
         # Status B: System Status
         status.system_status, status.system_changes = audit_repo_package_status(
-            workspace_config.install_path, pkg, dirty_label="DRIFTED", exclude_patterns=exclude_patterns
+            workspace_config.install_path, pkg, dirty_label="DRIFTED"
         )
 
         # Status Δ: Pending Delta
@@ -218,9 +216,8 @@ def run_primitive_status(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
     list_only: bool = False,
-    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> StatusResult:
     """Orchestrates configuration status audit or fast metadata listing."""
     if list_only:
         return build_list_only_status(workspace_config, target_pkgs=target_pkgs)
-    return build_full_status(workspace_config, target_pkgs=target_pkgs, exclude_patterns=exclude_patterns)
+    return build_full_status(workspace_config, target_pkgs=target_pkgs)

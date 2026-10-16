@@ -354,6 +354,8 @@ def parse_env_text(content: str) -> Dict[str, str]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        if line.startswith("export "):
+            line = line[7:].strip()
         if "=" in line:
             k, v = line.split("=", 1)
             k = k.strip()

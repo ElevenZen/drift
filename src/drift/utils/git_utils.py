@@ -1,6 +1,7 @@
 """Git repository utility functions."""
 
 import os
+import re
 import logging
 import subprocess
 from pathlib import Path
@@ -8,9 +9,8 @@ from typing import List, Optional, Sequence, Union
 from dataclasses import dataclass, field
 
 from .process_utils import run_command
-from .file_inspect import is_temp_file, is_diff_candidate
+from .file_inspect import check_is_trackable
 from .path_utils import to_relative_path
-from ..core.constants import DEFAULT_DIFF_EXCLUDE_PATTERNS
 from ..core.exceptions import mark_logged
 
 logger = logging.getLogger(__name__)
@@ -42,36 +42,88 @@ class GitStatusDiff:
         return paths
 
 
+_GIT_C_ESCAPE_BYTES = {
+    b"a": b"\x07",
+    b"b": b"\x08",
+    b"f": b"\x0c",
+    b"n": b"\x0a",
+    b"r": b"\x0d",
+    b"t": b"\x09",
+    b"v": b"\x0b",
+    b"\\": b"\\",
+    b'"': b'"',
+}
+
+_GIT_C_UNESCAPE_RE = re.compile(rb'\\([0-7]{1,3}|[abfnrtv\\"])')
+
+
+def _replace_git_c_escape(match: "re.Match[bytes]") -> bytes:
+    token = match.group(1)
+    if token in _GIT_C_ESCAPE_BYTES:
+        return _GIT_C_ESCAPE_BYTES[token]
+    return bytes([int(token, 8) & 0xFF])
+
+
+def unquote_git_path(path_str: str) -> str:
+    """Unquotes a Git C-style quoted path string (e.g. from `git status --porcelain` or `git diff`).
+
+    When a path contains spaces, backslashes, quotes, or non-ASCII bytes (under `core.quotePath=true`),
+    Git wraps the path in double quotes and encodes special characters using C-style escapes (`\\\\`,
+    `\\"`, `\\t`) and 3-digit octal UTF-8 byte sequences (`\\344\\270\\255`).
+    """
+    s = path_str.strip()
+    if len(s) < 2 or not (s.startswith('"') and s.endswith('"')):
+        return s
+
+    inner = s[1:-1]
+    if "\\" not in inner:
+        return inner
+
+    unescaped = _GIT_C_UNESCAPE_RE.sub(_replace_git_c_escape, inner.encode("utf-8"))
+    return unescaped.decode("utf-8", errors="replace")
+
+
+def _check_is_trackable_porcelain_line(line: str, repo_path: Path) -> bool:
+    """Checks whether a single `git status --porcelain` line refers to a trackable path."""
+    if len(line) < 4:
+        return False
+    path_str = line[3:].strip()
+    if " -> " in path_str:
+        _, new_str = path_str.split(" -> ", 1)
+        path_str = new_str
+    return check_is_trackable(Path(unquote_git_path(path_str)), base_dir=repo_path)
+
+
 def get_git_status_porcelain(
     repo_path: Path,
     pkg_path: Optional[Union[str, Path]] = None,
-    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> List[str]:
-    """Returns the output lines of git status --porcelain for a given repository and package/sub path."""
+    """Returns the trackable output lines of git status --porcelain for a given repository and package/sub path."""
     if not repo_path.exists():
         return []
-    cmd = ["git", "-C", str(repo_path), "status", "--porcelain"]
+    cmd = ["git", "-C", str(repo_path), "status", "--porcelain", "-uall"]
     if pkg_path:
-        cmd.extend(["--", str(pkg_path), *exclude_patterns])
-    elif exclude_patterns:
-        cmd.extend(["--", *exclude_patterns])
+        cmd.extend(["--", str(pkg_path)])
     # check=False is intentional: non-zero returncode indicates error/clean/untracked, handled explicitly below.
     res = run_command(cmd, text=True, check=False, suppress_output=True)
     if res.returncode != 0 or not res.stdout or not res.stdout.strip():
         return []
-    return res.stdout.splitlines()
+    return [
+        line
+        for line in res.stdout.splitlines()
+        if _check_is_trackable_porcelain_line(line, repo_path)
+    ]
 
 
 def has_uncommitted_modifications(
     repo_path: Path,
     sub_path: Optional[Union[Path, str]] = None,
-    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> bool:
     """Checks if a git repository (or a specific path inside it) has uncommitted local modifications.
 
     Uncommitted modifications include staged changes, unstaged changes, and untracked files.
     """
-    return bool(get_git_status_porcelain(repo_path, sub_path, exclude_patterns=exclude_patterns))
+    return bool(get_git_status_porcelain(repo_path, sub_path))
 
 
 def _normalize_pkg_relative_path(path: Path, pkg_name: Optional[str]) -> Path:
@@ -82,13 +134,11 @@ def _normalize_pkg_relative_path(path: Path, pkg_name: Optional[str]) -> Path:
 def _parse_rename_entry(
     path_str: str,
     pkg_name: Optional[str] = None,
-) -> Optional[GitRename]:
+) -> GitRename:
     """Parses a git rename status string ('old -> new') into a GitRename object."""
     old_str, new_str = path_str.split(" -> ", 1)
-    old_p = Path(old_str.strip('" '))
-    new_p = Path(new_str.strip('" '))
-    if not is_diff_candidate(new_p):
-        return None
+    old_p = Path(unquote_git_path(old_str))
+    new_p = Path(unquote_git_path(new_str))
     return GitRename(
         old_path=_normalize_pkg_relative_path(old_p, pkg_name),
         new_path=_normalize_pkg_relative_path(new_p, pkg_name),
@@ -98,13 +148,11 @@ def _parse_rename_entry(
 def parse_git_status_porcelain(
     repo_path: Path,
     pkg_name: Optional[str] = None,
-    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> GitStatusDiff:
     """Parses git status --porcelain for a repository (scoped to pkg_name) into GitStatusDiff."""
     lines = get_git_status_porcelain(
         repo_path,
         f"{pkg_name}/" if pkg_name else None,
-        exclude_patterns=exclude_patterns,
     )
     if not lines:
         return GitStatusDiff()
@@ -122,15 +170,10 @@ def parse_git_status_porcelain(
         path_str = line[3:].strip()
 
         if " -> " in path_str:
-            rename_entry = _parse_rename_entry(path_str, pkg_name)
-            if rename_entry:
-                renamed.append(rename_entry)
+            renamed.append(_parse_rename_entry(path_str, pkg_name))
             continue
 
-        p = Path(path_str.strip('" '))
-        if not is_diff_candidate(p):
-            continue
-
+        p = Path(unquote_git_path(path_str))
         rel_p = _normalize_pkg_relative_path(p, pkg_name)
 
         if index_stat == "?" or work_stat == "?" or index_stat == "A" or work_stat == "A":

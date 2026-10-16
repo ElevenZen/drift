@@ -596,7 +596,7 @@ def check_engine_inputs(
         if not engine.is_disabled and engine.input_file is not None:
             total += 1
             input_path = engine.input_file
-            if not input_path.is_absolute():
+            if not input_path.anchor:
                 input_path = config_dir / input_path
             if not input_path.exists():
                 missing.append(str(engine.input_file))

@@ -107,11 +107,11 @@ def run_health_probe_from_source(
 ) -> PackageHealthResult:
     """Executes the health probe hook by reading and compiling templates from the src/ directory."""
     src_pkg_dir = workspace_config.source_path / pkg
-    hook_flags = HookExecFlags(
-        no_hooks=flags.no_hooks if flags else False,
-        streaming=flags.streaming if flags else False,
-        inject_non_interactive_envs=flags.inject_non_interactive_envs if flags else True,
-        raise_on_error=False,
+    hook_flags = HookExecFlags.resolve(
+        flags,
+        settings=workspace_config.settings,
+        fallback=HookExecFlags(streaming=False),
+        override=HookExecFlags(raise_on_error=False),
     )
 
     try:
@@ -154,11 +154,11 @@ def run_health_probe_from_install(
 ) -> PackageHealthResult:
     """Executes the health probe hook directly from static files in the install/ directory without render."""
     install_pkg_dir = workspace_config.install_path / pkg
-    hook_flags = HookExecFlags(
-        no_hooks=flags.no_hooks if flags else False,
-        streaming=flags.streaming if flags else False,
-        inject_non_interactive_envs=flags.inject_non_interactive_envs if flags else True,
-        raise_on_error=False,
+    hook_flags = HookExecFlags.resolve(
+        flags,
+        settings=workspace_config.settings,
+        fallback=HookExecFlags(streaming=False),
+        override=HookExecFlags(raise_on_error=False),
     )
 
     try:

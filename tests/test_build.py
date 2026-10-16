@@ -44,6 +44,8 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
                 [sys.executable, str(zipapp_path), "--help"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env
             )
             self.assertEqual(res_help.returncode, 0)
@@ -54,6 +56,8 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
                 [sys.executable, str(zipapp_path), "help", "drift_workspace.toml"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env
             )
             self.assertEqual(res_doc.returncode, 0)
@@ -70,6 +74,8 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
                 cwd=str(workspace_dir),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env
             )
             self.assertEqual(res_init.returncode, 0)
@@ -80,6 +86,8 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
                 cwd=str(workspace_dir),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env
             )
             self.assertEqual(res_new.returncode, 0)
@@ -93,6 +101,8 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
                 cwd=str(workspace_dir),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env
             )
             self.assertEqual(res_deploy.returncode, 0)

@@ -124,7 +124,7 @@ class DigestionContext:
     @property
     def absolute_package_render_dir(self) -> Path:
         """Returns absolute path to the package render directory."""
-        if self.package_render_dir.is_absolute():
+        if self.package_render_dir.anchor:
             return self.package_render_dir
         return self.drift_root / self.package_render_dir
 

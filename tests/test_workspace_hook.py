@@ -191,6 +191,22 @@ pkg1 = true
             WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertIn("nonexistent_hook.py", str(cm.exception))
 
+    def test_custom_hook_file_rooted_non_absolute_raises_config_error(self) -> None:
+        """Rooted or drive-relative non-absolute hook_file on Windows is rejected even if target exists at drive root."""
+        import sys
+        if sys.platform != "win32":
+            return
+        config_dir = (self.drift_root / CONFIG_DIR_NAME).resolve()
+        sneaky_hook = config_dir / "sneaky_ws_hook.py"
+        sneaky_hook.write_text("def configure_workspace(context):\n    return context.config\n", encoding="utf-8")
+        rel_from_anchor = sneaky_hook.relative_to(sneaky_hook.anchor).as_posix()
+
+        for bad_hook in [f"/{rel_from_anchor}", "\\rooted_hook.py", "C:drive_rel_hook.py"]:
+            with self.subTest(bad_hook=bad_hook):
+                with self.assertRaises(ConfigError) as cm:
+                    apply_workspace_hook(self.drift_root, {"workspace": {"hook_file": bad_hook}})
+                self.assertIn("must be a relative or valid absolute path", str(cm.exception))
+
     def test_hook_missing_configure_workspace_func_raises_config_error(self) -> None:
         """Hook file without configure_workspace() raises ConfigError."""
         hook_file = self.drift_root / CONFIG_DIR_NAME / "drift_workspace.py"

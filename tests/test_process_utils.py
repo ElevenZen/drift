@@ -12,6 +12,9 @@ from drift.utils.process_utils import (
     has_admin_privileges,
     assert_can_escalate,
     run_command,
+    normalize_windows_drift_env,
+    _patch_windows_render_command,
+    _resolve_windows_bash_executable,
 )
 from drift.core.constants import set_test_mode
 
@@ -200,6 +203,68 @@ class TestProcessUtils(unittest.TestCase):
         finally:
             set_test_mode(True, enable_logging=False)
 
+    def test_normalize_windows_drift_env(self) -> None:
+        raw_env = {
+            "DRIFT_OS": "windows",
+            "DRIFT_HOOK": "1",
+            "drift_arch": "x86_64",
+            "Drift_Package_Name": "my_pkg",
+            "PATH": "C:\\Windows\\System32",
+            "USER_VAR": "keep_case",
+        }
+        normalized = normalize_windows_drift_env(raw_env)
+        self.assertEqual(normalized["drift_os"], "windows")
+        self.assertEqual(normalized["drift_hook"], "1")
+        self.assertEqual(normalized["drift_arch"], "x86_64")
+        self.assertEqual(normalized["drift_package_name"], "my_pkg")
+        self.assertNotIn("DRIFT_OS", normalized)
+        self.assertNotIn("DRIFT_HOOK", normalized)
+        self.assertNotIn("Drift_Package_Name", normalized)
+        self.assertEqual(normalized["PATH"], "C:\\Windows\\System32")
+        self.assertEqual(normalized["USER_VAR"], "keep_case")
+
+    def test_patch_windows_render_command(self) -> None:
+        with patch("drift.utils.process_utils._find_windows_bash", return_value="C:/Program Files/Git/bin/bash.exe"):
+            cmd, use_shell = _patch_windows_render_command("source env.sh && envsubst < tpl")
+            self.assertEqual(cmd, ["C:/Program Files/Git/bin/bash.exe", "-c", "source env.sh && envsubst < tpl"])
+            self.assertFalse(use_shell)
+
+        with patch("drift.utils.process_utils._find_windows_bash", return_value=None):
+            cmd, use_shell = _patch_windows_render_command("echo fallback")
+            self.assertEqual(cmd, "echo fallback")
+            self.assertTrue(use_shell)
+
+    def test_resolve_windows_bash_executable(self) -> None:
+        mock_bash = "C:/Program Files/Git/bin/bash.exe"
+        with patch("drift.utils.process_utils._find_windows_bash", return_value=mock_bash):
+            # List commands
+            self.assertEqual(
+                _resolve_windows_bash_executable(["bash", "script.sh", "--arg"]),
+                [mock_bash, "script.sh", "--arg"],
+            )
+            self.assertEqual(
+                _resolve_windows_bash_executable(["bash.exe", "script.sh"]),
+                [mock_bash, "script.sh"],
+            )
+            self.assertEqual(
+                _resolve_windows_bash_executable(["python", "script.py"]),
+                ["python", "script.py"],
+            )
+            # String commands (including leading whitespace / shlex tokenizing)
+            self.assertEqual(
+                _resolve_windows_bash_executable("bash -c 'echo hi'"),
+                f'"{mock_bash}" -c \'echo hi\'',
+            )
+            self.assertEqual(
+                _resolve_windows_bash_executable("  bash.exe   script.sh"),
+                f'"{mock_bash}"   script.sh',
+            )
+            self.assertEqual(
+                _resolve_windows_bash_executable("git status"),
+                "git status",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -26,6 +26,9 @@ from drift.primitives.reverse_sync import run_primitive_1_reverse_sync
 from drift.primitives.adopt_repo import resolve_source_file_path, adopt_one_package_drifts
 from drift.utils.toml_utils import parse_toml
 from drift.core.exceptions import ConfigError
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
 
 
 class TestPackageRenderEngine(unittest.TestCase):
@@ -438,8 +441,8 @@ class TestPackageRenderEngine(unittest.TestCase):
         # Templated hook script
         hook_script = scripts_dir / "setup.custom.sh"
         hook_script.write_text("""
-echo "EXECUTED" >> "$DRIFT_HOOK_OUT"
-grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
+echo "EXECUTED" >> "$drift_hook_out"
+grep "HOOK_CHAINED_SUCCESS" "$0" >> "$drift_hook_out"
 """, encoding="utf-8")
         hook_script.chmod(0o755)
 
@@ -461,7 +464,7 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
         pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
 
         output_log = self.drift_root / "hook_output.log"
-        with patch.dict(os.environ, {"DRIFT_HOOK_OUT": str(output_log)}):
+        with patch.dict(os.environ, {"drift_hook_out": str(output_log)}):
             res = trigger_hook_with_render(
                 workspace_config=workspace_config,
                 package_name="pkg_hook_chain",
@@ -607,13 +610,14 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
         self.assertEqual(match_leaf_folder_priority.path, leaf_folder)
 
         # Case F: Broken symlink in intermediate path blocks descent
-        broken_symlink = pkg_dir / "a" / "broken_link"
-        broken_symlink.symlink_to(pkg_dir / "nonexistent")
-        match_broken = registry.find_conflict_in_source_dir(pkg_dir, Path("a/broken_link/sub.txt"))
-        self.assertIsNotNone(match_broken)
-        assert match_broken is not None
-        self.assertEqual(match_broken.status, "block")
-        self.assertEqual(match_broken.path, broken_symlink)
+        if CAN_SYMLINK:
+            broken_symlink = pkg_dir / "a" / "broken_link"
+            broken_symlink.symlink_to(pkg_dir / "nonexistent")
+            match_broken = registry.find_conflict_in_source_dir(pkg_dir, Path("a/broken_link/sub.txt"))
+            self.assertIsNotNone(match_broken)
+            assert match_broken is not None
+            self.assertEqual(match_broken.status, "block")
+            self.assertEqual(match_broken.path, broken_symlink)
 
     def test_render_empty_directory_creates_drift_keep(self) -> None:
         """Verifies that rendering empty directories generates .drift_keep stubs in render/."""

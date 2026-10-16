@@ -62,6 +62,7 @@ from ..utils.env_utils import (
     resolve_env_configs,
 )
 from ..utils.path_utils import expand_path
+from ..utils.file_inspect import check_can_symlink
 from ..utils.config_utils import (
     get_first_from,
     parse_bool_value,
@@ -236,7 +237,7 @@ class PackageSectionConfig(AlwaysTruthy):
             raise ConfigError("Package config must have a non-empty 'name'.")
         if not isinstance(self.source_directory, Path):
             raise ConfigError(f"source_directory must be a Path for package '{self.name}'.")
-        if self.source_directory.is_absolute():
+        if self.source_directory.anchor:
             raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path.")
         norm_src = os.path.normpath(str(self.source_directory))
         if norm_src == ".." or norm_src.startswith(".." + os.sep) or norm_src.startswith("../"):
@@ -259,6 +260,8 @@ class PackageSectionConfig(AlwaysTruthy):
         for d in self.fully_controlled_dirs:
             if not isinstance(d, Path):
                 raise ConfigError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
+            if d.anchor:
+                raise ConfigError(f"fully_controlled_dirs entry '{d}' must be a relative path for package '{self.name}'.")
         if self.hook_file is not None:
             if not isinstance(self.hook_file, Path):
                 raise ConfigError(f"hook_file must be a Path for package '{self.name}'.")
@@ -315,7 +318,7 @@ class PackageSectionConfig(AlwaysTruthy):
         raw_hook_file = data.get("hook_file")
         if raw_hook_file is not None:
             resolved_hook_file = Path(raw_hook_file)
-            if not resolved_hook_file.is_absolute() and base_dir is not None:
+            if not resolved_hook_file.anchor and base_dir is not None:
                 resolved_hook_file = (base_dir / resolved_hook_file).resolve()
         else:
             resolved_hook_file = None
@@ -430,19 +433,26 @@ class PackageConfig(AlwaysTruthy):
         workspace_config: Optional[WorkspaceConfig],
         render_dir_override: Optional[Path] = None,
         install_dir_override: Optional[Path] = None,
+        check_symlink: bool = True,
     ) -> Dict[str, str]:
         ws_pkg_facts = (
             workspace_config.get_drift_package_facts(
                 self.name,
                 render_dir_override=render_dir_override,
                 install_dir_override=install_dir_override,
+                check_symlink=False,
             )
             if workspace_config is not None
             else {}
         )
+        effective_method = (
+            self.get_install_method(workspace_config, check_symlink=check_symlink)
+            if workspace_config is not None
+            else self.package.install_method
+        )
         pkg_facts = { k: str(v) for k, v in {
             'drift_package_name': self.name,
-            'drift_package_install_method': self.package.install_method,
+            'drift_package_install_method': effective_method,
             'drift_package_target_dir': self.package.target_directory.as_posix() if self.package.target_directory else None,
         }.items() if v is not None }
         return { **ws_pkg_facts, **pkg_facts }
@@ -463,7 +473,7 @@ class PackageConfig(AlwaysTruthy):
             return False, reason
 
         from ..hooks.lifecycle_hooks import HookExecFlags
-        exec_flags = HookExecFlags.resolve(flags)
+        exec_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
 
         # 2. Dynamic probe hook check (if configured and hooks enabled)
         if self.hooks.probe is not None and not exec_flags.no_hooks:
@@ -496,15 +506,23 @@ class PackageConfig(AlwaysTruthy):
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
         return self.package.target_directory or workspace_config.default_target_path
 
-    def get_install_method(self, workspace_config: WorkspaceConfig) -> InstallMethod:
+    def get_install_method(self, workspace_config: WorkspaceConfig, check_symlink: bool = True) -> InstallMethod:
         method = self.package.install_method or workspace_config.workspace.default_install_method
-        if sys.platform == "win32" and not workspace_config.settings.enable_symlink_on_windows:
-            if method == InstallMethod.SYMLINK:
-                logger.debug(
-                    f"Demoting install_method from 'symlink' to 'copy' for package '{self.name}' "
-                    "on Windows because enable_symlink_on_windows is false."
+        if sys.platform == "win32":
+            if not workspace_config.settings.enable_symlink_on_windows:
+                if method == InstallMethod.SYMLINK:
+                    logger.debug(
+                        f"Demoting install_method from 'symlink' to 'copy' for package '{self.name}' "
+                        "on Windows because enable_symlink_on_windows is false."
+                    )
+                return InstallMethod.COPY
+            elif check_symlink and method == InstallMethod.SYMLINK and not check_can_symlink():
+                raise ConfigError(
+                    f"Symlink installation on Windows is enabled ('enable_symlink_on_windows = true') for package '{self.name}', "
+                    "but the current process lacks privileges to create symbolic links. "
+                    "Please enable Windows Developer Mode or run with Administrator privileges.",
+                    packages=[self.name],
                 )
-            return InstallMethod.COPY
 
         return method
 

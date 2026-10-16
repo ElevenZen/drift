@@ -1926,6 +1926,185 @@ render_command = "bash -c 'cat %i %s'"
             self.assertTrue(resolved)
             self.assertFalse(src_dir.exists())
 
+    def test_get_drifted_packages_with_spaces_and_renames(self) -> None:
+        """Verifies get_drifted_packages handles Git-quoted paths containing spaces and staged renames."""
+        pkg_space = "pkg_space"
+        pkg_rename = "pkg_rename"
+        for p in (pkg_space, pkg_rename):
+            (self.src_dir / p).mkdir(parents=True, exist_ok=True)
+            (self.install_dir / p).mkdir(parents=True, exist_ok=True)
+
+        # 1. File with spaces in filename (causes Git porcelain to wrap path in double quotes)
+        (self.install_dir / pkg_space / "my file with spaces.txt").write_text("spaced", encoding="utf-8")
+
+        # 2. Staged rename in pkg_rename
+        orig = self.install_dir / pkg_rename / "old.txt"
+        orig.write_text("rename me", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit orig"], cwd=str(self.install_dir), check=True, capture_output=True)
+        # Re-create spaced file after commit so it's untracked, and git mv orig
+        (self.install_dir / pkg_space / "my file with spaces.txt").write_text("spaced v2", encoding="utf-8")
+        subprocess.run(["git", "mv", f"{pkg_rename}/old.txt", f"{pkg_rename}/new.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        self.assertEqual(get_drifted_packages(self.workspace_config), [pkg_rename, pkg_space])
+
+    def test_generate_adjusted_patch_preserves_dash_and_plus_body_lines(self) -> None:
+        """Verifies generate_adjusted_patch only rewrites headers before '@@' and preserves '--- '/'+++ ' lines in hunks."""
+        from drift.primitives.adopt_repo import generate_adjusted_patch
+
+        pkg = "pkg_patch_body"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Original file has a line starting with `-- ` (which becomes `--- ` when deleted in unified diff)
+        # plus enough unchanged lines (>= 50% similarity) for git diff to emit a single rename diff.
+        old_file = pkg_install_dir / "old_script.lua"
+        old_file.write_text(
+            "local x = 1\n"
+            "local a = 1\n"
+            "local b = 2\n"
+            "local c = 3\n"
+            "-- old lua comment\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add old_script.lua"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Rename and replace `-- old lua comment` with `++ counter comment` (becomes `+++ counter comment` in diff)
+        subprocess.run(["git", "mv", f"{pkg}/old_script.lua", f"{pkg}/new_script.lua"], cwd=str(self.install_dir), check=True, capture_output=True)
+        (pkg_install_dir / "new_script.lua").write_text(
+            "local x = 1\n"
+            "local a = 1\n"
+            "local b = 2\n"
+            "local c = 3\n"
+            "++ counter comment\n",
+            encoding="utf-8",
+        )
+
+        adj_patch = generate_adjusted_patch(
+            install_base=self.install_dir,
+            pkg=pkg,
+            new_rel_path=Path("new_script.lua"),
+            old_rel_path=Path("old_script.lua"),
+            target_src_filename="new_script.envst.lua",
+        )
+
+        lines = adj_patch.splitlines()
+        self.assertEqual(lines[0], "--- a/new_script.envst.lua")
+        self.assertEqual(lines[1], "+++ b/new_script.envst.lua")
+        # Body lines inside the hunk must NOT be rewritten into `--- a/...` or `+++ b/...`
+        self.assertIn("--- old lua comment", lines)
+        self.assertIn("+++ counter comment", lines)
+        self.assertEqual(lines.count("--- a/new_script.envst.lua"), 1)
+        self.assertEqual(lines.count("+++ b/new_script.envst.lua"), 1)
+
+        # Verify patch applies cleanly to a source template
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        target_src = src_pkg_dir / "new_script.envst.lua"
+        target_src.write_text(
+            "local x = $X_VAL\n"
+            "local a = 1\n"
+            "local b = 2\n"
+            "local c = 3\n"
+            "-- old lua comment\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(apply_source_patch(target_src, adj_patch))
+        self.assertEqual(
+            target_src.read_text(encoding="utf-8"),
+            "local x = $X_VAL\n"
+            "local a = 1\n"
+            "local b = 2\n"
+            "local c = 3\n"
+            "++ counter comment\n",
+        )
+
+    def test_adopt_custom_engine_template_patches_instead_of_overwriting(self) -> None:
+        """Verifies custom render engine templates (e.g. .j2) are patched rather than statically overwritten,
+        and dry_run_adopt classifies static .toml/.sh files as static overwrites rather than templates.
+        """
+        from drift.primitives.adopt_repo import dry_run_adopt
+        from drift.config.render_engine_config import RenderEngineConfig
+
+        pkg = "pkg_j2_adopt"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        # Register a j2 engine in workspace_config
+        j2_engine = RenderEngineConfig(
+            name="jinja2",
+            input_file=None,
+            suffix="j2",
+            render_command="cat %s",
+        )
+        self.workspace_config.render_engine_configs["jinja2"] = j2_engine
+
+        # Template in src/ has a Jinja2 expression on line 1 and static context on lines 2-5
+        src_j2 = src_pkg / "config.toml.j2"
+        src_j2.write_text(
+            "host = '{{ hostname }}'\n"
+            "line2 = 'a'\n"
+            "line3 = 'b'\n"
+            "line4 = 'c'\n"
+            "port = 8080\n",
+            encoding="utf-8",
+        )
+        # Static .toml file in src/ (NOT a template)
+        src_static = src_pkg / "static.toml"
+        src_static.write_text("mode = 'v1'\n", encoding="utf-8")
+
+        # Rendered files in install/
+        install_j2 = install_pkg / "config.toml"
+        install_j2.write_text(
+            "host = 'prod-box'\n"
+            "line2 = 'a'\n"
+            "line3 = 'b'\n"
+            "line4 = 'c'\n"
+            "port = 8080\n",
+            encoding="utf-8",
+        )
+        install_static = install_pkg / "static.toml"
+        install_static.write_text("mode = 'v1'\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init j2 and static src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init j2 and static install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Drift port on line 5 of install/config.toml and mode in install/static.toml
+        install_j2.write_text(
+            "host = 'prod-box'\n"
+            "line2 = 'a'\n"
+            "line3 = 'b'\n"
+            "line4 = 'c'\n"
+            "port = 9090\n",
+            encoding="utf-8",
+        )
+        install_static.write_text("mode = 'v2'\n", encoding="utf-8")
+
+        plan = get_package_drifts(self.workspace_config, pkg)
+
+        # Verify dry_run_adopt logs `config.toml.j2` as a template patch and `static.toml` as a Static Overwrite
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.primitives.adopt_repo", level="INFO") as log_cm:
+                dry_run_adopt(plan)
+                joined_logs = "\n".join(log_cm.output)
+                self.assertIn("config.toml [Patch applies cleanly to: config.toml.j2]", joined_logs)
+                self.assertIn("static.toml [Static Overwrite of: static.toml]", joined_logs)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        # Execute adopt and verify `{{ hostname }}` in config.toml.j2 was preserved (patched, not overwritten!)
+        res = execute_package_adopt(self.workspace_config, plan, interactive=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertIn("{{ hostname }}", src_j2.read_text(encoding="utf-8"))
+        self.assertIn("port = 9090", src_j2.read_text(encoding="utf-8"))
+        self.assertEqual(src_static.read_text(encoding="utf-8"), "mode = 'v2'\n")
+
 
 if __name__ == "__main__":
     unittest.main()

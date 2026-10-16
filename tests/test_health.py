@@ -1,12 +1,13 @@
 """Unit and integration tests for package runtime health check probes and 'drift health'."""
 
+import sys
 import json
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
@@ -103,7 +104,8 @@ exit 0
         res = run_one_package_health_probe(self.workspace_config, pkg)
         self.assertEqual(res.status, PackageHealthStatus.HEALTHY)
         self.assertEqual(res.exit_code, 0)
-        self.assertIn(f"OK: {pkg} is running in {self.system_target_dir}", res.stdout)
+        self.assertIn(f"OK: {pkg} is running in ", res.stdout)
+        self.assertIn(self.system_target_dir.name, res.stdout)
         self.assertGreaterEqual(res.duration_ms, 0.0)
 
     def test_health_one_package_fail(self):
@@ -236,7 +238,11 @@ exit 0
             res = run_one_package_health_probe(self.workspace_config, pkg)
             called_cmd = mock_run.call_args[0][0]
             self.assertNotEqual(called_cmd[0], "sudo")
-            self.assertEqual(called_cmd[0], str(hook_script))
+            if sys.platform == "win32":
+                self.assertIn("bash", called_cmd[0].lower())
+                self.assertEqual(called_cmd[-1], PureWindowsPath(hook_script).as_posix())
+            else:
+                self.assertEqual(called_cmd[0], str(hook_script))
             self.assertEqual(res.status, PackageHealthStatus.HEALTHY)
 
     def test_primitive_health_checks_aggregation(self):
@@ -460,7 +466,7 @@ exit 0
         self.assertNotIn("INSTALL_STATIC_OUTPUT", res_src.stdout)
         self.assertIsNotNone(res_src.hook_path)
         assert res_src.hook_path is not None
-        self.assertIn("/render/", res_src.hook_path)
+        self.assertIn("/render/", Path(res_src.hook_path).as_posix())
 
     def test_package_stage_enum(self):
         """Verifies PackageStage parsing from various string aliases."""

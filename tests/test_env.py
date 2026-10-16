@@ -1069,11 +1069,11 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
             }
         }
         from drift.config.package_loader import resolve_and_interpolate_package_config
-        base_dir = Path("/mock/src/my_daemon")
+        base_dir = Path("/mock/src/my_daemon").resolve()
         stitched, env_res = resolve_and_interpolate_package_config(pkg_dict, package_name="my_daemon")
         pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_daemon", base_dir=base_dir)
         self.assertEqual(pkg_cfg.name, "my_daemon")
-        self.assertEqual(str(pkg_cfg.package.target_directory), "/var/lib/my_daemon")
+        self.assertEqual(pkg_cfg.package.target_directory, Path("/var/lib/my_daemon"))
         self.assertEqual(pkg_cfg.env_resolve.effective.override["SERVICE_URL"], "http://127.0.0.1:8000")
         self.assertEqual(pkg_cfg.hooks.post_install, base_dir / ".drift/hooks/start_my_daemon.sh")
         self.assertEqual(pkg_cfg.hooks.timeout, 45)
@@ -1092,7 +1092,7 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_dict, package_name="legacy_pkg", base_dir=Path("/test/legacy_pkg"))
+            PackageConfig.from_dict(pkg_dict, package_name="legacy_pkg", base_dir=Path("/test/legacy_pkg").resolve())
         self.assertIn("Unsupported key 'LEGACY_VAR' in [env] in package 'legacy_pkg'", str(ctx.exception))
         self.assertIn("Expected [env.override], [env.secrets], [env.default], or [env.fallback]", str(ctx.exception))
 
@@ -1175,9 +1175,9 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
                                           workspace_config=ws)
         self.assertEqual(pkg_cfg.name, "my_pkg")
         self.assertEqual(str(pkg_cfg.package.target_directory), str(self.drift_root / "install" / "my_pkg" / "target"))
-        self.assertEqual(pkg_cfg.env_resolve.effective.override["SRC_DIR_REF"], str(self.drift_root / "src" / "my_pkg"))
-        self.assertEqual(pkg_cfg.env_resolve.effective.override["RENDER_DIR_REF"], str(self.drift_root / "render" / "my_pkg"))
-        self.assertEqual(pkg_cfg.env_resolve.effective.override["INSTALL_DIR_REF"], str(self.drift_root / "install" / "my_pkg"))
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["SRC_DIR_REF"], (self.drift_root / "src" / "my_pkg").as_posix())
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["RENDER_DIR_REF"], (self.drift_root / "render" / "my_pkg").as_posix())
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["INSTALL_DIR_REF"], (self.drift_root / "install" / "my_pkg").as_posix())
         # Fallback filled unset blanks
         self.assertEqual(pkg_cfg.env_resolve.effective.fallback["FALLBACK_VAR"], "fallback_val")
         # Hook path was interpolated and normalized to stage base (install directory for post_install)
@@ -1222,9 +1222,9 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
                                           package_name="custom_pkg",
                                           base_dir=self.drift_root / "custom_src" / "custom_pkg",
                                           workspace_config=ws)
-        self.assertEqual(pkg_cfg.env_resolve.effective.override["SRC"], str(self.drift_root / "custom_src" / "custom_pkg"))
-        self.assertEqual(pkg_cfg.env_resolve.effective.override["RENDER"], str(self.drift_root / "custom_render" / "custom_pkg"))
-        self.assertEqual(pkg_cfg.env_resolve.effective.override["INSTALL"], str(self.drift_root / "custom_install" / "custom_pkg"))
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["SRC"], (self.drift_root / "custom_src" / "custom_pkg").as_posix())
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["RENDER"], (self.drift_root / "custom_render" / "custom_pkg").as_posix())
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["INSTALL"], (self.drift_root / "custom_install" / "custom_pkg").as_posix())
 
     def test_package_config_without_workspace_config_leaves_dir_facts_unset(self) -> None:
         """Verifies that when workspace_config is not provided, 'dir' facts are unset."""
@@ -1306,10 +1306,10 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
                                           package_name="pkg_fallback_test",
                                           base_dir=self.drift_root / "src" / "pkg_fallback_test",
                                           workspace_config=ws)
-        expected_src = str(self.drift_root / "src" / "pkg_fallback_test")
+        expected_src = (self.drift_root / "src" / "pkg_fallback_test").as_posix()
         self.assertEqual(pkg_cfg.env_resolve.effective.fallback["FALLBACK_SRC_DIR"], expected_src)
         self.assertEqual(pkg_cfg.env_resolve.effective.fallback["EXTERNAL_VAR"], f"{expected_src}/fallback_ext")
-        self.assertEqual(str(pkg_cfg.package.target_directory), f"{expected_src}/subtarget")
+        self.assertEqual(pkg_cfg.package.target_directory, Path(expected_src) / "subtarget")
 
         # 2. When EXTERNAL_VAR is already set in outer environment, outer value takes precedence over [env.fallback]
         with patch.dict(os.environ, {"EXTERNAL_VAR": "/custom/external/path"}):
@@ -1352,8 +1352,8 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
 
         # 1. Load from source dir with workspace config
         loaded_cfg = PackageConfig.from_source_dir(pkg_src_dir, ws)
-        expected_src = str(self.drift_root / "src" / "pkg_stitched_test")
-        self.assertEqual(str(loaded_cfg.package.target_directory), f"{expected_src}/my_target")
+        expected_src = (self.drift_root / "src" / "pkg_stitched_test").as_posix()
+        self.assertEqual(loaded_cfg.package.target_directory, Path(expected_src) / "my_target")
         self.assertEqual(loaded_cfg.env_resolve.effective.fallback["FALLBACK_SRC"], expected_src)
 
         # 2. Verify rendered file on disk in render/
@@ -1361,7 +1361,7 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
         self.assertTrue(rendered_toml_path.exists())
         rendered_content = rendered_toml_path.read_text(encoding="utf-8")
         self.assertNotIn("${drift_package_source_dir}", rendered_content)
-        self.assertIn(f"{expected_src}/my_target", rendered_content)
+        self.assertIn((Path(expected_src) / "my_target").as_posix(), rendered_content)
 
         # 3. Load from rendered file directly (without workspace config)
         rendered_cfg = PackageConfig.from_rendered_file(
@@ -1370,7 +1370,7 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
             package_dir=self.drift_root / "render" / "pkg_stitched_test",
             workspace_config=ws,
         )
-        self.assertEqual(str(rendered_cfg.package.target_directory), f"{expected_src}/my_target")
+        self.assertEqual(rendered_cfg.package.target_directory, Path(expected_src) / "my_target")
         self.assertEqual(rendered_cfg.env_resolve.effective.fallback["FALLBACK_SRC"], expected_src)
 
         # 4. Load from rendered package directory
@@ -1378,7 +1378,7 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
             self.drift_root / "render" / "pkg_stitched_test",
             workspace_config=ws,
         )
-        self.assertEqual(str(rendered_dir_cfg.package.target_directory), f"{expected_src}/my_target")
+        self.assertEqual(rendered_dir_cfg.package.target_directory, Path(expected_src) / "my_target")
         self.assertEqual(rendered_dir_cfg.env_resolve.effective.fallback["FALLBACK_SRC"], expected_src)
 
     def test_workspace_config_secrets_dict_and_scope(self) -> None:
@@ -2306,7 +2306,7 @@ class TestPackageConfigEnvResolveEdgeCases(unittest.TestCase):
         self.assertEqual(facts["drift_package_name"], "custom_pkg")
         self.assertEqual(facts["drift_package_target_dir"], "/custom/pkg/target")
         self.assertEqual(facts["drift_package_install_method"], "copy")
-        self.assertEqual(facts["drift_package_source_dir"], "/mock/drift/src/custom_pkg")
+        self.assertEqual(facts["drift_package_source_dir"], (ws.source_path / "custom_pkg").as_posix())
 
     def test_package_compute_effective_envs_standalone_vs_workspace(self) -> None:
         """compute_effective_envs resolves against workspace effective envs when provided and standalone when None."""

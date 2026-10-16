@@ -122,8 +122,11 @@ class UninstallOptions(AlwaysTruthy):
 
     def get_hook_flags(self, settings=None) -> HookExecFlags:
         """Derives HookExecFlags, assigning dry_run from UninstallOptions to HookExecFlags."""
-        base = HookExecFlags.resolve(self.flags, settings=settings)
-        return replace(base, dry_run=self.dry_run)
+        return HookExecFlags.resolve(
+            self.flags,
+            settings=settings,
+            override=HookExecFlags(dry_run=self.dry_run),
+        )
 
 
 @dataclass(frozen=True)
@@ -376,9 +379,9 @@ def detach_one_package(
 ) -> PackageUninstallResult:
     """Decouples/detaches a single package from Drift, replacing symlinks with physical copies."""
     converted = [
-        str(decode_dot_prefix(a.dst_path.relative_to(context.target_dir)))
+        decode_dot_prefix(a.dst_path.relative_to(context.target_dir)).as_posix()
         if a.dst_path and is_relative_to(a.dst_path, context.target_dir)
-        else str(a.dst_path)
+        else (a.dst_path.as_posix() if a.dst_path else "")
         for a in plan.converted
     ]
     if not dry_run:
@@ -403,9 +406,9 @@ def uninstall_one_package(
 ) -> PackageUninstallResult:
     """Orchestrates standard uninstallation of a single package."""
     removed = [
-        str(decode_dot_prefix(a.dst_path.relative_to(context.target_dir)))
+        decode_dot_prefix(a.dst_path.relative_to(context.target_dir)).as_posix()
         if a.dst_path and is_relative_to(a.dst_path, context.target_dir)
-        else str(a.dst_path)
+        else (a.dst_path.as_posix() if a.dst_path else "")
         for a in plan.removed
     ]
     restored = [

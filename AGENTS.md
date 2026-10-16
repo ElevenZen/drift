@@ -7,6 +7,15 @@
 * **Pure & Predictable Flow**: Strive for pure helpers with explicit inputs and outputs, isolating state mutations and file I/O to designated operational handlers.
 * **Structured & Typed Return Boundaries**: Use dataclasses or typed result containers (`PackageRenderResult`, `HookResult`, etc.) rather than raw dictionaries or arbitrary tuples across module interfaces to ensure strong type safety and explicit inspection.
 * **Boundary Normalization & Validation**: Normalize and validate inputs (e.g., resolving paths to absolute `Path` objects, validating enum keys) at ingestion entry points (`from_dict`, config loaders) so core primitives operate strictly on canonical, validated domain structures without defensive guessing.
+* **3-State Path Validation Discipline (`Path.anchor` vs `Path.is_absolute()`)**:
+  * Never assume a binary `relative` vs `absolute` partition for `pathlib.Path`. Across POSIX and Windows, paths fall into **3 mutually exclusive states**:
+    1. **Strictly Relative (`not p.anchor`)**: Has neither drive nor root (e.g., `Path("src")`, `Path("hooks/a.sh")`). Safe to join via `base_dir / p`.
+    2. **Partially Anchored (`bool(p.anchor) and not p.is_absolute()`)**: Windows rooted or drive-relative paths (`Path("/foo")`, `Path("\\foo")`, `Path("C:foo")`). Invalid as both relative and absolute paths, and dangerous with `base_dir / p` because `/` silently discards `base_dir`'s path or drive.
+    3. **Strictly Absolute (`p.is_absolute()`)**: Has a complete anchor (`bool(p.anchor) == True`).
+  * **Enforcement Rules**:
+    * When requiring a **strictly relative** path, always check **`not p.anchor`** (or `check_is_relative_path(p)`), never `not p.is_absolute()`.
+    * When requiring a **strictly absolute** path, check **`p.is_absolute()`**.
+    * When accepting a **hybrid (relative-or-absolute)** path resolved against `base_dir`, explicitly reject partially anchored paths (`p.anchor and not p.is_absolute()` / `check_is_partially_anchored_path(p)`) before resolving `p if p.anchor else (base_dir / p)`.
 * **No Backward Compatibility Burden**: Backward compatibility is not considered at this early development stage. Obsolete arguments, dead functions, legacy aliases, and transitional optional inputs should be removed cleanly and directly rather than retaining compatibility layers or shims.
 * **`ensure_` vs `assert_` vs `check_` Naming Convention**:
   * Use **`ensure_`** for functions that **create or modify** state to guarantee a postcondition (e.g., `ensure_dir` creates a directory if missing, `ensure_rendered_file_hook_permissions` chmods hook files).

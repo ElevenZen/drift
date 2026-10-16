@@ -133,8 +133,19 @@ backup_directory = "backup"
 # Set to false if you want src/ to remain strictly unmodified by render.
 # ensure_hooks_executable_in_src = true
 
+# Text encoding used to decode lifecycle hook stdout/stderr streams (default: "system").
+# Accepts "system" (to automatically use the host OS preferred codepage) or any valid Python
+# codec (e.g. "utf-8", "gbk", "cp936", "cp1252").
+# NOTE (Windows): Because hook output is decoded as a single stream per script, avoid mixing
+# native Windows console utilities (which output in the local OEM/ANSI codepage, e.g. GBK/CP1252)
+# with UNIX/MSYS2 utilities (which output UTF-8) inside the same hook script. On Windows, prefer
+# PowerShell (.ps1) hooks when invoking Windows core utilities, or explicitly set
+# [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 inside the script.
+# hook_output_encoding = "system"
+
 # Optional Git identity for render/ and install/ auto-commits.
 # Useful on machines without a global Git user or to use a separate identity.
 # Applied to render/.git/config and install/.git/config during 'drift repair'.
 # git_user_name = "Drift Bot"
 # git_user_email = "drift@localhost"
+

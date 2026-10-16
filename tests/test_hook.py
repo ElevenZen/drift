@@ -607,8 +607,8 @@ echo "VALUE=$DYNAMIC_VAL"
             "echo \"PAGER=$PAGER\"\n"
             "echo \"GIT_PAGER=$GIT_PAGER\"\n"
             "echo \"CI=$CI\"\n"
-            "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n"
-            "echo \"DRIFT_NON_INTERACTIVE=$DRIFT_NON_INTERACTIVE\"\n",
+            "echo \"drift_hook=$drift_hook\"\n"
+            "echo \"drift_non_interactive=$drift_non_interactive\"\n",
             encoding="utf-8"
         )
         res = run_primitive_trigger_hook(
@@ -622,12 +622,12 @@ echo "VALUE=$DYNAMIC_VAL"
         self.assertIn("PAGER=cat", stdout)
         self.assertIn("GIT_PAGER=cat", stdout)
         self.assertIn("CI=true", stdout)
-        self.assertIn("DRIFT_HOOK=1", stdout)
-        self.assertIn("DRIFT_NON_INTERACTIVE=1", stdout)
+        self.assertIn("drift_hook=1", stdout)
+        self.assertIn("drift_non_interactive=1", stdout)
 
         # Ensure parent environment is not contaminated
-        self.assertNotIn("DRIFT_HOOK", os.environ)
-        self.assertNotIn("DRIFT_NON_INTERACTIVE", os.environ)
+        self.assertNotIn("drift_hook", os.environ)
+        self.assertNotIn("drift_non_interactive", os.environ)
 
     def test_hook_exec_flags_dataclass_and_resolve(self) -> None:
         """Verifies HookExecFlags dataclass creation, defaults, and resolve classmethod."""
@@ -720,14 +720,14 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         (self.drift_hooks_dir / "pre_source.sh").write_text(
             "#!/bin/sh\n"
             "echo \"PAGER=$PAGER\"\n"
-            "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n"
-            "echo \"DRIFT_NON_INTERACTIVE=$DRIFT_NON_INTERACTIVE\"\n",
+            "echo \"drift_hook=$drift_hook\"\n"
+            "echo \"drift_non_interactive=$drift_non_interactive\"\n",
             encoding="utf-8"
         )
         pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
 
         with patch.dict(os.environ, {"PAGER": "custom_more_pager"}, clear=False):
-            # 1. inject_non_interactive_envs=True (default) -> PAGER overwritten to cat, DRIFT_HOOK=1 and DRIFT_NON_INTERACTIVE=1 injected
+            # 1. inject_non_interactive_envs=True (default) -> PAGER overwritten to cat, drift_hook=1 and drift_non_interactive=1 injected
             res_default = execute_hook_script(
                 hook_path=self.drift_hooks_dir / "pre_source.sh",
                 pkg="pkg_hook",
@@ -737,10 +737,10 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 flags=HookExecFlags(inject_non_interactive_envs=True, streaming=False)
             )
             self.assertIn("PAGER=cat", res_default.stdout or "")
-            self.assertIn("DRIFT_HOOK=1", res_default.stdout or "")
-            self.assertIn("DRIFT_NON_INTERACTIVE=1", res_default.stdout or "")
+            self.assertIn("drift_hook=1", res_default.stdout or "")
+            self.assertIn("drift_non_interactive=1", res_default.stdout or "")
 
-            # 2. inject_non_interactive_envs=False -> PAGER preserved as custom_more_pager, DRIFT_HOOK=1 and DRIFT_NON_INTERACTIVE=1 still injected
+            # 2. inject_non_interactive_envs=False -> PAGER preserved as custom_more_pager, drift_hook=1 and drift_non_interactive=1 still injected
             res_disabled = execute_hook_script(
                 hook_path=self.drift_hooks_dir / "pre_source.sh",
                 pkg="pkg_hook",
@@ -750,11 +750,11 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 flags=HookExecFlags(inject_non_interactive_envs=False, streaming=False)
             )
             self.assertIn("PAGER=custom_more_pager", res_disabled.stdout or "")
-            self.assertIn("DRIFT_HOOK=1", res_disabled.stdout or "")
-            self.assertIn("DRIFT_NON_INTERACTIVE=1", res_disabled.stdout or "")
+            self.assertIn("drift_hook=1", res_disabled.stdout or "")
+            self.assertIn("drift_non_interactive=1", res_disabled.stdout or "")
 
     def test_hook_exec_flags_resolve_with_settings(self) -> None:
-        """Verifies that HookExecFlags.resolve correctly respects SettingsConfig defaults."""
+        """Verifies that HookExecFlags.resolve correctly merges partial flags, SettingsConfig defaults, call-site defaults, and overrides."""
         from drift.hooks.lifecycle_hooks import HookExecFlags, trigger_hook_with_render
         from drift.config.workspace_config import SettingsConfig, WorkspaceConfig
 
@@ -763,16 +763,57 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertTrue(f1.inject_non_interactive_envs)
 
         # 2. No flags, settings with hook_inject_non_interactive_envs=False -> False
-        s_disabled = SettingsConfig(hook_inject_non_interactive_envs=False)
+        s_disabled = SettingsConfig(
+            hook_inject_non_interactive_envs=False,
+            hook_output_encoding="gbk",
+        )
         f2 = HookExecFlags.resolve(settings=s_disabled)
         self.assertFalse(f2.inject_non_interactive_envs)
+        self.assertEqual(f2.output_encoding, "gbk")
 
-        # 3. Explicit flags override settings
-        f_explicit = HookExecFlags(inject_non_interactive_envs=True)
-        f3 = HookExecFlags.resolve(flags=f_explicit, settings=s_disabled)
+        # 3. Partial flags (only streaming=False passed) inherit unset fields from settings
+        f_partial = HookExecFlags(streaming=False)
+        self.assertEqual(f_partial._explicit_fields, frozenset({"streaming"}))
+        f_partial_resolved = HookExecFlags.resolve(
+            flags=f_partial,
+            settings=s_disabled,
+            fallback=HookExecFlags(streaming=True),
+            override=HookExecFlags(raise_on_error=False),
+        )
+        self.assertFalse(f_partial_resolved.streaming)
+        self.assertFalse(f_partial_resolved.inject_non_interactive_envs)
+        self.assertEqual(f_partial_resolved.output_encoding, "gbk")
+        self.assertFalse(f_partial_resolved.raise_on_error)
+
+        # 4. Fallback layer applies when not explicitly set on flags
+        f_defaults = HookExecFlags.resolve(
+            flags=HookExecFlags(),
+            fallback=HookExecFlags(streaming=False, no_hooks=True),
+        )
+        self.assertFalse(f_defaults.streaming)
+        self.assertTrue(f_defaults.no_hooks)
+
+        # 5. Explicit flags override settings and fallback, while override layer wins
+        f_explicit = HookExecFlags(
+            inject_non_interactive_envs=True,
+            output_encoding="ascii",
+            streaming=True,
+            no_hooks=False,
+            raise_on_error=True,
+        )
+        f3 = HookExecFlags.resolve(
+            flags=f_explicit,
+            settings=s_disabled,
+            fallback=HookExecFlags(streaming=False, no_hooks=True),
+            override=HookExecFlags(raise_on_error=False),
+        )
         self.assertTrue(f3.inject_non_interactive_envs)
+        self.assertEqual(f3.output_encoding, "ascii")
+        self.assertTrue(f3.streaming)
+        self.assertFalse(f3.no_hooks)
+        self.assertFalse(f3.raise_on_error)
 
-        # 4. WorkspaceConfig integration via trigger_hook_with_render
+        # 6. WorkspaceConfig integration via trigger_hook_with_render with partial HookExecFlags(streaming=False)
         ws_config = WorkspaceConfig(
             drift_root=self.drift_root,
             settings=SettingsConfig(hook_inject_non_interactive_envs=False)
@@ -780,7 +821,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         (self.drift_hooks_dir / "pre_source.sh").write_text(
             "#!/bin/sh\n"
             "echo \"PAGER=$PAGER\"\n"
-            "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n",
+            "echo \"drift_hook=$drift_hook\"\n",
             encoding="utf-8"
         )
         with patch.dict(os.environ, {"PAGER": "custom_more_pager"}, clear=False):
@@ -788,13 +829,10 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 workspace_config=ws_config,
                 package_name="pkg_hook",
                 hook_name="pre_source",
-                flags=HookExecFlags(
-                    inject_non_interactive_envs=ws_config.settings.hook_inject_non_interactive_envs,
-                    streaming=False
-                ),
+                flags=HookExecFlags(streaming=False),
             )
             self.assertIn("PAGER=custom_more_pager", res.stdout or "")
-            self.assertIn("DRIFT_HOOK=1", res.stdout or "")
+            self.assertIn("drift_hook=1", res.stdout or "")
 
     def test_package_hooks_methods_signatures_and_cwd(self) -> None:
         """Verifies lifecycle hook trigger methods default to hook_path.parent as CWD (or cwd_override)."""
@@ -1225,8 +1263,8 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             DEFAULT_HOOK_NON_INTERACTIVE_ENVS,
         )
 
-        self.assertEqual(DEFAULT_HOOK_COMMON_ENVS.get("DRIFT_HOOK"), "1")
-        self.assertEqual(DEFAULT_HOOK_COMMON_ENVS.get("DRIFT_NON_INTERACTIVE"), "1")
+        self.assertEqual(DEFAULT_HOOK_COMMON_ENVS.get("drift_hook"), "1")
+        self.assertEqual(DEFAULT_HOOK_COMMON_ENVS.get("drift_non_interactive"), "1")
         self.assertEqual(DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS.get("PAGER"), "cat")
         self.assertEqual(DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS.get("DEBIAN_FRONTEND"), "noninteractive")
         self.assertEqual(DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS.get("CI"), "true")
@@ -1626,9 +1664,44 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         render_hooks_dir = self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks"
         self.assertFalse(render_hooks_dir.exists())
 
+    def test_hook_output_encoding_custom_codec(self) -> None:
+        """Verifies hook_output_encoding under [settings] properly decodes non-UTF-8 hook output (e.g. GBK)."""
+        from drift.hooks.lifecycle_hooks import trigger_hook_with_render
+        from drift.config.workspace_config import SettingsConfig
+
+        # Create a Python hook that writes raw GBK bytes to stdout
+        gbk_hook = self.drift_hooks_dir / "gbk_probe.py"
+        gbk_hook.write_text(
+            "import sys\n"
+            "sys.stdout.buffer.write('中文测试输出\\n'.encode('gbk'))\n"
+            "sys.stdout.buffer.flush()\n",
+            encoding="utf-8",
+        )
+        gbk_hook.chmod(0o755)
+
+        (self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_hook"
+        target_directory = "{self.target_dir.as_posix()}"
+
+        [hooks]
+        pre_source = "drift_hooks/gbk_probe.py"
+        """, encoding="utf-8")
+
+        self.workspace_config.settings = SettingsConfig.from_dict({"hook_output_encoding": "gbk"})
+        res = trigger_hook_with_render(
+            workspace_config=self.workspace_config,
+            package_name="pkg_hook",
+            hook_name="pre_source",
+            flags=HookExecFlags(streaming=False),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertIn("中文测试输出", res.stdout or "")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

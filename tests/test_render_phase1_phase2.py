@@ -463,9 +463,6 @@ def configure_package(context):
         """Exhaustively tests that dry-run rendering and deployment planning achieve 100% cache hits
         on templated packages that depend on engine inputs (two-pass cold vs warm idempotency).
         """
-        if not shutil.which("envsubst"):
-            self.skipTest("envsubst command is not available on this system")
-
         with tempfile.TemporaryDirectory(prefix="host_target_") as host_tmp:
             target_dir = Path(host_tmp) / "target_pkg"
             target_dir.mkdir(parents=True, exist_ok=True)

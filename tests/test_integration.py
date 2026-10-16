@@ -8,6 +8,10 @@ from pathlib import Path
 from drift.config.workspace_config import WorkspaceConfig
 from drift.core.state_registry import load_state_registry
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
+
 
 class TestIntegration(unittest.TestCase):
     def setUp(self):
@@ -46,6 +50,7 @@ class TestIntegration(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self.original_environ)
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_lifecycle_symlink_basic(self):
         """Scenario: Basic symlink deployment, drift detection, and uninstallation."""
         from drift.primitives.new_package import run_primitive_10_create_new_package
@@ -289,7 +294,7 @@ class TestIntegration(unittest.TestCase):
         self.workspace_config.packages_enable[pkg] = True
         
         # Override the mustache engine's render_command to use python so it doesn't depend on an external 'mustache' binary
-        py_bin = sys.executable.replace("\\", "/")
+        py_bin = Path(sys.executable).as_posix()
         for eng in self.workspace_config.render_engine_configs.values():
             if eng.name == "mustache":
                 eng.render_command = f'"{py_bin}" -c "import json, sys, pathlib; data=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding=\'utf-8\')); tmpl=pathlib.Path(sys.argv[2]).read_text(encoding=\'utf-8\'); print(tmpl.replace(\'{{{{user}}}}\', data.get(\'user\', \'\')), end=\'\')" %i %s'

@@ -23,6 +23,9 @@ from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
 from drift.primitives.install_repo import run_primitive_5_install, InstallOptions
 from drift.core.exceptions import ConfigError
 from drift.hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
+from drift.utils.file_inspect import check_can_symlink
+
+CAN_SYMLINK = check_can_symlink()
 
 
 class TestDriftHooksIsolation(unittest.TestCase):
@@ -238,7 +241,7 @@ post_install = "drift_hooks/post_install.sh"
         output_content = (self.target_dir / "hook_output.txt").read_text(encoding="utf-8").strip()
         self.assertIn("HELLO_FROM_HELPER", output_content)
         self.assertIn("prefix: APP_PREFIX_VAL", output_content)
-        self.assertIn(f"target is {self.target_dir}", output_content)
+        self.assertIn(f"target is {self.target_dir.as_posix()}", output_content)
         self.assertIn("name is my_app", output_content)
 
         # Control plane / lifecycle scripts are NOT deployed to target
@@ -246,6 +249,7 @@ post_install = "drift_hooks/post_install.sh"
         self.assertFalse((self.target_dir / "drift_hooks").exists())
         self.assertFalse((self.target_dir / "post_install.sh").exists())
 
+    @unittest.skipUnless(CAN_SYMLINK, "Symlink creation requires elevated privileges on Windows")
     def test_backward_compatibility_non_drift_hooks_scripts(self) -> None:
         """Verifies scripts in payload (e.g. bin/) render and deploy normally, and can be hooked via symlink."""
         pkg_src = self.src_dir / "cli_tool"
@@ -426,7 +430,7 @@ name = "pkg_alias"
             self.assertIn("drift_package_src_dir", os.environ)
             self.assertIn("drift_package_source_dir", os.environ)
             self.assertEqual(os.environ["drift_package_src_dir"], os.environ["drift_package_source_dir"])
-            self.assertEqual(os.environ["drift_package_src_dir"], str(pkg_src))
+            self.assertEqual(os.environ["drift_package_src_dir"], pkg_src.as_posix())
 
         # Test PackageHookContext facts
         from drift.hooks.package_hook import PackageHookContext
@@ -438,7 +442,7 @@ name = "pkg_alias"
             env=self.workspace_config.get_drift_package_facts("pkg_alias")
         )
         self.assertIn("drift_package_src_dir", ctx.package_facts)
-        self.assertEqual(ctx.package_facts["drift_package_src_dir"], str(pkg_src))
+        self.assertEqual(ctx.package_facts["drift_package_src_dir"], pkg_src.as_posix())
         self.assertEqual(ctx.package_facts["drift_package_src_dir"], ctx.package_facts["drift_package_source_dir"])
 
 

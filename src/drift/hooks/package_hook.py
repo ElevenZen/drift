@@ -203,8 +203,12 @@ def resolve_package_hook_path(
             return None
         return hook_path
     else:
-        # If a custom hook file is specified, resolve relative to package_dir (pathlib handles absolute paths automatically)
-        hook_path = package_dir / Path(custom_hook)
+        custom_path = Path(custom_hook)
+        if custom_path.anchor and not custom_path.is_absolute():
+            raise ConfigError(
+                f"Configured package hook_file '{custom_hook}' must be a relative or valid absolute path for package '{pkg_name}'."
+            )
+        hook_path = custom_path if custom_path.anchor else (package_dir / custom_path)
         if not hook_path.is_file():
             raise ConfigError(
                 f"Configured package hook_file '{custom_hook}' not found at '{hook_path}' for package '{pkg_name}'."

@@ -171,8 +171,12 @@ def apply_workspace_hook(
         if not hook_path.is_file():
             return config_dict
     else:
-        # If a custom hook file is specified, resolve relative to config/ (pathlib handles absolute paths automatically)
-        hook_path = drift_root / CONFIG_DIR_NAME / Path(custom_hook)
+        custom_path = Path(custom_hook)
+        if custom_path.anchor and not custom_path.is_absolute():
+            raise ConfigError(
+                f"Configured workspace hook_file '{custom_hook}' must be a relative or valid absolute path."
+            )
+        hook_path = custom_path if custom_path.anchor else (drift_root / CONFIG_DIR_NAME / custom_path)
         if not hook_path.is_file():
             raise ConfigError(
                 f"Configured workspace hook_file '{custom_hook}' not found at '{hook_path}'."

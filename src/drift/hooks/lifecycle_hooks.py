@@ -31,6 +31,7 @@ Layer 4: High-Level Hook Triggers
 ===============================================================================
 """
 
+import locale
 import sys
 import time
 import logging
@@ -38,9 +39,9 @@ import shlex
 import subprocess
 import tempfile
 from contextlib import nullcontext
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path, PureWindowsPath
-from typing import cast, Optional, List, Union, TYPE_CHECKING
+from typing import Any, cast, Dict, FrozenSet, Optional, List, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config.workspace_config import WorkspaceConfig, SettingsConfig
@@ -64,6 +65,10 @@ from ..core.exceptions import HookExecutionError, HookMissingError, mark_logged
 logger = logging.getLogger(__name__)
 
 
+def _default_hook_output_encoding() -> str:
+    return locale.getpreferredencoding(False) or "utf-8"
+
+
 @dataclass
 class HookExecFlags:
     """Execution control flags for lifecycle hooks.
@@ -75,6 +80,7 @@ class HookExecFlags:
             variables (e.g. PAGER=cat, CI=true) into the hook environment.
         raise_on_error: When True, raises RuntimeError if hook fails or times out.
         load_envs: When True, loads package-defined environments and secrets.
+        output_encoding: Text encoding used to decode hook stdout and stderr streams.
     """
     no_hooks: bool = False
     streaming: bool = True
@@ -83,21 +89,46 @@ class HookExecFlags:
     load_envs: bool = True
     no_cache: bool = False
     dry_run: bool = False
+    output_encoding: str = field(default_factory=_default_hook_output_encoding)
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "HookExecFlags":
+        instance = super().__new__(cls)
+        init_fields = [f.name for f in fields(cls) if f.init]
+        instance._explicit_fields = frozenset(init_fields[: len(args)]) | frozenset(kwargs.keys())
+        return instance
+
+    def __post_init__(self) -> None:
+        if not self.output_encoding:
+            self.output_encoding = _default_hook_output_encoding()
+            self._explicit_fields = self._explicit_fields - {"output_encoding"}
+        elif isinstance(self.output_encoding, str) and self.output_encoding.strip().lower() == "system":
+            self.output_encoding = _default_hook_output_encoding()
+
+    def explicit_dict(self) -> Dict[str, Any]:
+        """Returns a dictionary containing only the fields explicitly provided at initialization."""
+        return {name: getattr(self, name) for name in self._explicit_fields}
 
     @classmethod
     def resolve(
         cls,
         flags: Optional["HookExecFlags"] = None,
         settings: Optional["SettingsConfig"] = None,
+        fallback: Optional["HookExecFlags"] = None,
+        override: Optional["HookExecFlags"] = None,
     ) -> "HookExecFlags":
-        """Resolves execution flags, falling back to workspace SettingsConfig defaults if flags are omitted."""
-        if flags is not None:
-            return flags
-        if settings is not None:
-            return cls(
-                inject_non_interactive_envs=settings.hook_inject_non_interactive_envs
-            )
-        return cls()
+        """Merges three layers of hook flags: fallback (settings + fallback) < flags (normal) < override."""
+        settings_dict = (
+            {
+                "inject_non_interactive_envs": settings.hook_inject_non_interactive_envs,
+                "output_encoding": settings.hook_output_encoding,
+            }
+            if settings is not None
+            else {}
+        )
+        fallback_dict = fallback.explicit_dict() if fallback is not None else {}
+        normal_dict = flags.explicit_dict() if flags is not None else {}
+        override_dict = override.explicit_dict() if override is not None else {}
+        return cls(**(settings_dict | fallback_dict | normal_dict | override_dict))
 
 
 def build_hook_execution_command_win32(hook_path: Path) -> List[str]:
@@ -170,14 +201,16 @@ def execute_hook_command(
     cwd: Path,
     timeout_seconds: int,
     streaming: bool = True,
+    encoding: str = "utf-8",
 ) -> subprocess.CompletedProcess:
-    """Executes a lifecycle hook command in user space with timeout."""
+    """Executes a lifecycle hook command in user space with timeout and configured output encoding."""
     return run_command(
         cmd,
         cwd=str(cwd),
         text=True,
+        encoding=encoding,
         timeout=timeout_seconds,
-        streaming=streaming
+        streaming=streaming,
     )
 
 
@@ -190,12 +223,12 @@ class HookFailureDetails:
     stderr: str
 
 
-def _extract_str(val: Optional[Union[str, bytes]]) -> str:
+def _extract_str(val: Optional[Union[str, bytes]], encoding: str = "utf-8") -> str:
     """Normalizes optional str or bytes from process output to a clean string."""
     if val is None:
         return ""
     if isinstance(val, bytes):
-        return val.decode("utf-8", errors="replace")
+        return val.decode(encoding, errors="replace")
     return str(val)
 
 
@@ -204,21 +237,22 @@ def _extract_hook_failure_details(
     pkg: str,
     hook_name: str,
     timeout_seconds: int,
+    encoding: str = "utf-8",
 ) -> HookFailureDetails:
     """Extracts exit code, headline message, stdout, and stderr from a subprocess failure."""
     if isinstance(exc, subprocess.TimeoutExpired):
         return HookFailureDetails(
             exit_code=124,
             headline=f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.",
-            stdout=_extract_str(getattr(exc, "stdout", None) or getattr(exc, "output", None)),
-            stderr=_extract_str(getattr(exc, "stderr", None)),
+            stdout=_extract_str(getattr(exc, "stdout", None) or getattr(exc, "output", None), encoding=encoding),
+            stderr=_extract_str(getattr(exc, "stderr", None), encoding=encoding),
         )
     if isinstance(exc, subprocess.CalledProcessError):
         return HookFailureDetails(
             exit_code=exc.returncode,
             headline=f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {exc.returncode}.",
-            stdout=_extract_str(exc.stdout),
-            stderr=_extract_str(exc.stderr),
+            stdout=_extract_str(exc.stdout, encoding=encoding),
+            stderr=_extract_str(exc.stderr, encoding=encoding),
         )
     return HookFailureDetails(
         exit_code=1,
@@ -274,6 +308,7 @@ def handle_hook_execution_failure(
         pkg=pkg,
         hook_name=hook_name,
         timeout_seconds=timeout_seconds,
+        encoding=exec_flags.output_encoding or "utf-8",
     )
     err_msg = _format_hook_error_message(
         headline=details.headline,
@@ -388,6 +423,7 @@ def execute_hook_script(
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 streaming=exec_flags.streaming,
+                encoding=exec_flags.output_encoding or "utf-8",
             )
             duration_ms = (time.perf_counter() - start_time) * 1000
             return HookResult(
@@ -660,7 +696,11 @@ def trigger_probe_hook(
     engines_override: Optional["RenderEngineRegistry"] = None,
 ) -> HookResult:
     """Executes the probe hook for a package in the source directory."""
-    exec_flags = replace(flags, raise_on_error=False) if flags is not None else HookExecFlags(raise_on_error=False)
+    exec_flags = HookExecFlags.resolve(
+        flags,
+        settings=workspace_config.settings,
+        override=HookExecFlags(raise_on_error=False),
+    )
     return trigger_hook_with_render(
         workspace_config=workspace_config,
         package_name=package_name,

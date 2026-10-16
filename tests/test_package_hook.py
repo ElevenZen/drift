@@ -416,6 +416,17 @@ def configure_package(context):
         with self.assertRaises(ConfigError):
             resolve_package_hook_path(pkg_dir, bad_dict)
 
+        # 5. Rooted / drive-relative non-absolute hook_file on Windows -> ConfigError
+        import sys
+        if sys.platform == "win32":
+            resolved_custom = custom_hook.resolve()
+            rel_from_anchor = resolved_custom.relative_to(resolved_custom.anchor).as_posix()
+            for bad_hook in [f"/{rel_from_anchor}", "\\rooted_pkg_hook.py", "C:drive_rel_pkg_hook.py"]:
+                with self.subTest(bad_hook=bad_hook):
+                    with self.assertRaises(ConfigError) as cm:
+                        resolve_package_hook_path(pkg_dir, {"package": {"hook_file": bad_hook}})
+                    self.assertIn("must be a relative or valid absolute path", str(cm.exception))
+
     def test_apply_package_hook_returns_tuple(self) -> None:
         """apply_package_hook returns a tuple of (config_dict, hook_path)."""
         pkg_dir = self.drift_root / "src" / "pkg1"
