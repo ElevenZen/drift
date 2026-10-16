@@ -356,7 +356,14 @@ class TestFileUtils(unittest.TestCase):
         mock_run.return_value = mock_proc
 
         copy_file(src, dst, sudo=True)
-        mock_run.assert_any_call(["sudo", "mktemp", "-p", str(dst.parent), f".tmp_{dst.name}_XXXXXX"], check=True, capture_output=True, text=True)
+        mock_run.assert_any_call(
+            ["sudo", "mktemp", "-p", str(dst.parent), f".tmp_{dst.name}_XXXXXX"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(self.root / ".tmp_dst_file_123456")], check=True, capture_output=True)
         mock_run.assert_any_call(["sudo", "mv", "-f", str(self.root / ".tmp_dst_file_123456"), str(dst)], check=True, capture_output=True)
 
@@ -454,10 +461,10 @@ class TestFileUtils(unittest.TestCase):
         home = Path.home()
         self.assertEqual(expand_path("~"), home)
         self.assertEqual(expand_path("~/my_config"), home / "my_config")
-        self.assertEqual(expand_path(r"~\my_config"), home / "my_config")
 
-        # 3. Test Windows %VAR% expansion when platform is win32
+        # 3. Test Windows %VAR% and backslash expansion when platform is win32
         with patch("sys.platform", "win32"):
+            self.assertEqual(expand_path(r"~\my_config"), home / "my_config")
             with patch.dict(os.environ, {"CUSTOM_APP_PATH": "/custom/path", "USERPROFILE": "/custom/user"}):
                 self.assertEqual(expand_path("%CUSTOM_APP_PATH%/sub"), Path("/custom/path/sub"))
                 self.assertEqual(expand_path("%USERPROFILE%/config"), Path("/custom/user/config"))

@@ -383,7 +383,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             self.assertIn('install_method = "copy"', content)
 
     @unittest.skipIf(sys.platform == "win32", "Sudo/root checks do not apply to Windows")
-    @patch("os.environ", {"SUDO_USER": "testuser"})
+    @patch.dict(os.environ, {"SUDO_USER": "testuser"})
     def test_cli_sudo_user_prohibited(self) -> None:
         """Verifies that running under sudo on a user-owned workspace is prohibited and exits with 1."""
         stderr = StringIO()
@@ -402,7 +402,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("sudo chown -R root:root", stderr.getvalue())
 
     @unittest.skipIf(sys.platform == "win32", "Sudo/root checks do not apply to Windows")
-    @patch("os.environ", {"SUDO_USER": "testuser"})
+    @patch.dict(os.environ, {"SUDO_USER": "testuser"})
     @patch("drift.cli.actions.is_directory_owned_by_root", return_value=True)
     def test_cli_sudo_user_allowed_when_workspace_owned_by_root(self, mock_is_root_owned) -> None:
         """Verifies that running under sudo is allowed when the drift workspace is owned by root."""
@@ -418,17 +418,18 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
     @unittest.skipIf(sys.platform == "win32", "Sudo/root checks do not apply to Windows")
     @patch("os.getuid", return_value=0, create=True)
     @patch("getpass.getuser", return_value="testuser")
-    @patch("os.environ", {})
     def test_cli_root_privilege_prohibited(self, mock_getuser, mock_getuid) -> None:
         """Verifies that running with root privilege for a non-root user on user-owned workspace is prohibited."""
         stderr = StringIO()
         original_stderr = sys.stderr
         sys.stderr = stderr
 
+        env_no_sudo = {k: v for k, v in os.environ.items() if k not in ("SUDO_USER", "SUDO_UID")}
         try:
-            with self.assertRaises(SystemExit) as cm:
-                main(["-C", self.drift_root, "render"])
-            self.assertEqual(cm.exception.code, 1)
+            with patch.dict(os.environ, env_no_sudo, clear=True):
+                with self.assertRaises(SystemExit) as cm:
+                    main(["-C", self.drift_root, "render"])
+                self.assertEqual(cm.exception.code, 1)
         finally:
             sys.stderr = original_stderr
 
@@ -437,15 +438,16 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
     @unittest.skipIf(sys.platform == "win32", "Sudo/root checks do not apply to Windows")
     @patch("os.getuid", return_value=0, create=True)
     @patch("getpass.getuser", return_value="root")
-    @patch("os.environ", {})
     def test_cli_real_root_allowed(self, mock_getuser, mock_getuid) -> None:
         """Verifies that the actual 'root' user (without sudo) is allowed to run the program."""
         stdout = StringIO()
         original_stdout = sys.stdout
         sys.stdout = stdout
 
+        env_no_sudo = {k: v for k, v in os.environ.items() if k not in ("SUDO_USER", "SUDO_UID")}
         try:
-            main(["-C", self.drift_root, "render"])
+            with patch.dict(os.environ, env_no_sudo, clear=True):
+                main(["-C", self.drift_root, "render"])
         finally:
             sys.stdout = original_stdout
 

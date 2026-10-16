@@ -59,6 +59,10 @@ os.environ["GIT_PAGER"] = "cat"
 os.environ["drift_test_mode"] = "1"
 os.environ["DRIFT_TEST_MODE"] = "1"
 os.environ.setdefault("USER", os.environ.get("USERNAME", "test_user"))
+os.environ.setdefault("GIT_AUTHOR_NAME", "Drift Test")
+os.environ.setdefault("GIT_COMMITTER_NAME", "Drift Test")
+os.environ.setdefault("GIT_AUTHOR_EMAIL", "test@drift.local")
+os.environ.setdefault("GIT_COMMITTER_EMAIL", "test@drift.local")
 os.environ.pop("EDITOR", None)
 os.environ.pop("VISUAL", None)
 

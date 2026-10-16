@@ -1672,6 +1672,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         # Create a Python hook that writes raw GBK bytes to stdout
         gbk_hook = self.drift_hooks_dir / "gbk_probe.py"
         gbk_hook.write_text(
+            "#!/usr/bin/env python3\n"
             "import sys\n"
             "sys.stdout.buffer.write('中文测试输出\\n'.encode('gbk'))\n"
             "sys.stdout.buffer.flush()\n",
