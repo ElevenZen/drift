@@ -734,7 +734,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{pkg_target_dir}"
+            target_directory = "{Path(pkg_target_dir).as_posix()}"
             """)
 
         # Add physical file in install
@@ -4294,7 +4294,7 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
             dst_path=Path("/tmp/target.txt"),
         )
         self.assertEqual(action.src_path, Path("/tmp/source.txt"))
-        self.assertIn(f"{Path('/tmp/source.txt')} -> {Path('/tmp/target.txt')}", format_action_line(action))
+        self.assertIn("/tmp/source.txt -> /tmp/target.txt", format_action_line(action))
 
     def test_delivery_action_logging_info_and_debug(self) -> None:
         set_test_mode(True, enable_logging=True)

@@ -67,10 +67,7 @@ def clear_readonly(path: Path) -> None:
     if sys.platform != "win32":
         return
     try:
-        if path.is_symlink():
-            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
-            return
-        if not path.exists():
+        if path.is_symlink() or not path.exists():
             return
         if not path.is_dir():
             os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
@@ -246,6 +243,8 @@ def copy_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
     remove_file_or_empty_dir(dst, sudo=sudo)
 
     link_target = os.readlink(src)
+    if sys.platform == "win32" and link_target.startswith("\\\\?\\"):
+        link_target = link_target[4:]
     if sys.platform == "win32" or not sudo:
         dst.symlink_to(link_target)
     else:
@@ -440,15 +439,19 @@ def write_file(
 
 def _tree_op_windows(src: Path, dst: Path, move: bool, resolve_symlinks: bool) -> None:
     """Windows tree copy/move using Python standard library."""
-    if move:
+    if move and not resolve_symlinks:
         if dst.exists() or dst.is_symlink():
             remove_tree(dst)
         shutil.move(str(src), str(dst))
+        return
+
+    if is_concrete_dir(src) or (resolve_symlinks and src.is_dir()):
+        shutil.copytree(str(src), str(dst), dirs_exist_ok=True, symlinks=not resolve_symlinks)
     else:
-        if is_concrete_dir(src):
-            shutil.copytree(str(src), str(dst), dirs_exist_ok=True, symlinks=not resolve_symlinks)
-        else:
-            copy_file(src, dst, follow_symlinks=resolve_symlinks)
+        copy_file(src, dst, follow_symlinks=resolve_symlinks)
+
+    if move:
+        remove_tree(src)
 
 
 def _tree_op_posix(src: Path, dst: Path, sudo: bool, chown: bool, move: bool, resolve_symlinks: bool) -> None:

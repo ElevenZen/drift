@@ -1247,8 +1247,8 @@ class TestStageRepo(unittest.TestCase):
         registry = StateRegistry()
 
         # 1. Missing hook files aggregated across all failing packages
-        meta_a.hooks.post_install = Path("/nonexistent/missing_a.sh")
-        meta_b.hooks.post_install = Path("/nonexistent/missing_b.sh")
+        meta_a.hooks.post_install = self.drift_root / "nonexistent" / "missing_a.sh"
+        meta_b.hooks.post_install = self.drift_root / "nonexistent" / "missing_b.sh"
         with self.assertRaises(HookMissingError) as ctx:
             assert_packages_stage_ready(
                 pkg_metadata=pkg_metadata,

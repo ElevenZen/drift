@@ -424,6 +424,62 @@ class TestFileUtils(unittest.TestCase):
             self.assertFalse(dst_copy.exists())
             mock_run.assert_not_called()
 
+            # 5. move_tree on symlinks (resolve_symlinks=True vs False)
+            if CAN_SYMLINK:
+                # 5a. Relative file symlink moved to deeper directory with resolve_symlinks=True
+                rel_sym = self.root / "rel_link.txt"
+                rel_sym.symlink_to(Path("win_src.txt"))
+                deep_dst = self.root / "backup" / "pkg" / "overwritten" / "rel_link.txt"
+                move_tree(rel_sym, deep_dst, resolve_symlinks=True)
+                self.assertFalse(rel_sym.exists() or rel_sym.is_symlink())
+                self.assertTrue(deep_dst.is_file())
+                self.assertFalse(deep_dst.is_symlink())
+                self.assertEqual(deep_dst.read_text(encoding="utf-8"), "windows file content")
+                # Original target file remains intact
+                self.assertTrue(src_file.is_file())
+
+                # 5b. Directory symlink moved with resolve_symlinks=True
+                real_dir = self.root / "real_dir_target"
+                real_dir.mkdir(exist_ok=True)
+                (real_dir / "item.txt").write_text("dir item", encoding="utf-8")
+                dir_sym = self.root / "dir_link"
+                dir_sym.symlink_to(real_dir, target_is_directory=True)
+                moved_dir_dst = self.root / "backup" / "pkg" / "overwritten" / "dir_link"
+                move_tree(dir_sym, moved_dir_dst, resolve_symlinks=True)
+                self.assertFalse(dir_sym.exists() or dir_sym.is_symlink())
+                self.assertTrue(moved_dir_dst.is_dir())
+                self.assertFalse(moved_dir_dst.is_symlink())
+                self.assertEqual((moved_dir_dst / "item.txt").read_text(encoding="utf-8"), "dir item")
+                # Original target directory remains intact
+                self.assertTrue((real_dir / "item.txt").is_file())
+
+                # 5c. Broken symlink moved with resolve_symlinks=False preserves raw link target
+                broken_sym = self.root / "broken_win_link"
+                broken_sym.symlink_to(Path("nonexistent_win_target.txt"))
+                broken_dst = self.root / "backup" / "pkg" / "overwritten" / "broken_win_link"
+                move_tree(broken_sym, broken_dst, resolve_symlinks=False)
+                self.assertFalse(broken_sym.exists() or broken_sym.is_symlink())
+                self.assertTrue(broken_dst.is_symlink())
+                self.assertEqual(os.readlink(broken_dst), "nonexistent_win_target.txt")
+
+    def test_windows_extended_length_readlink_prefix_stripping(self) -> None:
+        """Verifies copy_symlink and _check_symlink_points_to_source strip Windows '\\\\?\\' prefix from os.readlink."""
+        from drift.core.folder_delivery import _check_symlink_points_to_source
+
+        src_file = self.root / "real_source.txt"
+        src_file.write_text("data", encoding="utf-8")
+        fake_link = self.root / "fake_link.txt"
+        fake_link.write_text("placeholder", encoding="utf-8")
+        dst_link = self.root / "copied_link.txt"
+
+        win_prefixed_target = f"\\\\?\\{src_file.resolve()}"
+
+        with patch("sys.platform", "win32"), patch("os.readlink", return_value=win_prefixed_target):
+            self.assertTrue(_check_symlink_points_to_source(fake_link, src_file))
+            with patch.object(Path, "symlink_to") as mock_symlink_to:
+                copy_symlink(fake_link, dst_link)
+                mock_symlink_to.assert_called_once_with(str(src_file.resolve()))
+
     @unittest.skipUnless(CAN_SYMLINK, "Symlink creation requires elevated privileges on Windows")
     def test_copy_symlink(self) -> None:
         # 1. Broken symlink
@@ -444,7 +500,7 @@ class TestFileUtils(unittest.TestCase):
 
         copy_symlink(src_valid, dst_valid)
         self.assertTrue(dst_valid.is_symlink())
-        self.assertEqual(os.readlink(dst_valid), str(target_file))
+        self.assertEqual(os.readlink(dst_valid).removeprefix("\\\\?\\"), str(target_file))
 
         # 3. Overwriting existing destination symlink
         copy_symlink(src, dst_valid)
@@ -685,7 +741,7 @@ class TestFileUtils(unittest.TestCase):
             dst_sym = self.root / "dest_dir" / "dest_sym.txt"
             copy_file(symlink_src, dst_sym, follow_symlinks=False)
             self.assertTrue(dst_sym.is_symlink())
-            self.assertEqual(os.readlink(dst_sym), str(src))
+            self.assertEqual(os.readlink(dst_sym).removeprefix("\\\\?\\"), str(src))
 
     def test_file_permissions_differ_and_mode_only(self) -> None:
         import sys

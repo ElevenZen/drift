@@ -273,7 +273,7 @@ def inspect_ancestor_directories(
 def _check_symlink_points_to_source(system_target: Path, source_file: Path) -> bool:
     """Read-only check returning True if system_target symlink resolves or points to source_file."""
     try:
-        link_raw = Path(os.readlink(system_target))
+        link_raw = Path(os.readlink(system_target).removeprefix("\\\\?\\"))
         expected_rel = compute_relative_symlink_target(source_file, system_target.parent)
         return link_raw == expected_rel or (system_target.parent / link_raw).resolve() == source_file.resolve()
     except Exception:
