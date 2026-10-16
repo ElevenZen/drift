@@ -1,3 +1,4 @@
+import tests  # noqa: F401
 import unittest
 import os
 import shutil

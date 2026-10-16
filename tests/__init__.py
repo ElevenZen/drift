@@ -51,7 +51,24 @@ def _patch_windows_git_bash_for_tests() -> None:
             os.environ["PATH"] = f"{os.pathsep.join(new_paths)}{os.pathsep}{current_path}"
 
 
+def _patch_no_symlink_for_tests() -> None:
+    """Simulates an unprivileged environment without symlink creation privileges
+    when DRIFT_TEST_NO_SYMLINK=1 is set in the environment.
+    """
+    if os.environ.get("DRIFT_TEST_NO_SYMLINK") != "1":
+        return
+
+    def _disabled_symlink(*args, **kwargs) -> None:
+        raise OSError(1314, "A required privilege is not held by the client")
+
+    os.symlink = _disabled_symlink
+    Path.symlink_to = _disabled_symlink  # type: ignore[method-assign]
+    from drift.utils.file_inspect import check_can_symlink
+    check_can_symlink.cache_clear()
+
+
 _patch_windows_git_bash_for_tests()
+_patch_no_symlink_for_tests()
 
 # Disable interactive pagers and editors during tests to prevent blocking and pop-up windows.
 os.environ["PAGER"] = "cat"

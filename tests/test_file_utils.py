@@ -938,6 +938,27 @@ class TestFileUtils(unittest.TestCase):
         remove_tree(tree_dir)
         self.assertFalse(tree_dir.exists())
 
+    def test_patch_no_symlink_for_tests(self) -> None:
+        """Verifies _patch_no_symlink_for_tests disables os.symlink, Path.symlink_to, and check_can_symlink when DRIFT_TEST_NO_SYMLINK=1."""
+        from tests import _patch_no_symlink_for_tests
+
+        orig_os_symlink = os.symlink
+        orig_path_symlink_to = Path.symlink_to
+        try:
+            with patch.dict(os.environ, {"DRIFT_TEST_NO_SYMLINK": "1"}):
+                _patch_no_symlink_for_tests()
+                self.assertFalse(check_can_symlink())
+                with self.assertRaises(OSError) as ctx1:
+                    os.symlink("a", "b")
+                self.assertEqual(ctx1.exception.errno, 1314)
+                with self.assertRaises(OSError) as ctx2:
+                    (self.root / "dst").symlink_to(self.root / "src")
+                self.assertEqual(ctx2.exception.errno, 1314)
+        finally:
+            os.symlink = orig_os_symlink
+            Path.symlink_to = orig_path_symlink_to  # type: ignore[method-assign]
+            check_can_symlink.cache_clear()
+
 
 if __name__ == "__main__":
     unittest.main()

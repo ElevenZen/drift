@@ -12,13 +12,35 @@ permissions:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }} - Python ${{ matrix.python-version }})
+    name: Test (${{ matrix.label || matrix.os }} - Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        no-symlink: [false]
+        include:
+          - os: windows-latest
+            python-version: "3.9"
+            no-symlink: true
+            label: "windows-latest, no-symlink"
+          - os: windows-latest
+            python-version: "3.10"
+            no-symlink: true
+            label: "windows-latest, no-symlink"
+          - os: windows-latest
+            python-version: "3.11"
+            no-symlink: true
+            label: "windows-latest, no-symlink"
+          - os: windows-latest
+            python-version: "3.12"
+            no-symlink: true
+            label: "windows-latest, no-symlink"
+          - os: windows-latest
+            python-version: "3.13"
+            no-symlink: true
+            label: "windows-latest, no-symlink"
     defaults:
       run:
         shell: bash
@@ -51,8 +73,10 @@ jobs:
           echo "C:\Program Files\Git\usr\bin" >> $GITHUB_PATH
 
       - name: Run Unit Tests with Coverage
+        env:
+          DRIFT_TEST_NO_SYMLINK: ${{ matrix.no-symlink && '1' || '0' }}
         run: |
-          coverage run -m unittest discover -s tests -v
+          coverage run -m unittest discover -s tests -t . -v
           coverage report -m
 
       - name: Verify CLI Binary & Tab-Completion Generation
