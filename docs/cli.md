@@ -140,19 +140,23 @@ Deploys configurations using an atomic two-stage compilation and application eng
     - `--json`: Outputs a `DeployResult` in structured JSON format.
 
 #### Stage 0: Pre-flight Checks
-Verifies Git committability on `render/` and `install/` and discovers target packages.
+Verifies Git committability on `render/` and `install/`, discovers target packages, and asserts that no targeted package is in an uncommitted midway transaction state (`assert_no_midway_deploy_state`).
 
-#### Stage 1: Safety Guard (Sentinel)
-1.  Pulls current host configuration state into `install/` (`Primitive 1`).
-2.  If uncommitted drift exists: **Aborts immediately** (exit code `3`) and guides the user to `drift diff -s` or `drift adopt`.
-3.  **Forced Deployment (`--force`)**: When `--force` is provided and host drift is detected, Drift immediately commits a **Drift Snapshot** into the `install/` Git history (`"Drift Snapshot: Capture host modifications for <pkgs> before forced deployment"`), preserving live host edits for disaster recovery and rollback auditing, before proceeding to Stage 2 to compile, stage, and overwrite active host configurations.
-
-#### Stage 2: Sequential Compile & Apply
-1.  **Render**: Sandbox-compiles `src/` templates into `render/` (`Primitive 2`).
+#### Stage 1: Template Compilation & Sentinel Drift Audit
+1.  **Render**: Compiles `src/` templates into `render/` (`Primitive 2`).
 2.  **Commit Render**: Commits compiled sandbox history (`Primitive 3`).
-3.  **Stage Render to Install**: Staged delta-sync from `render/` to `install/` (`Primitive 4`).
-4.  **Install Deployment**: Delivers files via atomic symlink/copy with collision checking (`Primitive 5`).
-5.  **Commit Install**: Scope-commits deployed configurations in `install/` (`Primitive 6`).
+3.  **Reverse-Sync & Convergent Drift Auto-Resolution**:
+    - Pulls current host configuration state into `install/` (`Primitive 1`).
+    - Automatically detects and commits any **converged files** where the reverse-synced file in `install/<pkg>/` is byte-for-byte and permission-identical to the newly rendered file in `render/<pkg>/` (`resolve_and_commit_converged_drifts`).
+    - If uncommitted divergent drift remains without `--force`: **Aborts immediately** (exit code `3`) and guides the user to `drift diff -s` or `drift adopt`.
+    - **Forced Deployment (`--force`)**: When `--force` is provided and divergent host drift is detected, Drift immediately commits a **Drift Snapshot** into the `install/` Git history (`"Drift Snapshot: Capture host modifications for <pkgs> before forced deployment"`), preserving live host edits for disaster recovery and rollback auditing.
+
+#### Stage 2: Pre-Flight Planning & Physical Apply
+1.  **Staging Pre-Flight (`Step 3a`)**: Read-only staging validation and delta resolution (`prepare_stage_packages`).
+2.  **Deployment Pre-Flight (`Step 4a`)**: Validates destination permissions, hook existence, and cross-package path collisions against `render/` (`prepare_install` with `install_path_mask`) *before* mutating `install/` or `state.toml`, eliminating midway rollbacks on pre-flight errors.
+3.  **Physical Staging (`Step 3b`)**: Mirrors staged changes from `render/` to `install/` (`execute_stage_packages`).
+4.  **Physical Deployment (`Step 4b`)**: Delivers files via atomic symlink/copy (`execute_install`).
+5.  **Commit Install (`Step 5`)**: Scope-commits deployed configurations in `install/` (`Primitive 6`).
 
 #### Stage 3: Post-deploy Garbage Collection
 When deploying globally without specific package names, Drift automatically executes `drift gc` (`Primitive 9`).

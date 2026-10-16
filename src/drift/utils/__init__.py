@@ -85,7 +85,7 @@ from .env_utils import (
 )
 from .git_utils import (
     GitRename,
-    GitStatusDiff,
+    GitStatusChanges,
     unquote_git_path,
     parse_git_status_porcelain,
     commit_repo_changes,
@@ -201,7 +201,7 @@ __all__ = [
     "resolve_env_references",
     "interpolate_config_dict",
     "GitRename",
-    "GitStatusDiff",
+    "GitStatusChanges",
     "unquote_git_path",
     "parse_git_status_porcelain",
     "commit_repo_changes",

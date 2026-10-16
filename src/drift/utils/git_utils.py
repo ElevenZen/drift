@@ -24,7 +24,7 @@ class GitRename:
 
 
 @dataclass
-class GitStatusDiff:
+class GitStatusChanges:
     """Structured representation of git status porcelain changes."""
     added: List[Path] = field(default_factory=list)
     modified: List[Path] = field(default_factory=list)
@@ -148,14 +148,14 @@ def _parse_rename_entry(
 def parse_git_status_porcelain(
     repo_path: Path,
     pkg_name: Optional[str] = None,
-) -> GitStatusDiff:
-    """Parses git status --porcelain for a repository (scoped to pkg_name) into GitStatusDiff."""
+) -> GitStatusChanges:
+    """Parses git status --porcelain for a repository (scoped to pkg_name) into GitStatusChanges."""
     lines = get_git_status_porcelain(
         repo_path,
         f"{pkg_name}/" if pkg_name else None,
     )
     if not lines:
-        return GitStatusDiff()
+        return GitStatusChanges()
 
     added: List[Path] = []
     modified: List[Path] = []
@@ -183,7 +183,7 @@ def parse_git_status_porcelain(
         elif index_stat in ("M", "R") or work_stat in ("M", "R"):
             modified.append(rel_p)
 
-    return GitStatusDiff(added=added, modified=modified, deleted=deleted, renamed=renamed)
+    return GitStatusChanges(added=added, modified=modified, deleted=deleted, renamed=renamed)
 
 
 def _is_pkg_stageable(repo_path: Path, pkg: str) -> bool:

@@ -268,7 +268,9 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 - [ ] **Rendered output validation.** Render engines can optionally call external validators on rendered output to verify format correctness (`json`, `yaml`, `toml`, etc.) before staging. (from old roadmap)
 
-- [ ] **Reorder render before reverse-sync in deploy pipeline.** If rendered output is identical to the reverse-synced result, the drift can be resolved with a simple Git commit in the install repo, avoiding unnecessary aborts and user commands. Maybe we should run install plan just after stage plan with patched workspace pointing into render/ repo, just like what we do in 'drift plan', we need to check if it can produce a reliable plan given that 'drift stage' mirrors the render/ repo into install/ repo exactly. This reordering can minimize the risk of midfall rollback that can give use a smooth experience without manual interference.
+- [x] **Reorder render before reverse-sync in deploy pipeline.** If rendered output is identical to the reverse-synced result, the drift can be resolved with a simple Git commit in the install repo, avoiding unnecessary aborts and user commands. Maybe we should run install plan just after stage plan with patched workspace pointing into render/ repo, just like what we do in 'drift plan', we need to check if it can produce a reliable plan given that 'drift stage' mirrors the render/ repo into install/ repo exactly. This reordering can minimize the risk of midfall rollback that can give use a smooth experience without manual interference.  
+
+- [ ] **User-friendly drifts adoption** Add render and reverse-sync into 'drift adopt' main primitive function unless the user explicitly pass flags to disable.
 
 - [ ] **Unified Layered Import System (`[[imports]]`).** Replace ad-hoc cross-package imports and external asset fetching with a unified layered overlay file system. A package declares an ordered list of `[[imports]]` from internal packages or external sources. The effective package source is stacked in declaration order with the package's local `src/<pkg>/` directory acting as the top-most override layer:
   ```toml

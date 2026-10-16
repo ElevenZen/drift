@@ -193,6 +193,21 @@ class InstallPlan:
     contexts: Dict[str, PackageInstallContext] = field(default_factory=dict)
     package_plans: Dict[str, PackageInstallPlan] = field(default_factory=dict)
 
+    def rebase_install_dir(
+        self,
+        install_base: Path,
+        state_registry: Optional[StateRegistry] = None,
+    ) -> "InstallPlan":
+        """Returns a copy of InstallPlan with all package contexts bound to canonical install_base."""
+        return replace(
+            self,
+            state_registry=state_registry if state_registry is not None else self.state_registry,
+            contexts={
+                pkg: ctx.rebase_install_dir(install_base)
+                for pkg, ctx in self.contexts.items()
+            },
+        )
+
 
 @dataclass(frozen=True)
 class PackageInstallContext:
@@ -209,6 +224,14 @@ class PackageInstallContext:
     source_dir_mask: Optional[Path] = None
     hooks: PackageHooks = field(default_factory=PackageHooks)
     reinstall: bool = False
+
+    def rebase_install_dir(self, install_base: Path) -> "PackageInstallContext":
+        """Returns a copy of PackageInstallContext bound to the canonical install_base directory."""
+        return replace(
+            self,
+            install_pkg_dir=install_base / self.pkg_name,
+            source_dir_mask=None,
+        )
 
     @property
     def file_action_context(self) -> FileActionExecutionContext:

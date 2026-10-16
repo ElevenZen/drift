@@ -11,7 +11,7 @@ from .reverse_sync import run_primitive_1_reverse_sync
 from ..core.constants import DirMode
 from ..core.folder_diff import compare_folders, FolderDiff
 from ..utils.file_inspect import check_is_trackable
-from ..utils.git_utils import parse_git_status_porcelain, GitStatusDiff
+from ..utils.git_utils import parse_git_status_porcelain, GitStatusChanges
 from ..utils.process_utils import run_command
 from ..core.state_registry import load_state_registry
 from ..core.result_models import PackageStatus, StatusResult
@@ -23,7 +23,7 @@ def audit_repo_package_status(
     repo_path: Path,
     pkg: str,
     dirty_label: str,
-) -> Tuple[str, Optional[GitStatusDiff]]:
+) -> Tuple[str, Optional[GitStatusChanges]]:
     """Audits a package's git repository status in render/ or install/."""
     pkg_dir = repo_path / pkg
     if not pkg_dir.exists():

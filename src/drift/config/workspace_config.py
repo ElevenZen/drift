@@ -352,6 +352,16 @@ class WorkspaceConfig(AlwaysTruthy):
     env_resolve: EnvResolve = field(default_factory=EnvResolve)
     settings: SettingsConfig = field(default_factory=SettingsConfig)
     render_cache: RenderCache = field(default_factory=RenderCache)
+    # Canonical path masks used when `workspace.render_directory` or `workspace.install_directory`
+    # is redirected to a temporary sandbox (`drift plan`) or to `render/` during pre-stage install
+    # planning (`drift deploy` Step 4a). While physical file reads/writes target the redirected
+    # `render_path` / `install_path`, these masks preserve the canonical workspace paths for:
+    #   1. Built-in template facts (`drift_package_render_dir`, `drift_package_install_dir` in `get_drift_package_facts`).
+    #   2. Lifecycle hook script path resolution (`PackageHooks.from_dict` for `post_render` / `install` hooks).
+    #   3. Symlink destination comparison against existing host symlinks (`source_dir_mask` in `plan_package_install`).
+    #   4. Canonical `state.toml` lookup (`prepare_install`).
+    #   5. Reading `drift_package.toml` of already-installed dependency packages not rendered in the current
+    #      pipeline (`resolve_target_package_order`).
     render_path_mask: Optional[Path] = None
     install_path_mask: Optional[Path] = None
 

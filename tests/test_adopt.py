@@ -1572,8 +1572,8 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIsNotNone(plan1)
         assert plan1 is not None
         self.assertEqual(plan1.modifications, [Path("config.txt")])
-        self.assertIn("config.txt", plan1.patches)
-        self.assertIn("v2_modified", plan1.patches["config.txt"])
+        self.assertIn("config.txt", plan1.mod_patches)
+        self.assertIn("v2_modified", plan1.mod_patches["config.txt"])
 
         plan2 = plan.get_package_plan(pkg2)
         self.assertIsNotNone(plan2)
@@ -1602,6 +1602,8 @@ render_command = "bash -c 'cat %i %s'"
 
     def test_plan_package_adopt_rename_with_precomputed_patch(self) -> None:
         """Verifies plan_package_adopt correctly precomputes rename patches and execute_package_adopt applies them."""
+        from drift.primitives.adopt_repo import get_rename_patch_key
+
         pkg = "pkg_rename_plan"
         src_pkg = self.src_dir / pkg
         src_pkg.mkdir(parents=True, exist_ok=True)
@@ -1628,10 +1630,11 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIsInstance(pkg_plan, PackageAdoptPlan)
         self.assertEqual(pkg_plan.renames, [(Path("old_name.conf"), Path("new_name.conf"))])
 
-        # Patch must be precomputed and stored under "old_name.conf->new_name.conf"
-        patch_key = "old_name.conf->new_name.conf"
-        self.assertIn(patch_key, pkg_plan.patches)
-        self.assertIn("cherry_modified", pkg_plan.patches[patch_key])
+        # Patch must be precomputed and stored under get_rename_patch_key("old_name.conf", "new_name.conf")
+        patch_key = get_rename_patch_key(Path("old_name.conf"), Path("new_name.conf"))
+        self.assertEqual(patch_key, "old_name.conf//->//new_name.conf")
+        self.assertIn(patch_key, pkg_plan.rename_patches)
+        self.assertIn("cherry_modified", pkg_plan.rename_patches[patch_key])
 
         # Index in install/ must be clean (un-staged)
         res_cached = subprocess.run(
@@ -2105,8 +2108,158 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIn("port = 9090", src_j2.read_text(encoding="utf-8"))
         self.assertEqual(src_static.read_text(encoding="utf-8"), "mode = 'v2'\n")
 
+    def test_check_is_drifted_path_converged_matrix(self) -> None:
+        """Unit test probing check_is_drifted_path_converged across identical, content-divergent, permission-divergent, and deleted paths."""
+        from drift.primitives.adopt_repo import check_is_drifted_path_converged
+
+        pkg = "pkg_conv_matrix"
+        install_pkg = self.install_dir / pkg
+        render_pkg = self.workspace_config.render_path / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg.mkdir(parents=True, exist_ok=True)
+
+        # Case 1: Both files absent (converged deletion)
+        self.assertTrue(check_is_drifted_path_converged(install_pkg, render_pkg, Path("deleted.txt")))
+
+        # Case 2: Present in install/, absent in render/ (not converged)
+        (install_pkg / "only_install.txt").write_text("hello", encoding="utf-8")
+        self.assertFalse(check_is_drifted_path_converged(install_pkg, render_pkg, Path("only_install.txt")))
+
+        # Case 3: Identical content and permissions (converged)
+        (install_pkg / "same.txt").write_text("identical", encoding="utf-8")
+        (render_pkg / "same.txt").write_text("identical", encoding="utf-8")
+        self.assertTrue(check_is_drifted_path_converged(install_pkg, render_pkg, Path("same.txt")))
+
+        # Case 4: Different content (not converged)
+        (install_pkg / "diff.txt").write_text("v1", encoding="utf-8")
+        (render_pkg / "diff.txt").write_text("v2", encoding="utf-8")
+        self.assertFalse(check_is_drifted_path_converged(install_pkg, render_pkg, Path("diff.txt")))
+
+        # Case 5: Identical content, different executable permission bit on POSIX (not converged)
+        if sys.platform != "win32":
+            (install_pkg / "script.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+            (render_pkg / "script.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+            (install_pkg / "script.sh").chmod(0o755)
+            (render_pkg / "script.sh").chmod(0o644)
+            self.assertFalse(check_is_drifted_path_converged(install_pkg, render_pkg, Path("script.sh")))
+
+    def test_resolve_and_commit_converged_drifts_full_and_partial(self) -> None:
+        """Two-Pass Idempotency Test: Verifies resolve_and_commit_converged_drifts commits only converged files and preserves divergent files."""
+        from drift.primitives.adopt_repo import resolve_and_commit_converged_drifts
+        from drift.utils.git_utils import get_git_status_porcelain
+
+        pkg = "pkg_conv_commit"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        render_pkg = self.workspace_config.render_path / pkg
+        for d in (src_pkg, install_pkg, render_pkg):
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "conv.txt").write_text("v1", encoding="utf-8")
+            (d / "div.txt").write_text("v1", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init conv src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init conv install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Modify conv.txt identically in src/, render/, and install/; modify div.txt only in install/
+        (src_pkg / "conv.txt").write_text("v2-converged", encoding="utf-8")
+        (render_pkg / "conv.txt").write_text("v2-converged", encoding="utf-8")
+        (install_pkg / "conv.txt").write_text("v2-converged", encoding="utf-8")
+        (install_pkg / "div.txt").write_text("v2-diverged-host", encoding="utf-8")
+
+        # Pass 1 (Cold / Partial Convergence Commit):
+        converged_1 = resolve_and_commit_converged_drifts(self.workspace_config, [pkg], dry_run=False)
+        self.assertEqual(converged_1, {pkg: [Path("conv.txt")]})
+        status_lines = get_git_status_porcelain(self.install_dir, f"{pkg}/")
+        self.assertEqual(len(status_lines), 1)
+        self.assertIn(f"{pkg}/div.txt", status_lines[0])
+
+        # Now converge div.txt in render/ as well
+        (src_pkg / "div.txt").write_text("v2-diverged-host", encoding="utf-8")
+        (render_pkg / "div.txt").write_text("v2-diverged-host", encoding="utf-8")
+        converged_2 = resolve_and_commit_converged_drifts(self.workspace_config, [pkg], dry_run=False)
+        self.assertEqual(converged_2, {pkg: [Path("div.txt")]})
+        self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
+
+        # Pass 2 (Warm / Idempotent Pass):
+        converged_warm = resolve_and_commit_converged_drifts(self.workspace_config, [pkg], dry_run=False)
+        self.assertEqual(converged_warm, {})
+        self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
+
+    def test_adopt_repo_converged_files_partition_and_direct_staging(self) -> None:
+        """Verifies get_package_drifts partitions converged files into plan.converged_files, supports skip_patches=True, and execute_package_adopt stages them directly without touching src/."""
+        from drift.primitives.adopt_repo import dry_run_adopt
+        from drift.utils.git_utils import get_git_status_porcelain
+
+        pkg = "pkg_adopt_conv_plan"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        render_pkg = self.workspace_config.render_path / pkg
+        for d in (src_pkg, install_pkg, render_pkg):
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "conv_mod.txt").write_text("v1", encoding="utf-8")
+            (d / "div_mod.txt").write_text("v1", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init adopt conv src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init adopt conv install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Modify conv_mod.txt in render/ and install/ (e.g. template rendered in render/, reverse-synced in install/),
+        # while leaving conv_mod.txt in src/ with an uncommitted local edit!
+        # Because conv_mod.txt is converged (install/ == render/), normal adopt should stage it directly
+        # without touching src/conv_mod.txt or triggering a dirty-source error!
+        (src_pkg / "conv_mod.txt").write_text("uncommitted_template_source", encoding="utf-8")
+        (render_pkg / "conv_mod.txt").write_text("v2-rendered-and-synced", encoding="utf-8")
+        (install_pkg / "conv_mod.txt").write_text("v2-rendered-and-synced", encoding="utf-8")
+        (install_pkg / "div_mod.txt").write_text("v2-diverged-host", encoding="utf-8")
+
+        # 1. Verify get_package_drifts partitions converged vs divergent
+        pkg_plan = get_package_drifts(self.workspace_config, pkg)
+        self.assertEqual(pkg_plan.converged_files, [Path("conv_mod.txt")])
+        self.assertEqual(pkg_plan.modifications, [Path("div_mod.txt")])
+        self.assertNotIn("conv_mod.txt", pkg_plan.mod_patches)
+        self.assertIn("div_mod.txt", pkg_plan.mod_patches)
+        self.assertTrue(pkg_plan.has_drifts)
+        self.assertTrue(pkg_plan.has_divergent_drifts)
+        self.assertEqual(pkg_plan.total_drifts, 2)
+
+        # 2. Verify plan_adopt_repo(..., skip_patches=True) skips unified diff generation
+        no_patch_plan = plan_adopt_repo(self.workspace_config, [pkg], skip_patches=True)
+        no_patch_pkg_plan = no_patch_plan.get_package_plan(pkg)
+        assert no_patch_pkg_plan is not None
+        self.assertEqual(no_patch_pkg_plan.converged_files, [Path("conv_mod.txt")])
+        self.assertEqual(no_patch_pkg_plan.modifications, [Path("div_mod.txt")])
+        self.assertEqual(no_patch_pkg_plan.mod_patches, {})
+        self.assertEqual(no_patch_pkg_plan.rename_patches, {})
+
+        # 3. Verify dry_run_adopt logs converged files
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.primitives.adopt_repo", level="INFO") as log_cm:
+                dry_run_adopt(pkg_plan)
+                joined = "\n".join(log_cm.output)
+                self.assertIn("Converged (already identical to render/, will be staged directly):", joined)
+                self.assertIn("conv_mod.txt", joined)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        # 4. Execute normal adopt and verify both converged and divergent files are resolved and committed
+        res = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.packages[0].adopted_converged, ["conv_mod.txt"])
+        self.assertEqual(res.packages[0].adopted_modifications, ["div_mod.txt"])
+        # src/conv_mod.txt was NOT overwritten by adopt (still holds uncommitted_template_source)
+        self.assertEqual((src_pkg / "conv_mod.txt").read_text(encoding="utf-8"), "uncommitted_template_source")
+        # src/div_mod.txt WAS updated by adopt
+        self.assertEqual((src_pkg / "div_mod.txt").read_text(encoding="utf-8"), "v2-diverged-host")
+        # install/ is completely clean
+        self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

@@ -283,8 +283,8 @@ class PackageHooks(AlwaysTruthy):
 
         if workspace_config is not None and package_name:
             package_src_dir = workspace_config.source_path / package_name
-            render_base = workspace_config.render_path / package_name
-            install_base = workspace_config.install_path / package_name
+            render_base = (workspace_config.render_path_mask or workspace_config.render_path) / package_name
+            install_base = (workspace_config.install_path_mask or workspace_config.install_path) / package_name
             hook_base_map: Dict[str, Path] = {
                 "probe": render_base,
                 "pre_source": render_base,

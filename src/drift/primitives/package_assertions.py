@@ -631,14 +631,14 @@ def resolve_target_package_order(
     if not target_metadata:
         return []
 
-    install_base = workspace_config.install_path
+    canonical_install_base = workspace_config.install_path_mask or workspace_config.install_path
     will_install_names = set(target_metadata.keys())
     already_installed_names = [pkg for pkg, _ in state_registry.filter_by_states(["installed"])]
 
     installed_universe = {
         pkg: (
-            PackageConfig.from_install_dir(install_base / pkg, workspace_config)
-            if (install_base / pkg).is_dir()
+            PackageConfig.from_install_dir(canonical_install_base / pkg, workspace_config)
+            if (canonical_install_base / pkg).is_dir()
             else PackageConfig(PackageSectionConfig(name=pkg))
         )
         for pkg in already_installed_names

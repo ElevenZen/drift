@@ -19,6 +19,7 @@ from drift.primitives.deploy_repo import (
     run_primitive_deploy_pipeline_with_error_handling,
 )
 from drift.primitives.rollback_repo import run_primitive_8_rollback_recovery
+from drift.utils.git_utils import get_git_status_porcelain
 
 
 class TestDeploy(unittest.TestCase):
@@ -569,14 +570,15 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue((pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists())
 
-    def test_deploy_step4a_prepare_failure_for_copy_package_triggers_rollback(self) -> None:
-        """When prepare_install fails for COPY packages, rollback IS triggered to clean uncommitted install state."""
+    def test_deploy_step4a_prepare_failure_for_copy_package_avoids_rollback_and_mutation(self) -> None:
+        """When prepare_install fails for COPY packages, it aborts before staging without mutating install/ or state.toml."""
         # 1. Initial successful deployment of copy package
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         reg = load_state_registry(self.state_file)
         self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.COPY)
+        self.assertEqual(reg.get_package_state("pkg_a"), "installed")
 
-        # 2. Modify package file so staging detects changes and proceeds to Step 4
+        # 2. Modify package file so staging plan detects changes and proceeds to Step 4a
         pkg_dir = self.source_dir / "pkg_a"
         (pkg_dir / "file.txt").write_text("modified content", encoding="utf-8")
 
@@ -599,20 +601,20 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
         assert res.failure is not None
-        self.assertTrue(res.failure.requires_rollback)
-        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
-        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
+        self.assertFalse(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.FIX_TEMPLATE)
+        self.assertEqual(res.failure.recommended_command, "drift deploy")
         self.assertIn("Step 4 (Deployment Pre-flight) failed.", res.failure.error_message)
 
-        # Verify emergency recovery card WAS printed
-        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        # Verify emergency recovery card was NOT printed and install/ + state.toml remain completely untouched
+        self.assertNotIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+        reg_after = load_state_registry(self.state_file)
+        self.assertEqual(reg_after.get_package_state("pkg_a"), "installed")
+        self.assertEqual((self.install_dir / "pkg_a" / "file.txt").read_text(encoding="utf-8"), "Hello source config!")
 
-        # Verify executing rollback works cleanly on 'staged' state without --force
-        rollback_res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
-        self.assertEqual(rollback_res.status, "SUCCESS")
-
-    def test_deploy_step4a_prepare_failure_for_symlink_package_triggers_rollback(self) -> None:
-        """When prepare_install fails for SYMLINK packages, rollback IS triggered."""
+    def test_deploy_step4a_prepare_failure_for_symlink_package_avoids_rollback_and_mutation(self) -> None:
+        """When prepare_install fails for SYMLINK packages, it aborts before staging so live symlinks and install/ remain untouched."""
         # 1. Set pkg_a to symlink in source config and deploy initially
         pkg_dir = self.source_dir / "pkg_a"
         (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -627,10 +629,10 @@ target_directory = "{self.system_target_dir.as_posix()}"
         expected_method = InstallMethod.COPY if sys.platform == "win32" else InstallMethod.SYMLINK
         self.assertEqual(reg.get_package_install_method("pkg_a"), expected_method)
 
-        # 2. Modify package file so staging detects changes and proceeds to Step 4
+        # 2. Modify package file so staging plan detects changes and proceeds to Step 4a
         (pkg_dir / "file.txt").write_text("symlink modified content", encoding="utf-8")
 
-        # 3. Deploy update with prepare_install failing on pre-flight: should trigger rollback due to symlinks
+        # 3. Deploy update with prepare_install failing on pre-flight: no staging has happened yet!
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture
@@ -648,15 +650,17 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
         assert res.failure is not None
-        self.assertTrue(res.failure.requires_rollback)
-        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
-        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
+        self.assertFalse(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.FIX_TEMPLATE)
+        self.assertEqual(res.failure.recommended_command, "drift deploy")
 
-        # Verify emergency recovery card WAS printed
-        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        # Verify emergency recovery card was NOT printed and live symlink target still has original content
+        self.assertNotIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "Hello source config!")
 
-    def test_deploy_step4a_prepare_failure_for_symlink_with_generic_error_triggers_rollback(self) -> None:
-        """When prepare_install fails with a generic error (no packages attribute) and package is SYMLINK, rollback is triggered."""
+    def test_deploy_step4a_prepare_failure_for_symlink_with_generic_error_avoids_rollback(self) -> None:
+        """When prepare_install fails with a generic error and package is SYMLINK, no rollback is needed because install/ was not mutated."""
         # 1. Configure pkg_a as SYMLINK and initial deploy
         pkg_dir = self.source_dir / "pkg_a"
         (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -689,13 +693,13 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
         assert res.failure is not None
-        self.assertTrue(res.failure.requires_rollback)
-        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
-        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
-        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        self.assertFalse(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.FIX_TEMPLATE)
+        self.assertEqual(res.failure.recommended_command, "drift deploy")
+        self.assertNotIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
-    def test_deploy_step4a_prepare_failure_for_copy_with_generic_error_triggers_rollback(self) -> None:
-        """When prepare_install fails with a generic error for COPY packages, rollback IS triggered."""
+    def test_deploy_step4a_prepare_failure_for_copy_with_generic_error_avoids_rollback(self) -> None:
+        """When prepare_install fails with a generic error for COPY packages, no rollback is needed because install/ was not mutated."""
         # 1. Initial deployment of copy package
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
@@ -721,13 +725,13 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
         assert res.failure is not None
-        self.assertTrue(res.failure.requires_rollback)
-        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
-        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
-        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        self.assertFalse(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.FIX_TEMPLATE)
+        self.assertEqual(res.failure.recommended_command, "drift deploy")
+        self.assertNotIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
-    def test_deploy_step4a_prepare_failure_with_symlink_and_copy_packages_rolls_back_all_staged(self) -> None:
-        """When deploying both SYMLINK and COPY packages and Step 4a fails, rollback targets ALL staged packages."""
+    def test_deploy_step4a_prepare_failure_with_symlink_and_copy_packages_leaves_all_clean(self) -> None:
+        """When deploying both SYMLINK and COPY packages and Step 4a fails, neither package is staged or enters midway state."""
         pkg_b_dir = self.source_dir / "pkg_b"
         pkg_b_dir.mkdir(parents=True, exist_ok=True)
         (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -757,7 +761,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         (pkg_a_dir / "file.txt").write_text("symlink modified", encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("copy modified", encoding="utf-8")
 
-        # Deploy both, but prepare_install fails on pkg_b (the COPY package!)
+        # Deploy both, but prepare_install fails on pkg_b
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture
@@ -775,20 +779,19 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
         assert res.failure is not None
-        self.assertTrue(res.failure.requires_rollback)
-        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
-        # Recommended command must target ALL staged packages whose install state was modified!
-        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a pkg_b")
-        card_output = stderr_capture.getvalue()
-        self.assertIn("EMERGENCY RECOVERY REQUIRED", card_output)
-        self.assertIn("drift rollback pkg_a pkg_b", card_output)
+        self.assertFalse(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.FIX_TEMPLATE)
+        self.assertEqual(res.failure.recommended_command, "drift deploy")
+        self.assertNotIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
-        # Verify rollback recovers both packages cleanly
-        rollback_res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a", "pkg_b"], force=False)
-        self.assertEqual(rollback_res.status, "SUCCESS")
+        # Both packages remain in clean 'installed' state with zero uncommitted changes in install/
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+        reg_after = load_state_registry(self.state_file)
+        self.assertEqual(reg_after.get_package_state("pkg_a"), "installed")
+        self.assertEqual(reg_after.get_package_state("pkg_b"), "installed")
 
-    def test_deploy_step4a_prepare_failure_with_multiple_copy_packages_triggers_rollback(self) -> None:
-        """When deploying multiple COPY packages and Step 4a fails, rollback IS triggered for all staged packages."""
+    def test_deploy_step4a_prepare_failure_with_multiple_copy_packages_leaves_all_clean(self) -> None:
+        """When deploying multiple COPY packages and Step 4a fails, neither package is staged or requires rollback."""
         pkg_b_dir = self.source_dir / "pkg_b"
         pkg_b_dir.mkdir(parents=True, exist_ok=True)
         (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -824,13 +827,14 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
         assert res.failure is not None
-        self.assertTrue(res.failure.requires_rollback)
-        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
-        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a pkg_b")
-        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        self.assertFalse(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.FIX_TEMPLATE)
+        self.assertEqual(res.failure.recommended_command, "drift deploy")
+        self.assertNotIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
 
-    def test_deploy_step4a_prepare_failure_for_first_time_package_triggers_rollback(self) -> None:
-        """When prepare_install fails for first-time installed package, rollback IS triggered to clean install directory."""
+    def test_deploy_step4a_prepare_failure_for_first_time_package_leaves_install_clean(self) -> None:
+        """When prepare_install fails for first-time installed package, install/ and state.toml remain completely untouched."""
         # 1. State registry is initially empty (pkg_a has never been deployed)
         reg = load_state_registry(self.state_file)
         self.assertIsNone(reg.get_package_install_method("pkg_a"))
@@ -854,11 +858,14 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
         assert res.failure is not None
-        self.assertTrue(res.failure.requires_rollback)
-        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
-        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
+        self.assertFalse(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.FIX_TEMPLATE)
+        self.assertEqual(res.failure.recommended_command, "drift deploy")
         self.assertIn("Step 4 (Deployment Pre-flight) failed.", res.failure.error_message)
-        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        self.assertNotIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+        self.assertFalse((self.install_dir / "pkg_a").exists())
+        reg_after = load_state_registry(self.state_file)
+        self.assertIsNone(reg_after.get_package_state("pkg_a"))
 
     def test_deploy_pipeline_deploys_staged_package_without_staging_changes(self) -> None:
         """Mandatory Two-Pass Test: Verifies that a package marked as 'staged' in state registry
@@ -904,7 +911,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
     def test_resolve_packages_to_install_selection_matrix(self) -> None:
         """Unit test for resolve_packages_to_install covering changes, staged states, and reinstall."""
         from drift.primitives.deploy_repo import resolve_packages_to_install
-        from drift.primitives.stage_repo import StagePlan, StageResult
+        from drift.primitives.stage_repo import StagePlan
         from drift.config.package_config import PackageConfig, PackageSectionConfig
 
         reg = load_state_registry(self.state_file)
@@ -930,12 +937,6 @@ target_directory = "{self.system_target_dir.as_posix()}"
             state_registry=reg,
             packages_stage_order=["pkg_changed"],
         )
-        stage_result = StageResult(
-            command="stage",
-            status="SUCCESS",
-            packages_changed=["pkg_changed"],
-            plans=[],
-        )
 
         all_target_pkgs = ["pkg_staged", "pkg_installed", "pkg_changed", "pkg_disabled"]
 
@@ -944,7 +945,6 @@ target_directory = "{self.system_target_dir.as_posix()}"
         # Should exclude: pkg_installed (already installed, no changes) + pkg_disabled (enable_install=False)
         resolved = resolve_packages_to_install(
             stage_plan=stage_plan,
-            stage_result=stage_result,
             target_pkgs=all_target_pkgs,
             reinstall=False,
         )
@@ -954,14 +954,144 @@ target_directory = "{self.system_target_dir.as_posix()}"
         # Should include all enabled packages, but strictly exclude pkg_disabled
         reinstall_resolved = resolve_packages_to_install(
             stage_plan=stage_plan,
-            stage_result=stage_result,
             target_pkgs=all_target_pkgs,
             reinstall=True,
         )
         self.assertEqual(reinstall_resolved, ["pkg_staged", "pkg_installed", "pkg_changed"])
 
+    def test_deploy_convergent_drift_auto_resolves_without_abort(self) -> None:
+        """Two-Pass Idempotency Test: When both src/ and live host are modified identically, deploy auto-commits convergence."""
+        # 1. Initial deployment
+        res0 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res0.status, "SUCCESS")
+
+        # 2. User edits both src/pkg_a/file.txt and live host file.txt identically
+        (self.source_dir / "pkg_a" / "file.txt").write_text("converged content", encoding="utf-8")
+        (self.system_target_dir / "file.txt").write_text("converged content", encoding="utf-8")
+
+        # Pass 1 (Cold / Convergent Resolution Pass):
+        # Render compiles src/ -> render/, reverse-sync pulls host -> install/,
+        # adopt convergence check detects install/pkg_a/file.txt == render/pkg_a/file.txt and commits!
+        res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "converged content")
+        self.assertEqual((self.install_dir / "pkg_a" / "file.txt").read_text(encoding="utf-8"), "converged content")
+
+        # Pass 2 (Warm / Idempotent Pass):
+        res2 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertEqual(res2.deployed_packages, [])
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+
+    def test_deploy_convergent_deleted_file_auto_resolves(self) -> None:
+        """When a file is deleted from both src/ and the live host, deploy auto-commits the converged deletion."""
+        pkg_dir = self.source_dir / "pkg_a"
+        (pkg_dir / "extra.txt").write_text("extra file", encoding="utf-8")
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertTrue((self.system_target_dir / "extra.txt").exists())
+
+        # Remove extra.txt from both src/pkg_a and live host
+        (pkg_dir / "extra.txt").unlink()
+        (self.system_target_dir / "extra.txt").unlink()
+
+        res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertFalse((self.install_dir / "pkg_a" / "extra.txt").exists())
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+
+    def test_deploy_multi_file_convergent_one_file_and_template_update_another_file(self) -> None:
+        """When file_a converges on host & src while file_b is updated only in src, deploy commits file_a and deploys file_b."""
+        pkg_dir = self.source_dir / "pkg_a"
+        (pkg_dir / "file_b.txt").write_text("initial b", encoding="utf-8")
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        # file.txt is updated identically in src/ and host (convergent drift)
+        # file_b.txt is updated only in src/ (normal template update)
+        (pkg_dir / "file.txt").write_text("converged a", encoding="utf-8")
+        (self.system_target_dir / "file.txt").write_text("converged a", encoding="utf-8")
+        (pkg_dir / "file_b.txt").write_text("updated b from template", encoding="utf-8")
+
+        res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(len(res.deployed_packages), 1)
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "converged a")
+        self.assertEqual((self.system_target_dir / "file_b.txt").read_text(encoding="utf-8"), "updated b from template")
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+
+    def test_deploy_partial_convergence_commits_converged_file_and_aborts_on_divergent_file(self) -> None:
+        """When file_a converges and file_b diverges on the host, deploy commits file_a and aborts only on file_b."""
+        pkg_dir = self.source_dir / "pkg_a"
+        (pkg_dir / "file_b.txt").write_text("initial b", encoding="utf-8")
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        # file.txt converges between src/ and host; file_b.txt diverges on host
+        (pkg_dir / "file.txt").write_text("converged a", encoding="utf-8")
+        (self.system_target_dir / "file.txt").write_text("converged a", encoding="utf-8")
+        (self.system_target_dir / "file_b.txt").write_text("divergent host edit b", encoding="utf-8")
+
+        res = run_primitive_deploy_pipeline_with_error_handling(
+            self.workspace_config, packages_to_deploy=["pkg_a"]
+        )
+        self.assertEqual(res.status, "ABORTED_DRIFT")
+        assert res.failure is not None
+        self.assertEqual(res.failure.next_action_type, NextActionType.ADOPT_OR_FORCE)
+
+        # Verify file.txt was committed cleanly in install/, leaving only file_b.txt dirty in git status
+        dirty_lines = get_git_status_porcelain(self.workspace_config.install_path, "pkg_a/")
+        self.assertEqual(len(dirty_lines), 1)
+        self.assertIn("pkg_a/file_b.txt", dirty_lines[0])
+
+    def test_deploy_render_failure_aborts_before_reverse_sync_touches_install_repo(self) -> None:
+        """Verifies that a template error in Step 1 (render) aborts before reverse-sync touches install/."""
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        # Modify live host file AND break package config in src/pkg_a
+        (self.system_target_dir / "file.txt").write_text("host edit while template broken", encoding="utf-8")
+        (self.source_dir / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).write_text("invalid = [toml", encoding="utf-8")
+
+        res = run_primitive_deploy_pipeline_with_error_handling(
+            self.workspace_config, packages_to_deploy=["pkg_a"]
+        )
+        self.assertEqual(res.status, "FAILED")
+        assert res.failure is not None
+        self.assertEqual(res.failure.next_action_type, NextActionType.FIX_TEMPLATE)
+        # Because render ran before reverse-sync, install/ was never dirtied by reverse-sync
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+
+    def test_deploy_pre_stage_install_plan_resolves_external_dependency_in_install_only(self) -> None:
+        """When pkg_b depends on pkg_a which is installed in install/pkg_a but absent from render/, deploy succeeds."""
+        import shutil
+
+        # 1. Deploy pkg_a first
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        # 2. Remove render/pkg_a to simulate pkg_a not being present in render/ during targeted deploy of pkg_b
+        shutil.rmtree(self.render_dir / "pkg_a")
+        subprocess.run(["git", "add", "-A"], cwd=self.render_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "remove pkg_a from render"], cwd=self.render_dir, check=True, capture_output=True)
+
+        # 3. Create pkg_b depending on pkg_a
+        pkg_b_dir = self.source_dir / "pkg_b"
+        pkg_b_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_b"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+        dependencies = ["pkg_a"]
+        """, encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("hello from pkg_b", encoding="utf-8")
+
+        # 4. Targeted deploy of pkg_b only: Step 4a must resolve pkg_a from install_path_mask (canonical install/)
+        res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_b"])
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual([p.package for p in res.deployed_packages], ["pkg_b"])
+        self.assertEqual((self.system_target_dir / "file_b.txt").read_text(encoding="utf-8"), "hello from pkg_b")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

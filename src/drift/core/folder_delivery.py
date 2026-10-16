@@ -61,9 +61,14 @@ class DeliveryInspectionContext:
         object.__setattr__(self, "abs_drift_root", self.drift_root.resolve())
 
     def mask_source_path(self, rel_path: Path) -> Path:
-        """Masks relative path with source_dir_mask (e.g. in install/), falling back to source_dir."""
-        base_dir = self.source_dir_mask or self.source_dir
-        return base_dir / self.translate_source_rel_path(rel_path)
+        """Masks relative path with source_dir_mask (e.g. in install/)."""
+        assert self.source_dir_mask is not None, "mask_source_path called without a configured source_dir_mask"
+        return self.source_dir_mask / self.translate_source_rel_path(rel_path)
+
+    def mask_source_path_with_fallback(self, rel_path: Path, fallback_path: Path) -> Path:
+        if self.source_dir_mask is None:
+            return fallback_path
+        return self.mask_source_path(rel_path)
 
     def resolve_backup_path(
         self,
@@ -167,8 +172,8 @@ def _inspect_directory_node(
     target_dir: Path,
     source_dir: Optional[Path],
     rel_path: Path,
-    has_backed_up_ancestor: bool = False,
-    prune_keep_file: bool = False,
+    has_backed_up_ancestor: bool,
+    prune_keep_file: bool,
 ) -> List[FileAction]:
     """Inspects a directory destination against source directory, planning creation, permissions sync, or collision resolution."""
     if has_backed_up_ancestor or not (target_dir.exists() or target_dir.is_symlink()):
@@ -189,7 +194,7 @@ def _inspect_directory_node(
         if source_dir is not None and source_dir.is_dir() and permissions_differ(source_dir, target_dir):
             src_mode = oct(source_dir.stat().st_mode & 0o777)
             dst_mode = oct(target_dir.stat().st_mode & 0o777)
-            effective_src = context.mask_source_path(rel_path) if context.source_dir_mask is not None else source_dir
+            effective_src = context.mask_source_path_with_fallback(rel_path, source_dir)
             node_actions.append(FileAction(
                 action_type=FileActionType.UPDATE_PERMISSION,
                 src_path=effective_src,
@@ -215,7 +220,7 @@ def _inspect_single_ancestor(
     context: DeliveryInspectionContext,
     ancestor_target: Path,
     rel_path: Path,
-    has_backed_up_ancestor: bool = False,
+    has_backed_up_ancestor: bool,
 ) -> List[FileAction]:
     """Inspects a single ancestor directory path and returns necessary directory creation or backup actions."""
     source_dir_path = context.translate_source_path(rel_path)
@@ -433,7 +438,8 @@ def _inspect_resolved_leaf_file(
     backed_up_ancestor_targets: Set[Path],
 ) -> None:
     """Inspects resolved source against system target and plans delivery actions."""
-    effective_source = context.mask_source_path(rel_file) if context.source_dir_mask is not None else source_file
+    # As source_file may be a resolved path, it's not equal to context.source_dir + rel_file .
+    effective_source = context.mask_source_path_with_fallback(rel_file, source_file)
 
     # 1. Source and target are identical
     if source_file == system_target:

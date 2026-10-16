@@ -179,16 +179,18 @@ class TestErrorStacking(unittest.TestCase):
         mock_recovery_card.assert_not_called()
 
     @patch("drift.primitives.deploy_repo.print_emergency_recovery_card")
+    @patch("drift.primitives.deploy_repo.prepare_physical_install_step")
     @patch("drift.primitives.deploy_repo.execute_stage_packages")
     @patch("drift.primitives.deploy_repo.prepare_stage_packages")
     @patch("drift.primitives.deploy_repo.run_primitive_3_commit_render_repo")
     @patch("drift.primitives.deploy_repo.run_primitive_2_render_packages")
     def test_deploy_step3_staging_execution_failure_prints_recovery_card(
-        self, mock_p2, mock_p3, mock_prepare, mock_execute, mock_recovery_card
+        self, mock_p2, mock_p3, mock_prepare, mock_execute, mock_prepare_install, mock_recovery_card
     ) -> None:
         """When Step 3 fails during physical staging execution, emergency recovery card is printed."""
         mock_p2.return_value = MagicMock(status="SUCCESS")
         mock_prepare.return_value = StagePlan(pkg_metadata={"pkg_a": MagicMock()}, state_registry=MagicMock())
+        mock_prepare_install.return_value = MagicMock()
         mock_execute.side_effect = OSError("Disk full while writing install state")
 
         with self.assertLogs("drift.primitives.deploy_repo", level="INFO"):

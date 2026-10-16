@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import shlex
 import sys
 import logging
@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..utils.git_utils import get_git_status_porcelain, assert_repo_can_commit
 from .reverse_sync import run_primitive_1_reverse_sync
+from .adopt_repo import resolve_and_commit_converged_drifts
 from ..render.render_package import (
     run_primitive_2_render_packages,
     run_primitive_3_commit_render_repo,
@@ -72,35 +73,48 @@ class DeployOptions(AlwaysTruthy):
     verbose: bool = False
 
 
+def assert_no_midway_deploy_state(
+    workspace_config: WorkspaceConfig,
+    target_pkgs: Sequence[str],
+    force: bool = False,
+) -> None:
+    """Verifies that no targeted package is in a midway transaction state from a previous interrupted operation."""
+    state_file = workspace_config.install_path / STATE_REGISTRY_FILE_NAME
+    if not state_file.exists() or force:
+        return
+
+    state_registry = load_state_registry(state_file)
+    midway_pkgs = state_registry.get_midway_packages(list(target_pkgs))
+    if not midway_pkgs:
+        return
+
+    pkg_names = [p[0] for p in midway_pkgs]
+    pkg_cmd_str = shlex.join(pkg_names)
+    details = ", ".join(f"'{p}' ({st})" for p, st in midway_pkgs)
+    err_msg = (
+        f"❌ [DEPLOY ABORTED] Package(s) in midway transaction state: {details}!\n"
+        "A previous operation failed midway, leaving uncommitted state in the install repository.\n\n"
+        f"👉 Run 'drift rollback {pkg_cmd_str}' to safely restore your system to the last known good configuration.\n"
+        f"👉 Run 'drift deploy {pkg_cmd_str} --force' to bypass this safeguard and proceed anyway."
+    )
+    raise RuntimeError(err_msg)
+
+
 def check_and_prevent_system_drifts(
     workspace_config: WorkspaceConfig,
     target_pkgs: List[str],
     force: bool = False
 ) -> Tuple[List[str], List[str]]:
     """Stage 1: Safety Guard (Sentinel)
-    Runs pre-flight state checks and silent reverse-sync to verify if any targeted package has drifted.
-    If a midway state or drift is detected and force is False, aborts execution instantly with instructions.
-    If drift is detected and force is True, captures and commits a drift snapshot into install/ repo
+    Runs pre-flight state checks, silent reverse-sync, and convergent drift auto-resolution
+    to verify if any targeted package has unresolved host drift.
+    If a midway state or divergent drift is detected and force is False, aborts execution instantly with instructions.
+    If divergent drift is detected and force is True, captures and commits a drift snapshot into install/ repo
     to ensure live system modifications are preserved in history and overwritten backups are accurate.
     Returns (drifted_packages, drifted_files).
     """
     # 0. Check if any targeted package is in a midway transaction state from a previous crash/failure
-    state_file = workspace_config.install_path / STATE_REGISTRY_FILE_NAME
-    if state_file.exists() and not force:
-        state_registry = load_state_registry(state_file)
-        midway_pkgs = state_registry.get_midway_packages(target_pkgs)
-
-        if midway_pkgs:
-            pkg_names = [p[0] for p in midway_pkgs]
-            pkg_cmd_str = shlex.join(pkg_names)
-            details = ", ".join(f"'{p}' ({st})" for p, st in midway_pkgs)
-            err_msg = (
-                f"❌ [DEPLOY ABORTED] Package(s) in midway transaction state: {details}!\n"
-                "A previous operation failed midway, leaving uncommitted state in the install repository.\n\n"
-                f"👉 Run 'drift rollback {pkg_cmd_str}' to safely restore your system to the last known good configuration.\n"
-                f"👉 Run 'drift deploy {pkg_cmd_str} --force' to bypass this safeguard and proceed anyway."
-            )
-            raise RuntimeError(err_msg)
+    assert_no_midway_deploy_state(workspace_config, target_pkgs, force=force)
 
     logger.info("🔍 [STAGE 1] Triggering silent reverse synchronization audit...")
     
@@ -108,6 +122,13 @@ def check_and_prevent_system_drifts(
         workspace_config, package_names=target_pkgs, missing_ok=True
     )
     syncable_pkgs = [p.package for p in sync_res.packages] if sync_res.packages else []
+
+    if syncable_pkgs:
+        resolve_and_commit_converged_drifts(
+            workspace_config,
+            package_names=syncable_pkgs,
+            dry_run=False,
+        )
 
     drifted_packages = []
     drifted_files = []
@@ -223,17 +244,16 @@ def execute_render_commit_step(
         raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
 
-def execute_staging_step(
+def prepare_staging_step(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str],
     force: bool = False,
     no_deps: bool = False,
-) -> Optional[Tuple[StagePlan, StageResult, CompletedStep]]:
-    """Executes Step 3: Pre-flight validation and physical staging from render/ to install/.
+) -> Optional[StagePlan]:
+    """Executes Step 3a: Read-only pre-flight validation and delta resolution for sandbox staging.
 
     Returns None if no active packages are enabled for staging/deployment.
     """
-    # 3a. Pre-flight Validation & Assertion for Sandbox Staging (Read-Only)
     failed_step = "Step 3 (Sandbox Staging Pre-flight)"
     try:
         stage_plan = prepare_stage_packages(
@@ -258,8 +278,15 @@ def execute_staging_step(
 
     if not stage_plan.pkg_metadata:
         return None
+    return stage_plan
 
-    # 3b. Stage render sandbox to install state base (State-Mutating)
+
+def execute_staging_step(
+    workspace_config: WorkspaceConfig,
+    stage_plan: StagePlan,
+    target_pkgs: Sequence[str],
+) -> Tuple[StageResult, CompletedStep]:
+    """Executes Step 3b: Physical staging from render/ to install/ (State-Mutating)."""
     failed_step = "Step 3 (Sandbox Staging)"
     try:
         logger.info("   [3/5] Staging rendered changes from render/ to install/ state database ...")
@@ -267,7 +294,7 @@ def execute_staging_step(
             workspace_config,
             plan=stage_plan,
         )
-        return stage_plan, stage_result, CompletedStep(3, "sandbox_staging")
+        return stage_result, CompletedStep(3, "sandbox_staging")
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), list(target_pkgs))
         raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
@@ -275,7 +302,6 @@ def execute_staging_step(
 
 def resolve_packages_to_install(
     stage_plan: StagePlan,
-    stage_result: StageResult,
     target_pkgs: Sequence[str],
     reinstall: bool = False,
 ) -> List[str]:
@@ -283,7 +309,7 @@ def resolve_packages_to_install(
 
     A package is selected for deployment if:
     1. Reinstallation is requested (reinstall=True), OR
-    2. Staging detected physical differences (stage_result.packages_changed), OR
+    2. Staging plan detected physical differences (stage_plan.packages_stage_order), OR
     3. The package is marked as 'staged' (or not yet 'installed') in the state registry.
 
     Only packages enabled for installation (in stage_plan.pkg_metadata) are considered.
@@ -292,7 +318,7 @@ def resolve_packages_to_install(
     if reinstall:
         return [p for p in target_pkgs if p in enabled_packages]
 
-    changed_pkgs = set(stage_result.packages_changed)
+    changed_pkgs = set(stage_plan.packages_stage_order)
     state_registry = stage_plan.state_registry
     staged_pkgs = {
         pkg for pkg in enabled_packages
@@ -305,27 +331,59 @@ def resolve_packages_to_install(
     ]
 
 
-def execute_physical_install_step(
+def prepare_physical_install_step(
     workspace_config: WorkspaceConfig,
+    stage_plan: StagePlan,
     pkgs_to_install: Sequence[str],
-    target_pkgs: Sequence[str],
     install_options: InstallOptions,
-) -> Tuple[List[PackageInstallResult], CompletedStep]:
-    """Executes Step 4: Pre-flight validation and physical deployment of files to host paths."""
-    # 4a. Pre-flight Validation & Pre-Transaction Conflict Audit for Deployment (Read-Only)
+) -> InstallPlan:
+    """Executes Step 4a: Pre-flight validation and conflict audit for physical deployment (Read-Only).
+
+    Runs against a patched WorkspaceConfig pointing install_directory to render_path
+    (since stage_repo mirrors render/ -> install/ 1:1) before any mutation of install/
+    or state.toml occurs, then rebases the resulting InstallPlan to canonical install/.
+    """
     failed_step = "Step 4 (Deployment Pre-flight)"
+    patched_ws = replace(
+        workspace_config,
+        workspace=replace(
+            workspace_config.workspace,
+            install_directory=workspace_config.render_path,
+        ),
+        install_path_mask=workspace_config.install_path,
+    )
     try:
-        install_plan = prepare_install(
-            workspace_config,
+        raw_plan = prepare_install(
+            patched_ws,
             target_pkgs=list(pkgs_to_install),
             options=install_options,
         )
+        return raw_plan.rebase_install_dir(
+            workspace_config.install_path,
+            state_registry=stage_plan.state_registry,
+        )
     except Exception as e:
-        print_emergency_recovery_card(failed_step, str(e), list(pkgs_to_install))
-        err = RuntimeError(f"Midway crash: {failed_step} failed.")
-        raise mark_logged(err) from e
+        if is_drift_error(e) or is_logged(e):
+            logger.error(f"❌ [CRITICAL] {failed_step} failed.")
+        else:
+            logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
+            mark_logged(e)
+        causing_pkgs = getattr(e, "packages", None)
+        if causing_pkgs:
+            pkgs_str = ", ".join(f"'{p}'" for p in causing_pkgs)
+            logger.info(f"👉 Problematic package(s): {pkgs_str}. Please resolve deployment pre-flight issues and try 'drift deploy' again.")
+        else:
+            logger.info("👉 Please resolve any deployment pre-flight issues and try 'drift deploy' again.")
+        raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
-    # 4b. Physical Deployment of configurations to host system target paths (State-Mutating)
+
+def execute_physical_install_step(
+    workspace_config: WorkspaceConfig,
+    install_plan: InstallPlan,
+    pkgs_to_install: Sequence[str],
+    target_pkgs: Sequence[str],
+) -> Tuple[List[PackageInstallResult], CompletedStep]:
+    """Executes Step 4b: Physical deployment of files to host paths (State-Mutating)."""
     failed_step = "Step 4 (Physical Deploy/Install)"
     pkgs_install_label = ", ".join(pkgs_to_install)
     try:
@@ -393,8 +451,8 @@ def execute_sequential_compile_and_apply(
     reinstall: bool = False,
     no_deps: bool = False,
 ) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
-    """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
-    logger.info("🚀 [STAGE 2] Starting sequential compilation and apply pipeline...")
+    """Sequential Compile, Sentinel Audit, Pre-flight Planning, and Physical Apply pipeline."""
+    logger.info("🚀 Starting sequential compilation and apply pipeline...")
     completed_steps: List[CompletedStep] = []
     hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
 
@@ -408,27 +466,23 @@ def execute_sequential_compile_and_apply(
         execute_render_commit_step(workspace_config, target_pkgs)
     )
 
-    # 3. Sandbox staging (pre-flight validation and physical staging)
-    stage_data = execute_staging_step(
+    # Sentinel Drift Auditing (after render so convergent host changes can be auto-resolved against render/)
+    check_and_prevent_system_drifts(workspace_config, target_pkgs, force=force)
+
+    # 3a. Sandbox staging pre-flight validation and delta resolution (Read-Only)
+    stage_plan = prepare_staging_step(
         workspace_config, target_pkgs, force=force, no_deps=no_deps
     )
-    if stage_data is None:
+    if stage_plan is None:
         logger.info("✨ No active packages are enabled for staging/deployment. Skipping physical deployment.")
         return [], completed_steps
-
-    stage_plan, stage_result, stage_step = stage_data
-    completed_steps.append(stage_step)
 
     # Resolve packages requiring physical deployment (staging modifications or 'staged' registry status)
     pkgs_to_install = resolve_packages_to_install(
         stage_plan=stage_plan,
-        stage_result=stage_result,
         target_pkgs=target_pkgs,
         reinstall=reinstall,
     )
-    if not pkgs_to_install:
-        logger.info("✨ No package changes detected during staging. Skipping physical deployment.")
-        return [], completed_steps
 
     # NOTE [Stage Delta Filter & Reinstall Bridge]:
     # Stage 3 (stage_repo) tracks modifications across ALL files in render/<pkg>/ vs install/<pkg>/,
@@ -440,20 +494,41 @@ def execute_sequential_compile_and_apply(
     # and skip the package unless reinstall=True.
     # Therefore, we pass reinstall=True to ensure that all packages filtered as changed by staging are
     # fully processed by Primitive 5 (ensuring hooks execute and state updates).
-    install_options = InstallOptions(
-        resolve_symlinks=True,
-        force=force,
-        reinstall=True,
-        flags=hook_flags,
-        no_deps=no_deps,
-    )
+    install_plan: Optional[InstallPlan] = None
+    if pkgs_to_install:
+        install_options = InstallOptions(
+            resolve_symlinks=True,
+            force=force,
+            reinstall=True,
+            flags=hook_flags,
+            no_deps=no_deps,
+        )
+        # 4a. Deployment pre-flight validation against render/ before mutating install/ or state.toml
+        install_plan = prepare_physical_install_step(
+            workspace_config,
+            stage_plan=stage_plan,
+            pkgs_to_install=pkgs_to_install,
+            install_options=install_options,
+        )
 
-    # 4. Physical Deployment of configurations to host system target paths (State-Mutating)
+    # 3b. Physical sandbox staging from render/ to install/ (State-Mutating)
+    _, stage_step = execute_staging_step(
+        workspace_config,
+        stage_plan=stage_plan,
+        target_pkgs=target_pkgs,
+    )
+    completed_steps.append(stage_step)
+
+    if not pkgs_to_install or install_plan is None:
+        logger.info("✨ No package changes detected during staging. Skipping physical deployment.")
+        return [], completed_steps
+
+    # 4b. Physical Deployment of configurations to host system target paths (State-Mutating)
     installed_packages, install_step = execute_physical_install_step(
         workspace_config,
+        install_plan=install_plan,
         pkgs_to_install=pkgs_to_install,
         target_pkgs=target_pkgs,
-        install_options=install_options,
     )
     completed_steps.append(install_step)
 
@@ -473,7 +548,7 @@ def run_primitive_deploy_pipeline(
     reinstall: bool = False,
     no_deps: bool = False,
 ) -> DeployResult:
-    """Main deployment pipeline controller running Sentinel Drift checking and sequential compile/apply.
+    """Main deployment pipeline controller running pre-flight guards, compile, sentinel audit, and apply.
 
     Args:
         workspace_config: The workspace configuration instance.
@@ -506,10 +581,10 @@ def run_primitive_deploy_pipeline(
             deployed_packages=[]
         )
 
-    # Stage 1: Sentinel Drift Auditing
-    check_and_prevent_system_drifts(workspace_config, target_pkgs, force=force)
+    # Pre-flight midway transaction state check before rendering templates
+    assert_no_midway_deploy_state(workspace_config, target_pkgs, force=force)
 
-    # Stage 2: Deploy Pipeline Execution
+    # Deploy Pipeline Execution (Render -> Render-Commit -> Sentinel Audit -> Stage & Install Plan -> Stage & Install Execute)
     deployed_packages, completed_steps = execute_sequential_compile_and_apply(
         workspace_config,
         target_pkgs,
@@ -519,7 +594,7 @@ def run_primitive_deploy_pipeline(
         no_deps=no_deps,
     )
 
-    # Stage 3: Call garbage collection on global deploy
+    # Call garbage collection on global deploy
     gc_res: Optional[GcResult] = None
     if not packages_to_deploy:
         logger.info("🧹 Performing global deployment garbage collection...")

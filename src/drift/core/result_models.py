@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Union, Tuple, TYPE_CHECKING, Itera
 from datetime import datetime
 from .constants import InstallMethod
 from .folder_diff import FolderDiff
-from ..utils.git_utils import GitStatusDiff
+from ..utils.git_utils import GitStatusChanges
 from ..utils.config_utils import partition
 
 if TYPE_CHECKING:
@@ -691,6 +691,34 @@ class UninstallResult(SerializableModel):
 # =============================================================================
 
 @dataclass
+class PackageDriftFiles(SerializableModel):
+    """Categorized drift file paths for a single package."""
+    additions: List[Path] = field(default_factory=list)
+    deletions: List[Path] = field(default_factory=list)
+    modifications: List[Path] = field(default_factory=list)
+    renames: List[Tuple[Path, Path]] = field(default_factory=list)
+    converged_files: List[Path] = field(default_factory=list)
+
+    @property
+    def has_divergent_drifts(self) -> bool:
+        return bool(self.additions or self.deletions or self.modifications or self.renames)
+
+    @property
+    def has_drifts(self) -> bool:
+        return bool(self.has_divergent_drifts or self.converged_files)
+
+    @property
+    def total_drifts(self) -> int:
+        return (
+            len(self.additions)
+            + len(self.deletions)
+            + len(self.modifications)
+            + len(self.renames)
+            + len(self.converged_files)
+        )
+
+
+@dataclass
 class PackageAdoptPlan(SerializableModel):
     """Structured plan representing detected system drifts for a single package."""
     package: str
@@ -698,21 +726,43 @@ class PackageAdoptPlan(SerializableModel):
     src_dir_to_render: Path
     install_pkg_dir: Path
     render_engines: RenderEngineRegistry
-    additions: List[Path] = field(default_factory=list)
-    deletions: List[Path] = field(default_factory=list)
-    modifications: List[Path] = field(default_factory=list)
-    renames: List[Tuple[Path, Path]] = field(default_factory=list)
-    patches: Dict[str, str] = field(default_factory=dict)
+    drifts: PackageDriftFiles = field(default_factory=PackageDriftFiles)
+    mod_patches: Dict[str, str] = field(default_factory=dict)
+    rename_patches: Dict[str, str] = field(default_factory=dict)
     status: str = "PENDING"
     error: Optional[str] = None
 
     @property
+    def additions(self) -> List[Path]:
+        return self.drifts.additions
+
+    @property
+    def deletions(self) -> List[Path]:
+        return self.drifts.deletions
+
+    @property
+    def modifications(self) -> List[Path]:
+        return self.drifts.modifications
+
+    @property
+    def renames(self) -> List[Tuple[Path, Path]]:
+        return self.drifts.renames
+
+    @property
+    def converged_files(self) -> List[Path]:
+        return self.drifts.converged_files
+
+    @property
+    def has_divergent_drifts(self) -> bool:
+        return self.drifts.has_divergent_drifts
+
+    @property
     def has_drifts(self) -> bool:
-        return bool(self.additions or self.deletions or self.modifications or self.renames)
+        return self.drifts.has_drifts
 
     @property
     def total_drifts(self) -> int:
-        return len(self.additions) + len(self.deletions) + len(self.modifications) + len(self.renames)
+        return self.drifts.total_drifts
 
 
 @dataclass
@@ -740,9 +790,20 @@ class PackageAdoptResult(SerializableModel):
     adopted_modifications: List[str] = field(default_factory=list)
     adopted_deletions: List[str] = field(default_factory=list)
     adopted_renames: List[str] = field(default_factory=list)
+    adopted_converged: List[str] = field(default_factory=list)
     skipped_files: List[str] = field(default_factory=list)
     status: str = "SUCCESS"
     error: Optional[str] = None
+
+    @property
+    def has_adopted_changes(self) -> bool:
+        return bool(
+            self.adopted_additions
+            or self.adopted_modifications
+            or self.adopted_deletions
+            or self.adopted_renames
+            or self.adopted_converged
+        )
 
 
 @dataclass
@@ -930,8 +991,8 @@ class PackageStatus(SerializableModel):
     template_status: str = "UNKNOWN"
     system_status: str = "UNKNOWN"
     pending_status: str = "UNKNOWN"
-    template_changes: Optional[GitStatusDiff] = None
-    system_changes: Optional[GitStatusDiff] = None
+    template_changes: Optional[GitStatusChanges] = None
+    system_changes: Optional[GitStatusChanges] = None
     pending_changes: Optional[FolderDiff] = None
 
     def format_list_text(self) -> str:

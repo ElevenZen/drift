@@ -6,42 +6,55 @@ Architecture & Call Chain Overview
 
 Layer 5: Primitive Entry Point & Orchestration
     run_primitive_adopt_drifts(workspace_config, package_names, interactive, accept_conflicts, force, dry_run, flags)
-        1. Planning:
+        1. Planning (including converged drift sub-process):
             plan_adopt_repo [Layer 5] -> get_package_drifts [Layer 1]
         2. Dry-Run Reporting (if dry_run=True):
             dry_run_adopt [Layer 3]
-        3. Execution:
+        3. Execution (stages converged files directly + reconciles divergent drifts):
             execute_adopt_repo [Layer 5] -> execute_package_adopt [Layer 4]
         4. State Synchronization & Commit:
             commit_staged_repo_changes (commits only staged adopted paths in install/ repo)
 
-    plan_adopt_repo(workspace_config, package_names) -> AdoptPlan
+    resolve_and_commit_converged_drifts(workspace_config, package_names, dry_run) -> Dict[str, List[Path]]
+        Dedicated entry point that runs adoption planning without patch generation
+        (plan_adopt_repo(..., skip_patches=True)) and executes only the converged-files plan
+        (execute_converged_drifts). Used by deploy_repo after reverse-sync.
+
+    execute_converged_drifts(workspace_config, plan) -> Dict[str, List[Path]]
+        Stages and commits only the planned converged_files in install/ repo.
+
+    plan_adopt_repo(workspace_config, package_names, skip_patches) -> AdoptPlan
         Builds a multi-package AdoptPlan containing PackageAdoptPlans.
 
     execute_adopt_repo(workspace_config, plan, interactive, accept_conflicts, force, flags) -> AdoptResult
         Executes adoption across packages, stages resolved files, and commits staged changes in install/ repo.
 
 Layer 4: Single-Package Drift Adoption & Planning
+    stage_converged_package_drifts(workspace_config, plan) -> List[Path]
+        Stages planned converged_files for a single package in install/<pkg>/.
+
     adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, force, dry_run, flags)
         Coordinates single-package planning and execution.
         NOTE: adopt_one_package_drifts does NOT commit the install/ repo; it only reconciles source files
         and stages adopted paths in the install/ index. Committing staged changes is performed at Layer 5
         orchestration (execute_adopt_repo / commit_staged_repo_changes) or by the caller.
 
-    plan_package_adopt(workspace_config, pkg) -> PackageAdoptPlan
+    plan_package_adopt(workspace_config, pkg, skip_patches) -> PackageAdoptPlan
         Convenience alias for get_package_drifts [Layer 1].
 
     execute_package_adopt(workspace_config, plan, interactive, accept_conflicts, force, flags) -> PackageAdoptResult
-        1. Pre-Source Hook:
+        1. Pre-Source Hook (if divergent drifts exist):
             trigger_pre_source_hook
-        2. Process Drift Categories (Additions, Deletions, Renames, Modifications):
+        2. Stage Converged Files Directly:
+            plan.converged_files -> resolved_paths
+        3. Process Divergent Drift Categories (Additions, Deletions, Renames, Modifications):
             handle_single_addition [Layer 3]
             handle_single_deletion [Layer 3]
             handle_single_rename [Layer 3] (reads pre-computed patch)
             handle_single_modification [Layer 3] (reads pre-computed patch)
-        3. Staging Resolved Files:
+        4. Staging Resolved Files:
             git -C <install_path> add -- <resolved_paths>
-            NOTE: Only successfully adopted files are staged. Does NOT commit the install/ repo.
+            NOTE: Only successfully adopted/converged files are staged. Does NOT commit the install/ repo.
 
 Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
     handle_single_addition
@@ -70,16 +83,35 @@ Layer 2: Single-File Reconciliation Actions
         synchronizes permissions, and returns the resolved new_src_file Path.
     fallback_over_render(src_file, static_file)
         Backs up original template to .bak and overwrites it with static content from install/ (freezing template).
-    fallback_side_by_side(src_file, install_file)
+    fallback_side_by-side(src_file, install_file)
         Launches visual side-by-side diff in $EDITOR (nvim, vim, code, emacs) between source template and live static drift.
 
 Layer 1: Inspection & Git Patch Primitives
     get_drifted_packages
         Parses git status porcelain across install/ to discover all packages with local host modifications.
+    get_package_drifts(workspace_config, pkg, skip_patches) -> PackageAdoptPlan
+        1. Resolve Package Source Context:
+            _resolve_package_source_context -> (src_dir_to_render, render_engines)
+        2. Temporary Staging Context Manager (if package has Git changes):
+            _temporary_stage_package_index (git add --all <pkg> -> yield -> git restore --staged -- <pkg>)
+        3. Parse & Normalize .drift_keep Drifts:
+            parse_git_status_porcelain -> _normalize_keep_file_drifts -> GitStatusChanges
+        4. Partition Converged vs. Divergent Paths:
+            _partition_converged_package_drifts -> PackageDriftFiles
+                -> _is_path_converged_with_render
+                    -> _check_source_path_exists (resolves template/source counterpart for deletions)
+                    -> check_is_drifted_path_converged (compares content & permissions between install/ and render/)
+                -> _translate_keep_to_dir (translates .drift_keep additions/deletions to parent directories)
+        5. Pre-compute Unified Diff Patches (unless skip_patches=True):
+            _precompute_package_drift_patches -> (mod_patches, rename_patches)
+                -> generate_unified_patch (for divergent modifications)
+                -> get_rename_patch_key & generate_adjusted_patch (for divergent renames)
+    check_is_drifted_path_converged
+        Checks whether a drifted package-relative path in install/<pkg>/ has converged with render/<pkg>/.
     assert_source_file_clean
         Enforces scoped Git cleanliness safeguard on target source file before applying modifications.
-    get_package_drifts
-        Categorizes Git porcelain status into additions, deletions, modifications, and renames.
+    get_rename_patch_key
+        Generates a collision-free dictionary key ('<old_posix>//->//<new_posix>') for rename patches.
     generate_unified_patch
         Executes git diff HEAD to extract raw unified diff patches for drifted files in install/.
     generate_adjusted_patch
@@ -103,24 +135,32 @@ Layers (ordered bottom-up by dependency):
 """
 
 import logging
-import shutil
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Sequence, Union
+from typing import Dict, Iterator, List, Optional, Tuple, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..config.render_engine_config import RenderEngineRegistry
 from ..core.constants import DRIFT_IGNORE_FILE_NAME, DRIFT_KEEP_FILE_NAME
-from ..core.result_models import AdoptPlan, AdoptResult, PackageAdoptPlan, PackageAdoptResult
+from ..core.result_models import (
+    AdoptPlan,
+    AdoptResult,
+    PackageAdoptPlan,
+    PackageAdoptResult,
+    PackageDriftFiles,
+)
+from ..utils.config_utils import partition
 from ..utils.git_utils import (
-    get_git_status_porcelain,
+    GitStatusChanges,
     parse_git_status_porcelain,
     has_uncommitted_modifications,
     get_drift_root,
     commit_staged_repo_changes,
 )
 from ..utils.file_ops import remove_file_or_empty_dir, remove_tree, copy_file, ensure_dir
+from ..utils.file_inspect import contents_differ, permissions_differ
 from ..utils.path_utils import to_relative_path, to_relative_posix
 from ..hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 from ..utils.editor_utils import launch_single_file_editor, launch_side_by_side_editor
@@ -142,6 +182,83 @@ def get_drifted_packages(workspace_config: WorkspaceConfig) -> List[str]:
 
     drifted = (changed_names & installed_packages) & source_packages
     return sorted(drifted)
+
+
+def check_is_drifted_path_converged(
+    install_pkg_dir: Path,
+    render_pkg_dir: Path,
+    rel_path: Path,
+    src_exists: bool = False,
+) -> bool:
+    """Checks whether a drifted package-relative path in install/<pkg>/ has converged with render/<pkg>/."""
+    install_file = install_pkg_dir / rel_path
+    render_file = render_pkg_dir / rel_path
+
+    install_exists = install_file.exists() or install_file.is_symlink()
+    render_exists = render_file.exists() or render_file.is_symlink()
+
+    if not install_exists and not render_exists:
+        return not src_exists
+
+    if not install_exists or not render_exists:
+        return False
+
+    if install_file.is_symlink() or render_file.is_symlink():
+        return False
+
+    if install_file.is_dir() and render_file.is_dir():
+        return True
+
+    if install_file.is_file() and render_file.is_file():
+        if rel_path.name == DRIFT_KEEP_FILE_NAME:
+            return install_file.stat().st_size == 0 and render_file.stat().st_size == 0
+        return (
+            not contents_differ(render_file, install_file)
+            and not permissions_differ(render_file, install_file)
+        )
+
+    return False
+
+
+def _check_source_path_exists(
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
+    rel_path: Path,
+) -> bool:
+    """Checks whether rel_path or its template counterpart exists in src_dir_to_render."""
+    target_rel = (
+        rel_path.parent
+        if rel_path.name == DRIFT_KEEP_FILE_NAME and rel_path.parent != Path(".")
+        else rel_path
+    )
+    direct_path = src_dir_to_render / target_rel
+    if direct_path.exists() or direct_path.is_symlink():
+        return True
+    return resolve_source_file_path(render_engines, src_dir_to_render, target_rel) is not None
+
+
+def _is_path_converged_with_render(
+    install_pkg_dir: Path,
+    render_pkg_dir: Path,
+    rel_path: Path,
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
+    check_src_for_deletion: bool = False,
+) -> bool:
+    """Evaluates whether a package-relative path in install/<pkg>/ has converged with render/<pkg>/."""
+    if not render_pkg_dir.is_dir() or not install_pkg_dir.is_dir():
+        return False
+    src_exists = (
+        _check_source_path_exists(render_engines, src_dir_to_render, rel_path)
+        if check_src_for_deletion
+        else False
+    )
+    return check_is_drifted_path_converged(
+        install_pkg_dir,
+        render_pkg_dir,
+        rel_path,
+        src_exists=src_exists,
+    )
 
 
 def assert_source_file_clean(
@@ -302,29 +419,9 @@ def resolve_source_file_path(
     return None
 
 
-def get_package_drifts(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-) -> PackageAdoptPlan:
-    """Discovers and structures all system drifts for a single package into a PackageAdoptPlan.
-
-    Temporarily stages the package in the install/ repository under a try...finally guard to allow
-    Git rename detection and unified patch pre-computation, immediately restoring the staged index
-    so that the working index remains untouched until explicit execution.
-    """
-    install_base = workspace_config.install_path
-    src_pkg_dir = workspace_config.source_path / pkg
-    render_engines = workspace_config.render_engine_configs
-    try:
-        pkg_config = PackageConfig.from_source_dir(src_pkg_dir, workspace_config)
-        src_dir_to_render = pkg_config.get_source_directory_to_render(src_pkg_dir)
-        render_engines = pkg_config.package_render_engines(workspace_config)
-    except Exception:
-        src_dir_to_render = src_pkg_dir
-
-    install_pkg_dir = install_base / pkg
-
-    # Pre-stage all changes in install repo under pkg subdirectory for rename detection
+@contextmanager
+def _temporary_stage_package_index(install_base: Path, pkg: str) -> Iterator[None]:
+    """Temporarily stages a package in install/ for rename & diff inspection, restoring index on exit."""
     res_add = subprocess.run(
         ["git", "-C", str(install_base), "add", "--all", pkg],
         capture_output=True,
@@ -335,69 +432,9 @@ def get_package_drifts(
         logger.warning(
             f"Pre-staging install changes for '{pkg}' exited with code {res_add.returncode}: {res_add.stderr.strip()}"
         )
-
-    patches: Dict[str, str] = {}
     try:
-        diff = parse_git_status_porcelain(install_base, pkg)
-        raw_renames = sorted([(r.old_path, r.new_path) for r in diff.renamed], key=lambda x: x[1])
-        renames: List[Tuple[Path, Path]] = []
-        raw_additions = list(diff.added)
-        raw_deletions = list(diff.deleted)
-
-        # 1. Split renames involving .drift_keep
-        for old_rel, new_rel in raw_renames:
-            if old_rel.name == DRIFT_KEEP_FILE_NAME or new_rel.name == DRIFT_KEEP_FILE_NAME:
-                raw_deletions.append(old_rel)
-                raw_additions.append(new_rel)
-            else:
-                renames.append((old_rel, new_rel))
-
-        # 2. Sanitize modifications and non-empty keep files
-        modifications: List[Path] = []
-        for rel_mod in diff.modified:
-            if rel_mod.name == DRIFT_KEEP_FILE_NAME:
-                logger.warning(
-                    f"⚠️  [CORRUPT] Unexpected modification of keep file '{rel_mod}'. "
-                    f"'.drift_keep' must always be an empty stub file."
-                )
-                continue
-            modifications.append(rel_mod)
-
-        for rel_add in raw_additions:
-            if rel_add.name == DRIFT_KEEP_FILE_NAME:
-                keep_path = install_pkg_dir / rel_add
-                if keep_path.is_file() and keep_path.stat().st_size > 0:
-                    logger.warning(
-                        f"⚠️  [CORRUPT] Keep file '{rel_add}' is not empty (size={keep_path.stat().st_size} bytes). "
-                        f"'.drift_keep' must always be 0 bytes."
-                    )
-
-        # 3. Translate .drift_keep additions and deletions to parent directories
-        def _translate_keep_to_dir(p: Path) -> Path:
-            return p.parent if p.name == DRIFT_KEEP_FILE_NAME and p.parent != Path(".") else p
-
-        additions = sorted(list({_translate_keep_to_dir(p) for p in raw_additions}))
-        deletions = sorted(list({_translate_keep_to_dir(p) for p in raw_deletions}))
-
-        # Pre-compute unified diffs while package is staged in index
-        for rel_mod in modifications:
-            pkg_rel_path = Path(pkg) / rel_mod
-            patch_content = generate_unified_patch(install_base, pkg_rel_path)
-            patches[rel_mod.as_posix()] = patch_content
-
-        for old_rel, new_rel in renames:
-            old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel)
-            target_name = old_src_file.name if old_src_file else old_rel.name
-            adj_patch = generate_adjusted_patch(
-                install_base=install_base,
-                pkg=pkg,
-                new_rel_path=new_rel,
-                old_rel_path=old_rel,
-                target_src_filename=target_name,
-            )
-            patches[f"{old_rel.as_posix()}->{new_rel.as_posix()}"] = adj_patch
+        yield
     finally:
-        # Guarantee unstage in install/ repo so working index remains clean
         res_rst = subprocess.run(
             ["git", "-C", str(install_base), "restore", "--staged", "--", pkg],
             capture_output=True,
@@ -409,17 +446,217 @@ def get_package_drifts(
                 f"Unstaging install changes for '{pkg}' exited with code {res_rst.returncode}: {res_rst.stderr.strip()}"
             )
 
+
+def _normalize_keep_file_drifts(
+    diff: GitStatusChanges,
+    install_pkg_dir: Path,
+) -> GitStatusChanges:
+    """Splits .drift_keep renames into deletions+additions and strips/warns on corrupt .drift_keep files."""
+    sorted_renames = sorted(diff.renamed, key=lambda r: r.new_path)
+    keep_renames, renames_after_keep = partition(
+        lambda r: r.old_path.name == DRIFT_KEEP_FILE_NAME or r.new_path.name == DRIFT_KEEP_FILE_NAME,
+        sorted_renames,
+    )
+    raw_deletions = list(diff.deleted) + [r.old_path for r in keep_renames]
+    raw_additions = list(diff.added) + [r.new_path for r in keep_renames]
+
+    keep_mods, raw_modifications = partition(
+        lambda rel_mod: rel_mod.name == DRIFT_KEEP_FILE_NAME,
+        diff.modified,
+    )
+    for rel_mod in keep_mods:
+        logger.warning(
+            f"⚠️  [CORRUPT] Unexpected modification of keep file '{rel_mod}'. "
+            f"'.drift_keep' must always be an empty stub file."
+        )
+
+    for rel_add in raw_additions:
+        if rel_add.name == DRIFT_KEEP_FILE_NAME:
+            keep_path = install_pkg_dir / rel_add
+            if keep_path.is_file() and keep_path.stat().st_size > 0:
+                logger.warning(
+                    f"⚠️  [CORRUPT] Keep file '{rel_add}' is not empty (size={keep_path.stat().st_size} bytes). "
+                    f"'.drift_keep' must always be 0 bytes."
+                )
+
+    return GitStatusChanges(
+        added=raw_additions,
+        modified=raw_modifications,
+        deleted=raw_deletions,
+        renamed=renames_after_keep,
+    )
+
+
+def _translate_keep_to_dir(p: Path) -> Path:
+    """Translates a .drift_keep path to its parent directory path."""
+    return p.parent if p.name == DRIFT_KEEP_FILE_NAME and p.parent != Path(".") else p
+
+
+def _partition_converged_package_drifts(
+    install_pkg_dir: Path,
+    render_pkg_dir: Path,
+    src_dir_to_render: Path,
+    render_engines: RenderEngineRegistry,
+    diff: GitStatusChanges,
+) -> PackageDriftFiles:
+    """Partitions normalized GitStatusChanges into a PackageDriftFiles container."""
+    def _is_conv(p: Path, is_del: bool = False) -> bool:
+        return _is_path_converged_with_render(
+            install_pkg_dir,
+            render_pkg_dir,
+            p,
+            render_engines=render_engines,
+            src_dir_to_render=src_dir_to_render,
+            check_src_for_deletion=is_del,
+        )
+
+    conv_adds, div_adds_raw = partition(lambda p: _is_conv(p, is_del=False), diff.added)
+    conv_dels, div_dels_raw = partition(lambda p: _is_conv(p, is_del=True), diff.deleted)
+    conv_mods, modifications = partition(lambda p: _is_conv(p, is_del=False), diff.modified)
+    conv_renames, div_renames = partition(
+        lambda r: _is_conv(r.old_path, is_del=True) and _is_conv(r.new_path, is_del=False),
+        diff.renamed,
+    )
+
+    converged_files = sorted(
+        set(conv_adds)
+        | set(conv_dels)
+        | set(conv_mods)
+        | {p for r in conv_renames for p in (r.old_path, r.new_path)}
+    )
+    additions = sorted({_translate_keep_to_dir(p) for p in div_adds_raw})
+    deletions = sorted({_translate_keep_to_dir(p) for p in div_dels_raw})
+    renames = [(r.old_path, r.new_path) for r in div_renames]
+    return PackageDriftFiles(
+        additions=additions,
+        deletions=deletions,
+        modifications=modifications,
+        renames=renames,
+        converged_files=converged_files,
+    )
+
+
+def get_rename_patch_key(old_rel: Path, new_rel: Path) -> str:
+    """Generates a collision-free dictionary key for a rename pair (old_rel, new_rel).
+
+    Because normalized Path.as_posix() strings never contain '//', joining with '//->//'
+    guarantees that no two distinct (old_rel, new_rel) pairs can ever produce the same key.
+    """
+    return f"{old_rel.as_posix()}//->//{new_rel.as_posix()}"
+
+
+def _precompute_package_drift_patches(
+    install_base: Path,
+    pkg: str,
+    src_dir_to_render: Path,
+    render_engines: RenderEngineRegistry,
+    drifts: PackageDriftFiles,
+) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Pre-computes unified diff patches for divergent modifications and renames while staged in index."""
+    mod_patches = {
+        rel_mod.as_posix(): generate_unified_patch(install_base, Path(pkg) / rel_mod)
+        for rel_mod in drifts.modifications
+    }
+    rename_patches = {
+        get_rename_patch_key(old_rel, new_rel): generate_adjusted_patch(
+            install_base=install_base,
+            pkg=pkg,
+            new_rel_path=new_rel,
+            old_rel_path=old_rel,
+            target_src_filename=(
+                old_src_file.name
+                if (old_src_file := resolve_source_file_path(render_engines, src_dir_to_render, old_rel))
+                else old_rel.name
+            ),
+        )
+        for old_rel, new_rel in drifts.renames
+    }
+    return mod_patches, rename_patches
+
+
+def _resolve_package_source_context(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    dry_run: bool = True,
+) -> Tuple[Path, RenderEngineRegistry]:
+    """Resolves (src_dir_to_render, render_engines) for a package."""
+    src_pkg_dir = workspace_config.source_path / pkg
+    render_engines = workspace_config.render_engine_configs
+    try:
+        pkg_config = PackageConfig.from_source_dir(
+            src_pkg_dir,
+            workspace_config,
+            dry_run=dry_run,
+            silent=dry_run,
+        )
+        return (
+            pkg_config.get_source_directory_to_render(src_pkg_dir),
+            pkg_config.package_render_engines(workspace_config),
+        )
+    except Exception:
+        return src_pkg_dir, render_engines
+
+
+def get_package_drifts(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    skip_patches: bool = False,
+) -> PackageAdoptPlan:
+    """Discovers and structures all system drifts for a single package into a PackageAdoptPlan.
+
+    Includes the converged-files planning sub-process: any drifted paths in install/<pkg>/ that
+    have already converged with render/<pkg>/ are partitioned into `plan.converged_files` and
+    excluded from divergent additions, deletions, modifications, and renames.
+
+    Temporarily stages the package in the install/ repository under a context manager to allow
+    Git rename detection and unified patch pre-computation (unless skip_patches=True), immediately
+    restoring the staged index so that the working index remains untouched until explicit execution.
+    """
+    install_base = workspace_config.install_path
+    src_pkg_dir = workspace_config.source_path / pkg
+    src_dir_to_render, render_engines = _resolve_package_source_context(
+        workspace_config, pkg, dry_run=skip_patches
+    )
+    install_pkg_dir = install_base / pkg
+    render_pkg_dir = workspace_config.render_path / pkg
+
+    if not install_pkg_dir.is_dir() or not parse_git_status_porcelain(install_base, pkg).has_changes:
+        return PackageAdoptPlan(
+            package=pkg,
+            src_pkg_dir=src_pkg_dir,
+            src_dir_to_render=src_dir_to_render,
+            install_pkg_dir=install_pkg_dir,
+            render_engines=render_engines,
+            status="PENDING",
+        )
+
+    with _temporary_stage_package_index(install_base, pkg):
+        raw_diff = parse_git_status_porcelain(install_base, pkg)
+        normalized_diff = _normalize_keep_file_drifts(raw_diff, install_pkg_dir)
+        drifts = _partition_converged_package_drifts(
+            install_pkg_dir=install_pkg_dir,
+            render_pkg_dir=render_pkg_dir,
+            src_dir_to_render=src_dir_to_render,
+            render_engines=render_engines,
+            diff=normalized_diff,
+        )
+        mod_patches, rename_patches = (
+            ({}, {})
+            if skip_patches
+            else _precompute_package_drift_patches(
+                install_base, pkg, src_dir_to_render, render_engines, drifts
+            )
+        )
+
     return PackageAdoptPlan(
         package=pkg,
         src_pkg_dir=src_pkg_dir,
         src_dir_to_render=src_dir_to_render,
         install_pkg_dir=install_pkg_dir,
         render_engines=render_engines,
-        additions=additions,
-        deletions=deletions,
-        modifications=modifications,
-        renames=renames,
-        patches=patches,
+        drifts=drifts,
+        mod_patches=mod_patches,
+        rename_patches=rename_patches,
         status="PENDING",
     )
 
@@ -595,6 +832,11 @@ def dry_run_adopt(plan: PackageAdoptPlan) -> None:
 
     install_base = plan.install_pkg_dir.parent
 
+    if plan.converged_files:
+        logger.info("   [=] Converged (already identical to render/, will be staged directly):")
+        for item in plan.converged_files:
+            logger.info(f"       = {item}")
+
     if plan.additions:
         logger.info("   [+] Additions (will be copied to source):")
         for item in plan.additions:
@@ -623,7 +865,7 @@ def dry_run_adopt(plan: PackageAdoptPlan) -> None:
             # If the resolved source file is templated, check for conflicts
             is_templated = plan.render_engines.find_engine_for_file(src_file.name) is not None
             if is_templated:
-                patch_content = plan.patches.get(file.as_posix())
+                patch_content = plan.mod_patches.get(file.as_posix())
                 if patch_content is None:
                     install_file = plan.install_pkg_dir / file
                     pkg_rel_path = Path(plan.package) / file
@@ -1351,6 +1593,34 @@ def handle_single_modification(
 # Layer 4: Single-Package Drift Adoption
 # =====================================================================
 
+def stage_converged_package_drifts(
+    workspace_config: WorkspaceConfig,
+    plan: PackageAdoptPlan,
+) -> List[Path]:
+    """Stages planned converged_files for a single package in install/<pkg>/."""
+    if not plan.converged_files:
+        return []
+
+    stage_args = [(Path(plan.package) / p).as_posix() for p in plan.converged_files]
+    res_add = subprocess.run(
+        ["git", "-C", str(workspace_config.install_path), "add", "--", *stage_args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_add.returncode != 0:
+        logger.warning(
+            f"Staging converged changes for '{plan.package}' exited with code {res_add.returncode}: {res_add.stderr.strip()}"
+        )
+        return []
+
+    logger.info(
+        f"✨ Auto-resolved {len(plan.converged_files)} converged file(s) in '{plan.package}': "
+        f"{', '.join(p.as_posix() for p in plan.converged_files)}"
+    )
+    return list(plan.converged_files)
+
+
 def execute_package_adopt(
     workspace_config: WorkspaceConfig,
     plan: PackageAdoptPlan,
@@ -1361,6 +1631,9 @@ def execute_package_adopt(
 ) -> PackageAdoptResult:
     """Executes adoption for a single PackageAdoptPlan, reconciling source files and staging adopted paths.
 
+    Planned converged_files are staged directly without mutating src/, while divergent additions,
+    deletions, renames, and modifications are reconciled into src/ and then staged.
+
     Note:
         This function stages resolved/adopted files ('git add -- <resolved_paths>') in the install/
         repository index, but does NOT commit them. Committing staged changes is performed at
@@ -1370,15 +1643,23 @@ def execute_package_adopt(
         logger.info(f"✨ Package '{plan.package}' has no drifts.")
         return PackageAdoptResult(package=plan.package, status="SUCCESS")
 
-    # Trigger pre_source hook before adopting drifts into source directory
-    trigger_pre_source_hook(workspace_config, plan.package, flags=flags)
+    # Trigger pre_source hook before adopting divergent drifts into source directory
+    if plan.has_divergent_drifts:
+        trigger_pre_source_hook(workspace_config, plan.package, flags=flags)
 
+    adopted_converged: List[str] = [p.as_posix() for p in plan.converged_files]
     adopted_additions: List[str] = []
     adopted_deletions: List[str] = []
     adopted_renames: List[str] = []
     adopted_modifications: List[str] = []
     skipped_files: List[str] = []
-    resolved_paths: List[Path] = []
+    resolved_paths: List[Path] = list(plan.converged_files)
+
+    if plan.converged_files:
+        logger.info(
+            f"✨ Auto-resolved {len(plan.converged_files)} converged file(s) in '{plan.package}': "
+            f"{', '.join(p.as_posix() for p in plan.converged_files)}"
+        )
 
     # 1. Process Additions
     for rel_path in plan.additions:
@@ -1405,7 +1686,7 @@ def execute_package_adopt(
 
     # 3. Process Renames
     for old_rel_path, new_rel_path in plan.renames:
-        patch_content = plan.patches.get(f"{old_rel_path.as_posix()}->{new_rel_path.as_posix()}")
+        patch_content = plan.rename_patches.get(get_rename_patch_key(old_rel_path, new_rel_path))
         resolved = handle_single_rename(
             plan.render_engines, plan.package, plan.src_pkg_dir, plan.src_dir_to_render,
             plan.install_pkg_dir, workspace_config.install_path,
@@ -1422,7 +1703,7 @@ def execute_package_adopt(
 
     # 4. Process Modifications
     for rel_path in plan.modifications:
-        patch_content = plan.patches.get(rel_path.as_posix())
+        patch_content = plan.mod_patches.get(rel_path.as_posix())
         resolved = handle_single_modification(
             plan.render_engines, plan.package, plan.src_pkg_dir, plan.src_dir_to_render,
             plan.install_pkg_dir, workspace_config.install_path,
@@ -1435,7 +1716,7 @@ def execute_package_adopt(
         else:
             skipped_files.append(rel_path.as_posix())
 
-    # 5. Staging ONLY resolved files in install/ repository
+    # 5. Staging ONLY resolved files (including converged_files) in install/ repository
     if resolved_paths:
         stage_args = [(Path(plan.package) / p).as_posix() for p in resolved_paths]
         res_add = subprocess.run(
@@ -1455,6 +1736,7 @@ def execute_package_adopt(
         adopted_modifications=adopted_modifications,
         adopted_deletions=adopted_deletions,
         adopted_renames=adopted_renames,
+        adopted_converged=adopted_converged,
         skipped_files=skipped_files,
         status="FAILED" if skipped_files else "SUCCESS",
     )
@@ -1487,6 +1769,7 @@ def adopt_one_package_drifts(
                 adopted_deletions=[p.as_posix() for p in plan.deletions],
                 adopted_modifications=[p.as_posix() for p in plan.modifications],
                 adopted_renames=[f"{old.as_posix()} -> {new.as_posix()}" for old, new in plan.renames],
+                adopted_converged=[p.as_posix() for p in plan.converged_files],
                 status="SUCCESS",
             )
         else:
@@ -1507,16 +1790,62 @@ def adopt_one_package_drifts(
 # Layer 5: Public Primitive Entry Point
 # =====================================================================
 
+def execute_converged_drifts(
+    workspace_config: WorkspaceConfig,
+    plan: AdoptPlan,
+) -> Dict[str, List[Path]]:
+    """Executes only the converged-files plan: stages converged files and commits them in install/."""
+    converged_by_pkg: Dict[str, List[Path]] = {
+        pkg_plan.package: staged_paths
+        for pkg_plan in plan.plans
+        if pkg_plan.converged_files
+        and (staged_paths := stage_converged_package_drifts(workspace_config, pkg_plan))
+    }
+
+    if converged_by_pkg:
+        converged_pkgs = sorted(converged_by_pkg.keys())
+        pkg_word = "package" if len(converged_pkgs) == 1 else "packages"
+        commit_staged_repo_changes(
+            repo_path=workspace_config.install_path,
+            commit_message=f"Adopt: Auto-resolved converged drifts for {pkg_word} {', '.join(converged_pkgs)}",
+            repo_name="install repo",
+        )
+
+    return converged_by_pkg
+
+
+def resolve_and_commit_converged_drifts(
+    workspace_config: WorkspaceConfig,
+    package_names: Sequence[str] = (),
+    dry_run: bool = False,
+) -> Dict[str, List[Path]]:
+    """Dedicated entry point that plans adoption with skip_patches=True and executes only converged files.
+
+    Not called by run_primitive_adopt_drifts (since normal adoption planning and execution
+    already handle converged_files directly). Used by deploy_repo after reverse-sync to
+    auto-resolve and commit converged files before checking for remaining divergent drift.
+    """
+    plan = plan_adopt_repo(workspace_config, package_names=package_names, skip_patches=True)
+    if dry_run:
+        return {
+            pkg_plan.package: list(pkg_plan.converged_files)
+            for pkg_plan in plan.plans
+            if pkg_plan.converged_files
+        }
+    return execute_converged_drifts(workspace_config, plan)
+
+
 def plan_adopt_repo(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
+    skip_patches: bool = False,
 ) -> AdoptPlan:
     """Discovers drifted packages and creates an AdoptPlan containing PackageAdoptPlans."""
     if not package_names:
         package_names = get_drifted_packages(workspace_config)
 
     plans = [
-        get_package_drifts(workspace_config, pkg)
+        get_package_drifts(workspace_config, pkg, skip_patches=skip_patches)
         for pkg in package_names
     ]
     return AdoptPlan(plans=plans)
@@ -1530,7 +1859,7 @@ def execute_adopt_repo(
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> AdoptResult:
-    """Executes adoption for all plans in AdoptPlan, staging adopted files and committing changes."""
+    """Executes adoption for all plans in AdoptPlan, staging adopted/converged files and committing changes."""
     package_results: List[PackageAdoptResult] = []
     has_any_adopted = False
 
@@ -1544,14 +1873,14 @@ def execute_adopt_repo(
             flags=flags,
         )
         package_results.append(pkg_res)
-        if pkg_res.adopted_additions or pkg_res.adopted_deletions or pkg_res.adopted_modifications or pkg_res.adopted_renames:
+        if pkg_res.has_adopted_changes:
             has_any_adopted = True
 
     # Commit staged adopted changes in install base
     if has_any_adopted:
         adopted_pkgs = [
             p.package for p in package_results
-            if p.adopted_additions or p.adopted_deletions or p.adopted_modifications or p.adopted_renames
+            if p.has_adopted_changes
         ]
         pkg_word = "package" if len(adopted_pkgs) == 1 else "packages"
         commit_staged_repo_changes(
@@ -1593,7 +1922,7 @@ def run_primitive_adopt_drifts(
     Returns:
         AdoptResult containing detailed results for all adopted packages.
     """
-    # 1. Planning
+    # 1. Planning (includes converged-files sub-process)
     plan = plan_adopt_repo(workspace_config, package_names=package_names)
     if not plan.plans or not plan.has_drifts:
         if not package_names:
@@ -1623,6 +1952,7 @@ def run_primitive_adopt_drifts(
                     adopted_deletions=[p.as_posix() for p in pkg_plan.deletions],
                     adopted_modifications=[p.as_posix() for p in pkg_plan.modifications],
                     adopted_renames=[f"{old.as_posix()} -> {new.as_posix()}" for old, new in pkg_plan.renames],
+                    adopted_converged=[p.as_posix() for p in pkg_plan.converged_files],
                     status="SUCCESS",
                 ))
             else:
@@ -1636,7 +1966,7 @@ def run_primitive_adopt_drifts(
             dry_run=True,
         )
 
-    # 3. Execution
+    # 3. Execution (stages converged_files directly and reconciles divergent drifts)
     return execute_adopt_repo(
         workspace_config=workspace_config,
         plan=plan,
@@ -1645,3 +1975,4 @@ def run_primitive_adopt_drifts(
         force=force,
         flags=flags,
     )
+
