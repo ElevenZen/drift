@@ -905,6 +905,9 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_permission_drift_on_templated_file_applies_cleanly(self) -> None:
         """Verifies that a permission-only drift on a templated file adopts cleanly and commits."""
+        if sys.platform == "win32":
+            self.skipTest("POSIX file permissions not applicable on Windows")
+
         pkg = "pkg_template_perm"
         src_pkg = self.src_dir / pkg
         src_pkg.mkdir(parents=True, exist_ok=True)
@@ -935,8 +938,7 @@ class TestAdopt(unittest.TestCase):
         self.assertEqual(resolved.status, "SUCCESS")
 
         # Source template file must now have executable bit set on POSIX systems
-        if sys.platform != "win32":
-            self.assertTrue(bool(src_template.stat().st_mode & 0o111))
+        self.assertTrue(bool(src_template.stat().st_mode & 0o111))
 
         # install/ repo should be committed and clean
         res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)

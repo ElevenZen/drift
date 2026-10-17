@@ -106,6 +106,9 @@ class FileActionType(str, Enum):
     # Workflow Notifications
     INFO_MESSAGE = "INFO_MESSAGE"          # Informational message logged during execution
 
+    def __str__(self) -> str:
+        return self.value
+
 
 RENDER_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
     FileActionType.RENDER_ITEM,

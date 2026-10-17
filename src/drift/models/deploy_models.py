@@ -32,6 +32,9 @@ class NextActionType(str, Enum):
     RESOLVE_GIT = "resolve_git"          # Git repo corrupt/bare or merge conflict
     MANUAL_INSPECTION = "manual_check"   # Unclassified failure requiring manual intervention
 
+    def __str__(self) -> str:
+        return self.value
+
 
 @dataclass
 class DeployOptions(AlwaysTruthy):

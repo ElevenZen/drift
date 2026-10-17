@@ -49,6 +49,9 @@ class RenderBucket(str, Enum):
     HOOKS = "hook_hashes"
     PAYLOAD = "payload_hashes"
 
+    def __str__(self) -> str:
+        return self.value
+
 
 @dataclass
 class RenderLockfile:

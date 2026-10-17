@@ -29,12 +29,18 @@ class AdoptStatus(str, Enum):
     SKIPPED = "SKIPPED"
     FAILED = "FAILED"
 
+    def __str__(self) -> str:
+        return self.value
+
 
 class ItemAdoptOutcome(str, Enum):
     """Outcome of reconciling a single drifted file or directory."""
     ADOPTED = "ADOPTED"
     SKIPPED = "SKIPPED"
     CONFLICT = "CONFLICT"
+
+    def __str__(self) -> str:
+        return self.value
 
     def __bool__(self) -> bool:
         return self == ItemAdoptOutcome.ADOPTED

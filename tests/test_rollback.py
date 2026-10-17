@@ -546,15 +546,14 @@ class TestRollback(unittest.TestCase):
         subprocess.run(["git", "commit", "-m", "commit v1 with extra"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # 2. Simulate uncommitted v2 deployment that modifies file.txt, deletes extra.txt, adds new_dir/added.txt,
-        #    collides with host collide_v2.txt, and fails in post_install hook
+        #    collides with host file collide_v2 (blocking directory collide_v2/nested.txt), and fails in post_install hook
         (self.pkg_a_install / "file.txt").write_text("dirty v2", encoding="utf-8")
         (self.pkg_a_install / "extra.txt").unlink()
         (self.pkg_a_install / "new_dir").mkdir(parents=True, exist_ok=True)
         (self.pkg_a_install / "new_dir" / "added.txt").write_text("added in v2", encoding="utf-8")
-        (self.pkg_a_install / "collide_v2.txt").write_text("pkg collide v2", encoding="utf-8")
-        ext_target = self.system_target_dir / "ext_user_target.txt"
-        ext_target.write_text("user collide v2 on host", encoding="utf-8")
-        (self.system_target_dir / "collide_v2.txt").symlink_to(ext_target)
+        (self.pkg_a_install / "collide_v2").mkdir(parents=True, exist_ok=True)
+        (self.pkg_a_install / "collide_v2" / "nested.txt").write_text("pkg collide v2", encoding="utf-8")
+        (self.system_target_dir / "collide_v2").write_text("user collide v2 on host", encoding="utf-8")
 
         hooks_dir = self.pkg_a_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
         hooks_dir.mkdir(parents=True, exist_ok=True)
@@ -580,8 +579,8 @@ class TestRollback(unittest.TestCase):
         self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "dirty v2")
         self.assertFalse((self.system_target_dir / "extra.txt").exists())
         self.assertTrue((self.system_target_dir / "new_dir" / "added.txt").is_file())
-        self.assertFalse((self.system_target_dir / "collide_v2.txt").is_symlink())
-        self.assertEqual((self.system_target_dir / "collide_v2.txt").read_text(encoding="utf-8"), "pkg collide v2")
+        self.assertTrue((self.system_target_dir / "collide_v2").is_dir())
+        self.assertEqual((self.system_target_dir / "collide_v2" / "nested.txt").read_text(encoding="utf-8"), "pkg collide v2")
         self.assertTrue((pkg_backup_root / "wal" / "actions.json").is_file())
 
         # 3. Execute 3-step rollback
@@ -593,7 +592,8 @@ class TestRollback(unittest.TestCase):
         self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "clean v1")
         self.assertEqual((self.system_target_dir / "extra.txt").read_text(encoding="utf-8"), "extra v1")
         self.assertFalse((self.system_target_dir / "new_dir").exists())
-        self.assertEqual((self.system_target_dir / "collide_v2.txt").read_text(encoding="utf-8"), "user collide v2 on host")
+        self.assertTrue((self.system_target_dir / "collide_v2").is_file())
+        self.assertEqual((self.system_target_dir / "collide_v2").read_text(encoding="utf-8"), "user collide v2 on host")
 
         # Crucial invariant: original user backup in overwritten/file.txt was NEVER overwritten by "dirty v2"!
         self.assertEqual(orig_backup.read_text(encoding="utf-8"), "original user host file v0")

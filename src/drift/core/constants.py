@@ -127,6 +127,9 @@ class PackageStage(str, Enum):
     SOURCE = "source"
     INSTALL = "install"
 
+    def __str__(self) -> str:
+        return self.value
+
     @classmethod
     def from_str(cls, val: Union[str, "PackageStage"]) -> "PackageStage":
         """Parses a stage string (e.g. 'source', 'src', 'install') into a PackageStage member."""
@@ -145,6 +148,9 @@ class LineEnding(str, Enum):
     LF = "lf"
     CRLF = "crlf"
     PRESERVE = "preserve"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class InstallMethod(str, Enum):
@@ -206,6 +212,9 @@ class DirMode(str, Enum):
     NO_DIR = "no-dir"
     ONLY_EMPTY_DIR = "only-empty-dir"
     ALL_DIRS = "all-dirs"
+
+    def __str__(self) -> str:
+        return self.value
 
     @classmethod
     def from_str(cls, val: Union[str, "DirMode"]) -> "DirMode":

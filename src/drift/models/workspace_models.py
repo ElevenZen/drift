@@ -244,6 +244,9 @@ class WorkspaceDiffType(str, Enum):
     SYSTEM = "system"      # Diff B: System -> install/ (Active System Drift)
     PENDING = "pending"    # Diff Δ: render/ -> install/ (Pending Delta)
 
+    def __str__(self) -> str:
+        return self.value
+
 
 @dataclass
 class FileDiffDetail(SerializableModel):
@@ -289,6 +292,9 @@ class ComponentStatus(str, Enum):
     GOOD = "good"
     BROKEN = "broken"
     NOT_FOUND = "not_found"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 @dataclass
@@ -367,6 +373,9 @@ class PackageHealthStatus(str, Enum):
     NO_HOOK = "NO_HOOK"            # Package does not define a health hook (skipped)
     NOT_INSTALLED = "NOT_INSTALLED"# Package is not present in install/ registry
     ERROR = "ERROR"                # Unexpected exception
+
+    def __str__(self) -> str:
+        return self.value
 
 
 @dataclass
