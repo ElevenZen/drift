@@ -980,7 +980,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         # 4. Verify actions.execute_adopt constructs AdoptOptions with no_render and no_reverse_sync
         #    and prints res.format_text(verbose=...) when dry_run=True and not json_mode
         with patch("drift.primitives.adopt_repo.run_primitive_adopt_drifts") as mock_prim:
-            from drift.core.result_models import AdoptResult, AdoptStatus, PackageAdoptResult
+            from drift.models import AdoptResult, AdoptStatus, PackageAdoptResult
             mock_prim.return_value = AdoptResult(
                 command="adopt",
                 status=AdoptStatus.UP_TO_DATE,

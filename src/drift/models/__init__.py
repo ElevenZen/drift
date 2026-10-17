@@ -1,0 +1,156 @@
+"""Drift domain models, options, contexts, plans, status enums, and result containers."""
+
+from ..core.serialization import SerializableModel, serialize_for_json
+from .adopt_models import (
+    AdoptOptions,
+    AdoptPlan,
+    AdoptResult,
+    AdoptStatus,
+    ItemAdoptOutcome,
+    PackageAdoptPlan,
+    PackageAdoptResult,
+    PackageDriftFiles,
+    get_rename_patch_key,
+)
+from .deploy_models import (
+    CompletedStep,
+    DeployFailure,
+    DeployOptions,
+    DeployPreview,
+    DeployResult,
+    NextActionType,
+    PackageDeployPreview,
+    RollbackResult,
+    WorkspaceDeployPreview,
+)
+from .install_models import (
+    InstallOptions,
+    InstallPlan,
+    InstallResult,
+    PackageInstallContext,
+    PackageInstallPlan,
+    PackageInstallResult,
+)
+from .render_models import (
+    PackageRenderResult,
+    RenderOptions,
+    RenderResult,
+)
+from .reverse_sync_models import (
+    PackageReverseSyncPlan,
+    PackageReverseSyncResult,
+    ReverseSyncPlan,
+    ReverseSyncResult,
+)
+from .stage_models import (
+    PackageStagePlan,
+    StageOptions,
+    StagePlan,
+    StageResult,
+)
+from .uninstall_models import (
+    PackageUninstallContext,
+    PackageUninstallPlan,
+    PackageUninstallResult,
+    RestoredBackup,
+    UninstallOptions,
+    UninstallPlan,
+    UninstallResult,
+)
+from .workspace_models import (
+    AddResourcePlan,
+    AddResourceResult,
+    CheckResult,
+    CloneResult,
+    ComponentStatus,
+    DiffResult,
+    FileDiffDetail,
+    GcResult,
+    HealthResult,
+    HookResult,
+    NewPackageResult,
+    PackageDiffDetail,
+    PackageHealthResult,
+    PackageHealthStatus,
+    PackageStatus,
+    RepairCheckDetail,
+    RepairResult,
+    StatusResult,
+    WorkspaceDiffType,
+    WorkspaceHealthReport,
+)
+
+__all__ = [
+    "SerializableModel",
+    "serialize_for_json",
+    # Adopt (Primitive 8)
+    "AdoptStatus",
+    "ItemAdoptOutcome",
+    "get_rename_patch_key",
+    "AdoptOptions",
+    "PackageDriftFiles",
+    "PackageAdoptPlan",
+    "AdoptPlan",
+    "PackageAdoptResult",
+    "AdoptResult",
+    # Reverse-Sync (Primitive 1)
+    "PackageReverseSyncPlan",
+    "ReverseSyncPlan",
+    "PackageReverseSyncResult",
+    "ReverseSyncResult",
+    # Render (Primitive 2)
+    "RenderOptions",
+    "PackageRenderResult",
+    "RenderResult",
+    # Stage (Primitive 4)
+    "StageOptions",
+    "PackageStagePlan",
+    "StagePlan",
+    "StageResult",
+    # Install (Primitive 5)
+    "InstallOptions",
+    "PackageInstallContext",
+    "PackageInstallPlan",
+    "InstallPlan",
+    "PackageInstallResult",
+    "InstallResult",
+    # Uninstall (Primitive 7)
+    "UninstallOptions",
+    "PackageUninstallContext",
+    "PackageUninstallPlan",
+    "UninstallPlan",
+    "RestoredBackup",
+    "PackageUninstallResult",
+    "UninstallResult",
+    # Deploy, Plan & Rollback
+    "NextActionType",
+    "DeployOptions",
+    "CompletedStep",
+    "DeployFailure",
+    "DeployResult",
+    "RollbackResult",
+    "PackageDeployPreview",
+    "WorkspaceDeployPreview",
+    "DeployPreview",
+    # Workspace Primitives & Commands
+    "GcResult",
+    "NewPackageResult",
+    "AddResourcePlan",
+    "AddResourceResult",
+    "PackageStatus",
+    "StatusResult",
+    "WorkspaceDiffType",
+    "FileDiffDetail",
+    "PackageDiffDetail",
+    "DiffResult",
+    "RepairCheckDetail",
+    "RepairResult",
+    "ComponentStatus",
+    "CheckResult",
+    "WorkspaceHealthReport",
+    "PackageHealthStatus",
+    "PackageHealthResult",
+    "HealthResult",
+    "CloneResult",
+    "HookResult",
+]

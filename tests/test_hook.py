@@ -213,7 +213,7 @@ class TestPackageHook(unittest.TestCase):
         from drift.core.constants import ExitCode
         from unittest.mock import patch
         from io import StringIO
-        from drift.core.result_models import HookResult
+        from drift.models import HookResult
 
         stdout_buf = StringIO()
         with patch("sys.stdout", stdout_buf), patch("drift.cli.actions.load_workspace_config_default", return_value=self.workspace_config):

@@ -61,7 +61,7 @@ from ..core.file_action import (
     FileAction,
     execute_delivery_actions,
 )
-from ..core.result_models import (
+from ..models import (
     AddResourceResult,
     AddResourcePlan,
 )

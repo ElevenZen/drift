@@ -54,7 +54,7 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("initial content")
         
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         
         # 1. Render and Commit
         run_primitive_2_render_packages(self.workspace_config)
@@ -63,10 +63,10 @@ class TestDiff(unittest.TestCase):
         # 2. Modify Template
         (pkg_src_dir / "file.txt").write_text("modified content")
         
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
         # 3. Run Diff A
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.TEMPLATE)
             self.assertIn("modified content", stdout.getvalue())
 
     def test_diff_system(self):
@@ -77,10 +77,10 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("content")
         
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
         
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
@@ -93,7 +93,7 @@ class TestDiff(unittest.TestCase):
         
         # 3. Run Diff B
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.SYSTEM)
             self.assertIn("drifted content", stdout.getvalue())
 
     def test_diff_pending(self):
@@ -104,10 +104,10 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("content")
         
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
         
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
@@ -120,7 +120,7 @@ class TestDiff(unittest.TestCase):
         
         # 3. Run Diff Δ
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING)
             self.assertIn("new version content", stdout.getvalue())
 
     def test_diff_managed_config_files(self):
@@ -131,10 +131,10 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
         (pkg_src_dir / "file.txt").write_text("content\n")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
 
         # 1. Full Deploy and commit
         run_primitive_2_render_packages(self.workspace_config)
@@ -148,7 +148,7 @@ class TestDiff(unittest.TestCase):
 
         # 3. Diff A (Template Evolution) should show change in drift_package.toml
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.TEMPLATE)
             out = stdout.getvalue()
             self.assertIn("drift_package.toml", out)
             self.assertIn("install_method", out)
@@ -156,7 +156,7 @@ class TestDiff(unittest.TestCase):
 
         # 4. Diff Δ (Pending Delta) should show change in drift_package.toml
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING)
             out = stdout.getvalue()
             self.assertIn("drift_package.toml", out)
             self.assertIn("install_method", out)
@@ -170,10 +170,10 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
         (pkg_src_dir / "file.txt").write_text("content\n")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
 
         # 1. Full Deploy and commit
         run_primitive_2_render_packages(self.workspace_config)
@@ -188,17 +188,17 @@ class TestDiff(unittest.TestCase):
 
         # 2. Diff Δ should be completely empty
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING)
             out = stdout.getvalue()
             self.assertNotIn("diff --git", out)
 
     def test_diff_enum_types(self):
-        """Verifies run_primitive_15_workspace_diff accepts DiffType enum members."""
-        from drift.core.result_models import DiffType
+        """Verifies run_primitive_15_workspace_diff accepts WorkspaceDiffType enum members."""
+        from drift.models import WorkspaceDiffType
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.TEMPLATE)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.SYSTEM)
 
     def test_invalid_diff_type_casting(self):
         """Verifies invalid diff_type strings fail with ValueError during cast."""
@@ -215,8 +215,8 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("initial content")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
-        from drift.core.result_models import DiffType
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.models import WorkspaceDiffType
 
         # 1. Render and commit
         run_primitive_2_render_packages(self.workspace_config)
@@ -234,7 +234,7 @@ class TestDiff(unittest.TestCase):
         mock_launch.side_effect = side_effect
 
         # 3. Run Diff A with side_by_side=True
-        run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE, side_by_side=True)
+        run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.TEMPLATE, side_by_side=True)
         mock_launch.assert_called_once()
         self.assertEqual(len(captured_pairs), 1)
         left_content, right = captured_pairs[0]
@@ -250,10 +250,10 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("content v1")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
 
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
@@ -266,7 +266,7 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("content v2")
 
         # 3. Run Diff Δ with side_by_side=True
-        run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
+        run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING, side_by_side=True)
         mock_launch.assert_called_once()
         pairs = mock_launch.call_args[0][0]
         self.assertEqual(len(pairs), 1)
@@ -282,10 +282,10 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("content v1")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
 
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
@@ -299,7 +299,7 @@ class TestDiff(unittest.TestCase):
 
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
-                run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
+                run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING, side_by_side=True)
             self.assertIn("Environment variable $VISUAL or $EDITOR is not set", str(ctx.exception))
 
 
@@ -311,10 +311,10 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
         (pkg_src_dir / "file.txt").write_text("v1\n")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
 
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
@@ -335,7 +335,7 @@ class TestDiff(unittest.TestCase):
 
         # 4. Run Diff Δ
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING)
             out = stdout.getvalue()
             self.assertIn("v2", out)
             self.assertNotIn("#file.txt#", out)
@@ -353,10 +353,10 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
         (pkg_src_dir / "file.txt").write_text("v1\n")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
 
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
@@ -373,7 +373,7 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("v2\n")
 
         # 4. Run Diff Δ with side_by_side=True
-        run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
+        run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING, side_by_side=True)
         mock_launch.assert_called_once()
         pairs = mock_launch.call_args[0][0]
         self.assertEqual(len(pairs), 1)
@@ -466,11 +466,11 @@ class TestDiff(unittest.TestCase):
         user_conf_lock.parent.mkdir(parents=True, exist_ok=True)
         user_conf_lock.write_text('{"user_config": 1}\n')
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.constants import DRIFT_INTERNAL_DIR_NAME, RENDER_LOCK_FILE_NAME
-        from drift.core.result_models import DiffType
+        from drift.models import WorkspaceDiffType
 
         # 1. Full Deploy and commit
         run_primitive_2_render_packages(self.workspace_config)
@@ -486,7 +486,7 @@ class TestDiff(unittest.TestCase):
 
         # 3. Diff Δ (Pending Delta) must display user render_lock.json, but NOT .drift/render_lock.json
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING)
             out = stdout.getvalue()
             self.assertIn("custom/render_lock.json", out)
             self.assertIn("user_config", out)
@@ -495,7 +495,7 @@ class TestDiff(unittest.TestCase):
 
         # 4. Diff Δ with stat=True must also display custom/render_lock.json and exclude .drift/render_lock.json
         with io.StringIO() as stdout, patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
-            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, stat=True)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING, stat=True)
             stat_out = stdout.getvalue()
             self.assertIn("custom/render_lock.json", stat_out)
             self.assertNotIn(".drift/render_lock.json", stat_out)

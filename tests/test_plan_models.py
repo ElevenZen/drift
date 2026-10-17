@@ -12,7 +12,7 @@ from drift.core.file_action import (
     is_mutating_action,
     filter_display_actions,
 )
-from drift.core.result_models import (
+from drift.models import (
     PackageRenderResult,
     PackageStagePlan,
     PackageInstallPlan,

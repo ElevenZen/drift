@@ -35,7 +35,7 @@ from drift.config.workspace_config import (
     WorkspaceConfig,
 )
 from drift.config.render_engine_config import RenderEngineRegistry
-from drift.render.render_package import run_primitive_2_render_packages
+from drift.primitives.render_repo import run_primitive_2_render_packages
 
 
 class TestLoadEnvSettingsUnit(unittest.TestCase):

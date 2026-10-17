@@ -49,7 +49,7 @@ from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
 from ..core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, CONFIG_DIR_NAME, FORBIDDEN_PACKAGE_NAMES
 from ..utils.git_utils import commit_repo_changes
 from ..hooks.lifecycle_hooks import HookExecFlags
-from ..core.result_models import GcResult
+from ..models import GcResult
 
 logger = logging.getLogger(__name__)
 

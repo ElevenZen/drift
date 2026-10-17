@@ -1,15 +1,14 @@
-from dataclasses import dataclass, replace
+from dataclasses import replace
 import shlex
 import sys
 import logging
-from pathlib import Path
 from typing import List, Optional, Tuple, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
 from ..utils.git_utils import get_git_status_porcelain, assert_repo_can_commit
 from .reverse_sync import run_primitive_1_reverse_sync
 from .adopt_repo import resolve_and_commit_converged_drifts
-from ..render.render_package import (
+from .render_repo import (
     run_primitive_2_render_packages,
     run_primitive_3_commit_render_repo,
     RenderOptions,
@@ -17,6 +16,7 @@ from ..render.render_package import (
 from .stage_repo import (
     prepare_stage_packages,
     execute_stage_packages,
+    StageOptions,
     StageResult,
     StagePlan,
 )
@@ -32,10 +32,10 @@ from .workspace_gc import run_primitive_9_purge_workspace_garbage
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.exceptions import HookExecutionError, DriftError, is_drift_error, is_logged, mark_logged
 from ..core.constants import STATE_REGISTRY_FILE_NAME, InstallMethod
-from ..core.mixins import AlwaysTruthy
 from ..core.state_registry import load_state_registry
-from ..core.result_models import (
+from ..models import (
     NextActionType,
+    DeployOptions,
     CompletedStep,
     DeployFailure,
     DeployResult,
@@ -44,33 +44,6 @@ from ..core.result_models import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class DeployOptions(AlwaysTruthy):
-    """Execution flags and behavioral options controlling deployment and dry-run planning pipelines.
-
-    Attributes:
-        force: If True, bypasses safeguard checks (e.g. host drift sentinel, midway failed states).
-        reinstall: If True, forces re-execution of delivery actions regardless of delta checks.
-        no_deps: If True, bypasses missing required package dependency assertions.
-        no_hooks: If True, bypasses and disables all package lifecycle hooks.
-        with_hooks: If True, executes pre-flight probes and hooks in isolated scratch sandboxes.
-        no_cache: If True, bypasses render caches and Merkle lockfiles.
-        dry_run: If True, runs planning and simulation pipelines without mutating host or state DB.
-        show_all: If True, instructs formatters to display granular action breakdowns for all packages,
-                  including unchanged packages (which are otherwise collapsed into a single summary line).
-        verbose: If True, includes NO_CHANGE actions (e.g. SKIP_IDENTICAL, INFO_MESSAGE) in output.
-    """
-    force: bool = False
-    reinstall: bool = False
-    no_deps: bool = False
-    no_hooks: bool = False
-    with_hooks: bool = False
-    no_cache: bool = False
-    dry_run: bool = False
-    show_all: bool = False
-    verbose: bool = False
 
 
 def assert_no_midway_deploy_state(
@@ -259,8 +232,7 @@ def prepare_staging_step(
         stage_plan = prepare_stage_packages(
             workspace_config,
             target_pkgs=list(target_pkgs),
-            force=force,
-            no_deps=no_deps,
+            options=StageOptions(force=force, no_deps=no_deps),
         )
     except Exception as e:
         if is_drift_error(e) or is_logged(e):

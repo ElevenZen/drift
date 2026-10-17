@@ -127,7 +127,7 @@ Layer 1: Inspection & Git Patch Primitives
         Resolves physical source template paths using RenderEngineRegistry suffix mapping.
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
-    Layer 0: Adoption Data Structures & Plans (in core/adopt_models.py)
+    Layer 0: Adoption Data Structures & Plans (in models/adopt_models.py)
     Layer 1: Inspection & Git Patch Primitives
     Layer 2: Single-File Reconciliation Actions
     Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
@@ -146,7 +146,7 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..config.render_engine_config import RenderEngineRegistry
 from ..core.constants import DRIFT_IGNORE_FILE_NAME, DRIFT_KEEP_FILE_NAME
-from ..core.adopt_models import (
+from ..models import (
     AdoptStatus,
     ItemAdoptOutcome,
     get_rename_patch_key,
@@ -157,7 +157,7 @@ from ..core.adopt_models import (
     PackageAdoptResult,
     AdoptResult,
 )
-from ..render.render_package import RenderOptions, run_primitive_2_render_packages
+from .render_repo import RenderOptions, run_primitive_2_render_packages
 from .reverse_sync import run_primitive_1_reverse_sync
 from ..utils.config_utils import partition
 from ..utils.git_utils import (

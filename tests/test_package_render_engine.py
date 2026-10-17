@@ -21,7 +21,8 @@ from drift.core.constants import (
 from drift.config.workspace_config import WorkspaceConfig
 from drift.config.package_config import PackageConfig
 from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
-from drift.render.render_package import render_package, run_primitive_2_render_packages
+from drift.primitives.render_repo import run_primitive_2_render_packages
+from drift.render.render_package import render_package
 from drift.primitives.reverse_sync import run_primitive_1_reverse_sync
 from drift.primitives.adopt_repo import resolve_source_file_path, adopt_one_package_drifts, AdoptOptions
 from drift.utils.toml_utils import parse_toml

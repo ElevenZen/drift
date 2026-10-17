@@ -11,7 +11,7 @@ from unittest.mock import patch
 from drift.core.constants import set_test_mode, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
 from drift.core.exceptions import ConfigError
 from drift.config.workspace_config import WorkspaceConfig
-from drift.hooks.workspace_hook import (
+from drift.hooks.workspace_config_hook import (
     WorkspaceHookContext,
     apply_workspace_hook,
     load_workspace_hook_module,

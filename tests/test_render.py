@@ -673,7 +673,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertIn("payload_data", output_text)
 
     def test_render_all_packages(self) -> None:
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.config.workspace_config import WorkspaceConfig
 
         drift_root = self.drift_root
@@ -715,7 +715,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue((drift_root / "render" / "pkg_c" / "file.txt").is_file())
 
     def test_run_primitive_3_commit_render_repo(self) -> None:
-        from drift.render.render_package import run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_3_commit_render_repo
         from drift.config.workspace_config import WorkspaceConfig
         import subprocess
 
@@ -783,7 +783,7 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_and_commit_multiple_packages(self) -> None:
         """Verifies rendering and committing multiple packages specifically."""
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.config.workspace_config import WorkspaceConfig
         import subprocess
 
@@ -835,7 +835,7 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_engine_input_dependency(self) -> None:
         """Verifies that engine input templates are rendered before package rendering."""
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.config.workspace_config import WorkspaceConfig
         from drift.config.render_engine_config import RenderEngineConfig
 
@@ -1035,7 +1035,7 @@ class TestRenderPackage(unittest.TestCase):
         os.environ.pop("PRE_EXISTING_SECRET", None)
 
     def test_run_primitive_2_renders_package_with_secrets(self) -> None:
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.config.workspace_config import WorkspaceConfig
 
         # Setup config
@@ -1123,7 +1123,7 @@ class TestRenderPackage(unittest.TestCase):
             drift_root=self.drift_root,
         )
 
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         run_primitive_2_render_packages(workspace_config, ["pkg_dynamic"])
 
         # Check that the dynamic file was created in src by the hook and then copied/rendered into render
@@ -1164,7 +1164,7 @@ class TestRenderPackage(unittest.TestCase):
             drift_root=self.drift_root,
         )
 
-        from drift.render.render_package import run_primitive_2_render_packages, RenderOptions
+        from drift.primitives.render_repo import run_primitive_2_render_packages, RenderOptions
         from drift.hooks.lifecycle_hooks import HookExecFlags
         res = run_primitive_2_render_packages(
             workspace_config, ["pkg_failing_hook"], options=RenderOptions(flags=HookExecFlags(streaming=False))
@@ -1208,7 +1208,7 @@ class TestRenderPackage(unittest.TestCase):
             encoding="utf-8"
         )
 
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         run_primitive_2_render_packages(workspace_config, ["pkg_env_test"])
 
         rendered_output = self.drift_root / "render" / "pkg_env_test" / "config.json"
@@ -1226,7 +1226,7 @@ class TestRenderPackage(unittest.TestCase):
     def test_primitive_2_partial_failure_proceeds_with_other_packages(self) -> None:
         """Tests that Primitive 2 continues rendering remaining packages when one package fails, and returns FAILED status."""
         from drift.config.workspace_config import WorkspaceConfig
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
 
         workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1789,7 +1789,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_run_primitive_2_render_packages_handles_collision(self) -> None:
         """Verifies that run_primitive_2_render_packages catches RenderCollisionError and reports FAILED."""
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
 
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)

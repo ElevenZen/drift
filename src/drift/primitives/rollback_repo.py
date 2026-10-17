@@ -48,7 +48,7 @@ from typing import List, Optional, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig, PackageSectionConfig
-from ..core.result_models import RollbackResult
+from ..models import RollbackResult
 from ..core.state_registry import load_state_registry, StateRegistry
 from .install_repo import run_primitive_5_install, InstallOptions, run_primitive_6_commit_install_repo
 from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions

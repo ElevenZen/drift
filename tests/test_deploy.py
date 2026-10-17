@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, InstallMethod
-from drift.core.result_models import NextActionType
+from drift.models import NextActionType
 from drift.core.exceptions import HookMissingError, TargetPermissionError
 from drift.config.workspace_config import WorkspaceConfig
 from drift.hooks.lifecycle_hooks import HookExecFlags

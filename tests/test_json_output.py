@@ -9,11 +9,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from drift.cli import main
-from drift.core.result_models import (
+from drift.core.file_action import FileAction, FileActionType
+from drift.models import (
     SerializableModel,
     NextActionType,
-    FileActionType,
-    FileAction,
     PackageInstallPlan,
     PackageInstallResult,
     InstallResult,

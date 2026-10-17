@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
 from ..config.package_config import PackageConfig
 from ..utils.process_utils import run_command
-from ..core.result_models import HookResult
+from ..models import HookResult
 from ..core.constants import (
     DEFAULT_HOOK_COMMON_ENVS,
     DEFAULT_HOOK_NON_INTERACTIVE_ENVS,

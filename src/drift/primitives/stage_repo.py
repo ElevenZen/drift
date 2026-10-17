@@ -6,7 +6,7 @@ Architecture & Call Chain Overview
 
 Pipeline Architecture:
     1. Pre-flight Preparation & Assertion (Read-Only):
-        prepare_stage_packages(workspace_config, target_pkgs, force, no_deps) [Layer 4]
+        prepare_stage_packages(workspace_config, target_pkgs, options) [Layer 4]
             - Package Discovery & Selection (filter_render_packages_by_target)
             - Metadata Resolution (PackageConfig.from_render_dir)
             - Filtering (enable_install predicate)
@@ -17,7 +17,7 @@ Pipeline Architecture:
             - Staging Ordering (resolve_target_package_order)
             - Declarative Plan Compilation (plan_package_stage for each package in action_order)
             - Change Partitioning (partition splits packages_stage_order and unchanged_packages via plan.has_changes)
-            -> Returns StagePlan(pkg_metadata, state_registry, packages_stage_order, package_plans, unchanged_packages)
+            -> Returns StagePlan(pkg_metadata, state_registry, packages_stage_order, package_plans, unchanged_packages, options)
 
     2. Diff Computation & Planning (Read-Only):
         plan_package_stage(pkg, install_base, render_base) [Layer 2]
@@ -35,11 +35,11 @@ Pipeline Architecture:
             * state_registry.set_package_state("staging") & save
             * execute_package_stage for each modified package in packages_stage_order
             * state_registry.set_package_state("staged") & save
-        execute_stage_packages(workspace_config, plan: StagePlan, dry_run=False) [Layer 4]
+        execute_stage_packages(workspace_config, plan: StagePlan) [Layer 4]
             -> Returns StageResult
 
     5. Public Composite Primitive Entry Point:
-        run_primitive_4_stage_render_to_install(workspace_config, target_pkgs, force, no_deps, dry_run=False) [Layer 5]
+        run_primitive_4_stage_render_to_install(workspace_config, target_pkgs, options) [Layer 5]
             = prepare_stage_packages >> execute_stage_packages
 
 -------------------------------------------------------------------------------
@@ -61,8 +61,7 @@ Layers (ordered bottom-up by dependency):
 
 import logging
 from pathlib import Path
-from typing import List, Union, Optional, Sequence, Tuple, Dict, Mapping, Iterable
-from dataclasses import dataclass, field
+from typing import Optional, Sequence, Dict, Mapping
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import (
@@ -78,7 +77,7 @@ from ..core.file_action import (
 from ..core.folder_delivery import (
     plan_actions_from_folder_diff,
 )
-from ..core.result_models import PackageStagePlan, StageResult
+from ..models import PackageStagePlan, StageOptions, StagePlan, StageResult
 from ..utils.config_utils import partition
 from ..utils.process_utils import assert_can_escalate
 from ..core.folder_diff import compare_folders, FolderDiff
@@ -94,22 +93,6 @@ from .package_assertions import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class StagePlan:
-    """Pre-flight validated staging plan containing package configurations, plans, and state registry."""
-    pkg_metadata: Dict[str, PackageConfig]
-    state_registry: StateRegistry
-    packages_stage_order: List[str] = field(default_factory=list)
-    package_plans: Dict[str, PackageStagePlan] = field(default_factory=dict)
-    unchanged_packages: List[str] = field(default_factory=list)
-
-    @property
-    def has_changes(self) -> bool:
-        """Returns True if any package stage plan contains actions."""
-        return bool(self.packages_stage_order)
-
 
 
 # =====================================================================
@@ -249,8 +232,7 @@ def stage_modified_packages(
 def prepare_stage_packages(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
-    force: bool = False,
-    no_deps: bool = False,
+    options: Optional[StageOptions] = None,
 ) -> StagePlan:
     """Discovers, validates, and prepares packages for staging from render/ to install/.
 
@@ -261,13 +243,13 @@ def prepare_stage_packages(
     Args:
         workspace_config: The workspace configuration instance.
         target_pkgs: Specific package name(s) to stage, or empty sequence for all active packages.
-        force: If True, bypasses checks for midway failed package states and uncommitted install modifications.
-        no_deps: If True, bypasses missing required package dependency checks.
+        options: Optional StageOptions controlling force, no_deps, and dry_run behavior.
 
     Returns:
         StagePlan containing validated package metadata map, state registry, packages_stage_order,
-        package_plans, and unchanged_packages.
+        package_plans, unchanged_packages, and stage options.
     """
+    opts = options or StageOptions()
     if isinstance(target_pkgs, str):
         target_pkgs = [target_pkgs]
 
@@ -280,7 +262,7 @@ def prepare_stage_packages(
     active_packages = workspace_config.filter_render_packages_by_target(target_packages=target_pkgs or None)
     if not active_packages:
         logger.info("No active packages selected for staging. Skipping.")
-        return StagePlan(pkg_metadata={}, state_registry=state_registry, packages_stage_order=[])
+        return StagePlan(pkg_metadata={}, state_registry=state_registry, packages_stage_order=[], options=opts)
 
     # 1. Collect: Load metadata for active packages from RENDER directory
     all_metadata: Dict[str, PackageConfig] = {
@@ -295,7 +277,7 @@ def prepare_stage_packages(
     }
     if not pkg_metadata:
         logger.info("No active packages are enabled for installation/deployment. Skipping.")
-        return StagePlan(pkg_metadata={}, state_registry=state_registry, packages_stage_order=[])
+        return StagePlan(pkg_metadata={}, state_registry=state_registry, packages_stage_order=[], options=opts)
 
     # 3. Assert: Verify hook files, transaction state, and install directory cleanliness
     # (full_universe_deps=None skips redundant DAG sort here as resolve_package_install_order validates it below)
@@ -304,7 +286,7 @@ def prepare_stage_packages(
         render_base=render_base,
         install_base=install_base,
         state_registry=state_registry,
-        force=force,
+        force=opts.force,
         full_universe_deps=None,
     )
 
@@ -313,7 +295,7 @@ def prepare_stage_packages(
         target_metadata=pkg_metadata,
         state_registry=state_registry,
         workspace_config=workspace_config,
-        no_deps=(force or no_deps),
+        no_deps=(opts.force or opts.no_deps),
     )
 
     # 5. Compile declarative per-package stage plans
@@ -337,25 +319,25 @@ def prepare_stage_packages(
         packages_stage_order=packages_stage_order,
         package_plans=package_plans,
         unchanged_packages=unchanged_packages,
+        options=opts,
     )
 
 
 def execute_stage_packages(
     workspace_config: WorkspaceConfig,
     plan: StagePlan,
-    dry_run: bool = False,
 ) -> StageResult:
     """Applies pre-compiled stage plans and state transitions from render/ to install/.
 
     Args:
         workspace_config: The workspace configuration instance.
         plan: Pre-flight validated StagePlan containing package metadata, state registry,
-              packages_stage_order, package_plans, and unchanged_packages.
-        dry_run: If True, simulates staging changes without modifying files or state registry.
+              packages_stage_order, package_plans, unchanged_packages, and stage options.
 
     Returns:
         StageResult containing all changed package plans and execution status.
     """
+    dry_run = plan.options.dry_run
     if not plan.pkg_metadata:
         return StageResult(command="stage", status="SUCCESS", packages_changed=[], plans=[], dry_run=dry_run)
 
@@ -402,20 +384,15 @@ def execute_stage_packages(
 def run_primitive_4_stage_render_to_install(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
-    force: bool = False,
-    no_deps: bool = False,
-    dry_run: bool = False,
+    options: Optional[StageOptions] = None,
 ) -> StageResult:
     """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
 
     Args:
         workspace_config: The workspace configuration instance.
         target_pkgs: Specific package name(s) to stage, or empty sequence for all active packages.
-        force: If True, bypasses checks for midway failed package states ('staging' or 'installing')
-            and ignores uncommitted local modifications in the install/ directory.
-            Note: Does NOT bypass 'enable_install = false' package configurations.
-        no_deps: If True, bypasses missing required package dependency checks.
-        dry_run: If True, simulates staging changes without modifying files or state registry.
+        options: Optional StageOptions controlling force, no_deps, and dry_run behavior.
+            Note: force does NOT bypass 'enable_install = false' package configurations.
 
     Returns:
         StageResult containing all changed package plans and execution status.
@@ -423,14 +400,13 @@ def run_primitive_4_stage_render_to_install(
     plan = prepare_stage_packages(
         workspace_config,
         target_pkgs=target_pkgs,
-        force=force,
-        no_deps=no_deps,
+        options=options,
     )
     if not plan.pkg_metadata:
-        return StageResult(command="stage", status="SUCCESS", packages_changed=[], plans=[], dry_run=dry_run)
+        return StageResult(command="stage", status="SUCCESS", packages_changed=[], plans=[], dry_run=plan.options.dry_run)
     return execute_stage_packages(
         workspace_config,
         plan=plan,
-        dry_run=dry_run,
     )
+
 

@@ -397,7 +397,7 @@ class PackageConfigNode(FileNode[Optional[Path]]):
         from ..config.package_config import PackageConfig
         from ..config.package_loader import resolve_and_interpolate_package_config
         from ..core.exceptions import ConfigError
-        from ..hooks.package_hook import apply_package_hook
+        from ..hooks.package_config_hook import apply_package_hook
         from ..utils.toml_utils import parse_toml, merge_toml, dump_toml
         from .render_cache import NodeHashes
         from .render_digester import prune_obsolete_config_files

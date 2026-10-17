@@ -11,13 +11,13 @@ from .lifecycle_hooks import (
     trigger_probe_hook,
     trigger_hook,
 )
-from .workspace_hook import (
+from .workspace_config_hook import (
     WorkspaceHookContext,
     load_workspace_hook_module,
     execute_workspace_hook,
     apply_workspace_hook,
 )
-from .package_hook import (
+from .package_config_hook import (
     PackageHookContext,
     resolve_package_hook_path,
     load_package_hook_module,

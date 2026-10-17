@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
-from ..render.render_package import run_primitive_2_render_packages
+from .render_repo import run_primitive_2_render_packages
 from .reverse_sync import run_primitive_1_reverse_sync
 from ..core.constants import DirMode
 from ..core.folder_diff import compare_folders, FolderDiff
@@ -14,7 +14,7 @@ from ..utils.file_inspect import check_is_trackable
 from ..utils.git_utils import parse_git_status_porcelain, GitStatusChanges
 from ..utils.process_utils import run_command
 from ..core.state_registry import load_state_registry
-from ..core.result_models import PackageStatus, StatusResult
+from ..models import PackageStatus, StatusResult
 
 logger = logging.getLogger(__name__)
 

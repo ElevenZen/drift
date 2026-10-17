@@ -20,7 +20,7 @@ from ..core.constants import (
     PackageStage,
 )
 from ..core.exceptions import ConfigError
-from ..core.result_models import HookResult
+from ..models import HookResult
 
 logger = logging.getLogger(__name__)
 

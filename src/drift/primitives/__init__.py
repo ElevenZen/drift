@@ -3,6 +3,13 @@
 from .reverse_sync import (
     run_primitive_1_reverse_sync,
 )
+from .render_repo import (
+    run_primitive_2_render_packages,
+    run_primitive_3_commit_render_repo,
+    RenderOptions,
+    PackageRenderResult,
+    RenderResult,
+)
 from .package_assertions import (
     assert_packages_hooks_exist,
     assert_install_pkg_dirs_clean,
@@ -20,6 +27,7 @@ from .package_assertions import (
 )
 from .stage_repo import (
     run_primitive_4_stage_render_to_install,
+    StageOptions,
     PackageStagePlan,
     StageResult,
     plan_package_stage,
@@ -124,9 +132,15 @@ from .workspace_init import (
 
 __all__ = [
     "run_primitive_1_reverse_sync",
+    "run_primitive_2_render_packages",
+    "run_primitive_3_commit_render_repo",
+    "RenderOptions",
+    "PackageRenderResult",
+    "RenderResult",
     "run_primitive_4_stage_render_to_install",
     "prepare_stage_packages",
     "execute_stage_packages",
+    "StageOptions",
     "StagePlan",
     "PackageStagePlan",
     "StageResult",

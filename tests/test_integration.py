@@ -54,7 +54,7 @@ class TestIntegration(unittest.TestCase):
     def test_lifecycle_symlink_basic(self):
         """Scenario: Basic symlink deployment, drift detection, and uninstallation."""
         from drift.primitives.new_package import run_primitive_10_create_new_package
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install
         from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
@@ -98,7 +98,7 @@ class TestIntegration(unittest.TestCase):
     def test_lifecycle_copy_with_backup_restore(self):
         """Scenario: Copy deployment overwriting existing system file, then restoring it."""
         from drift.primitives.new_package import run_primitive_10_create_new_package
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install
         from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
@@ -137,7 +137,7 @@ class TestIntegration(unittest.TestCase):
         """Scenario: Symlink install_method is safely demoted to physical copy on Windows when enable_symlink_on_windows is False."""
         from unittest.mock import patch
         from drift.primitives.new_package import run_primitive_10_create_new_package
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install
 
@@ -162,7 +162,7 @@ class TestIntegration(unittest.TestCase):
     def test_orphan_garbage_collection(self):
         """Scenario: Deploying a package, then disabling it and running gc to trigger cleanup."""
         from drift.primitives.new_package import run_primitive_10_create_new_package
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install
         from drift.primitives.workspace_gc import run_primitive_9_purge_workspace_garbage
@@ -210,7 +210,7 @@ class TestIntegration(unittest.TestCase):
     def test_workspace_gc_scopes_commits(self):
         """Scenario: Running GC should only commit purged folders, leaving other modified packages unstaged/uncommitted."""
         from drift.primitives.new_package import run_primitive_10_create_new_package
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.workspace_gc import run_primitive_9_purge_workspace_garbage
         from drift.utils.git_utils import commit_repo_changes
@@ -286,7 +286,7 @@ class TestIntegration(unittest.TestCase):
     def test_template_engine_dependency_chain(self):
         """Scenario: mustache template depends on envsubst-rendered JSON input."""
         import sys
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install
         

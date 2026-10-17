@@ -1,9 +1,9 @@
 """Data models, plans, options, and result containers for drift adoption (Primitive 8).
 
-Extracted into a dedicated module to keep all adopt-related domain structures
-(AdoptOptions, PackageDriftFiles, PackageAdoptPlan, AdoptPlan, AdoptStatus,
-ItemAdoptOutcome, PackageAdoptResult, AdoptResult) co-located without circular
-imports across drift.core, drift.config, and drift.primitives.
+Co-locates all adopt-related domain structures (AdoptStatus, ItemAdoptOutcome,
+get_rename_patch_key, AdoptOptions, PackageDriftFiles, PackageAdoptPlan,
+AdoptPlan, PackageAdoptResult, AdoptResult) without circular imports across
+drift.core, drift.config, and drift.primitives.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from .mixins import AlwaysTruthy
-from .serialization import SerializableModel
+from ..core.mixins import AlwaysTruthy
+from ..core.serialization import SerializableModel
 
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderEngineRegistry
@@ -266,7 +266,7 @@ class PackageAdoptResult(SerializableModel):
     adopted_converged: List[str] = field(default_factory=list)
     skipped_files: List[str] = field(default_factory=list)
     conflicted_files: List[str] = field(default_factory=list)
-    status: AdoptStatus = AdoptStatus.SUCCESS
+    status: str = AdoptStatus.SUCCESS
     error: Optional[str] = None
     plan: PackageAdoptPlan = field(default_factory=PackageAdoptPlan, repr=False, compare=False)
 

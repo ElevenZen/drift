@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Union
 from ..config.workspace_config import WorkspaceConfig
-from ..core.result_models import NewPackageResult
+from ..models import NewPackageResult
 from ..core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,

@@ -49,10 +49,9 @@ class TestStatus(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("content")
         
         # 1. Initial render, stage, apply
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
-        from drift.render.render_package import run_primitive_3_commit_render_repo
         
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
@@ -78,7 +77,7 @@ class TestStatus(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("original content")
         
         # Initial state setup
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         
@@ -123,8 +122,8 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(len(results.packages), 1)
 
         from drift.primitives.workspace_diff import run_primitive_15_workspace_diff
-        from drift.core.result_models import DiffType
-        diff_res = run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, quiet=True)
+        from drift.models import WorkspaceDiffType
+        diff_res = run_primitive_15_workspace_diff(self.workspace_config, diff_type=WorkspaceDiffType.PENDING, quiet=True)
         self.assertEqual(diff_res.command, "diff")
         self.assertEqual(len(diff_res.packages), 1)
         self.assertTrue(diff_res.packages[0].has_changes)
@@ -137,7 +136,7 @@ class TestStatus(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
         (pkg_src_dir / "file.txt").write_text("content\n")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
 
@@ -171,7 +170,7 @@ class TestStatus(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("content")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
 
@@ -221,7 +220,7 @@ class TestStatus(unittest.TestCase):
 
     def test_status_empty(self):
         """Verifies empty workspace status format."""
-        from drift.core.result_models import StatusResult
+        from drift.models import StatusResult
         empty_res = StatusResult(packages=[])
         self.assertEqual(len(empty_res), 0)
         self.assertEqual(empty_res.format_text(), "")
@@ -249,7 +248,7 @@ class TestStatus(unittest.TestCase):
     def test_pending_delta_status_filters_out_concrete_directories(self) -> None:
         """Verifies pending delta status counts only file changes and ignores intermediate directories."""
         from drift.primitives.workspace_status import calculate_pending_delta
-        from drift.core.result_models import PackageStatus
+        from drift.models import PackageStatus
 
         pkg = "pkg_a"
         render_pkg = self.render_dir / pkg
@@ -309,7 +308,7 @@ class TestStatus(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("content")
 
-        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.constants import RENDER_LOCK_FILE_NAME, DRIFT_INTERNAL_DIR_NAME

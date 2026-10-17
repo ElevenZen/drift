@@ -433,7 +433,7 @@ name = "pkg_alias"
             self.assertEqual(os.environ["drift_package_src_dir"], pkg_src.as_posix())
 
         # Test PackageHookContext facts
-        from drift.hooks.package_hook import PackageHookContext
+        from drift.hooks.package_config_hook import PackageHookContext
         ctx = PackageHookContext(
             config={},
             package_name="pkg_alias",

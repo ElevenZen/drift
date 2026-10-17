@@ -62,15 +62,11 @@ Layers (ordered bottom-up by dependency):
 from __future__ import annotations
 
 import logging
-import shutil
 from collections import Counter
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..config.package_config import PackageConfig, PackageSectionConfig
-from ..config.package_hooks import PackageHooks
 from ..config.workspace_config import WorkspaceConfig
 from ..core.constants import (
     UNINSTALL_HOOK_NAMES,
@@ -88,9 +84,16 @@ from ..core.folder_delivery import (
     plan_file_removals,
     plan_symlink_conversions,
 )
-from ..core.result_models import PackageUninstallPlan, PackageUninstallResult, RestoredBackup, UninstallResult
+from ..models import (
+    UninstallOptions,
+    PackageUninstallContext,
+    PackageUninstallPlan,
+    UninstallPlan,
+    PackageUninstallResult,
+    RestoredBackup,
+    UninstallResult,
+)
 from ..core.state_registry import PackageState, StateRegistry, load_state_registry
-from ..core.mixins import AlwaysTruthy
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..utils.config_utils import partition
 from ..utils.file_ops import prune_empty_parents, remove_tree
@@ -103,111 +106,6 @@ from .package_assertions import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# =====================================================================
-# Uninstall Data Structures & Contexts
-# =====================================================================
-# Uninstallation Data Structures
-# =====================================================================
-
-@dataclass
-class UninstallOptions(AlwaysTruthy):
-    """Configuration options controlling package uninstallation behavior."""
-    force: bool = False
-    dry_run: bool = False
-    detach: bool = False
-    no_deps: bool = False
-    flags: Optional[HookExecFlags] = None
-
-    def get_hook_flags(self, settings=None) -> HookExecFlags:
-        """Derives HookExecFlags, assigning dry_run from UninstallOptions to HookExecFlags."""
-        return HookExecFlags.resolve(
-            self.flags,
-            settings=settings,
-            override=HookExecFlags(dry_run=self.dry_run),
-        )
-
-
-@dataclass(frozen=True)
-class PackageUninstallContext:
-    """Encapsulates resolved package metadata and filesystem paths for uninstallation operations."""
-    pkg_name: str
-    target_dir: Path
-    install_method: InstallMethod
-    deployed_files: List[Path]
-    sudo: bool
-    install_pkg_dir: Path
-    backup_pkg_dir: Path
-    drift_root: Path
-    hooks: Optional[PackageHooks] = None
-    detach: bool = False
-    is_missing_install_dir: bool = False
-
-    @property
-    def file_action_context(self) -> FileActionExecutionContext:
-        return FileActionExecutionContext(
-            sudo=self.sudo,
-        )
-
-    @contextmanager
-    def package_envs(self) -> Iterator[None]:
-        """Context manager to activate package-specific environment variables for hooks."""
-        if self.hooks and getattr(self.hooks, "_package_config", None):
-            assert self.hooks._package_config is not None, "PackageHooks missing _package_config for envs"
-            with self.hooks._package_config.package_envs():
-                yield
-        else:
-            from ..utils.env_utils import env_scope
-            with env_scope({"drift_package_name": self.pkg_name}):
-                yield
-
-    @classmethod
-    def from_package_state(
-        cls,
-        workspace_config: WorkspaceConfig,
-        pkg: str,
-        pkg_state: PackageState,
-        pkg_config: Optional[PackageConfig] = None,
-        detach: bool = False,
-    ) -> "PackageUninstallContext":
-        install_pkg_dir = workspace_config.install_path / pkg
-        is_missing = not install_pkg_dir.is_dir()
-        target_dir = (
-            pkg_state.target_directory
-            if pkg_state.target_directory is not None
-            else (pkg_config.get_target_directory(workspace_config) if pkg_config else Path("/"))
-        )
-        # Sudo resolution: prefer state registry (authoritative historical deployment), fallback to pkg_config
-        sudo = pkg_state.sudo if pkg_state.sudo else (pkg_config.package.sudo if pkg_config else False)
-        install_method = pkg_state.install_method or InstallMethod.DEFAULT
-        hooks = pkg_config.hooks if pkg_config and not is_missing else None
-
-        return cls(
-            pkg_name=pkg,
-            target_dir=target_dir,
-            install_method=install_method,
-            deployed_files=list(pkg_state.deployed_files),
-            sudo=sudo,
-            install_pkg_dir=install_pkg_dir,
-            backup_pkg_dir=workspace_config.backup_path / pkg,
-            drift_root=workspace_config.drift_root,
-            hooks=hooks,
-            detach=detach,
-            is_missing_install_dir=is_missing,
-        )
-
-
-@dataclass(frozen=True)
-class UninstallPlan:
-    """Pre-flight validated uninstallation plan containing package configurations and state registry."""
-    pkg_config_map: Dict[str, PackageConfig]
-    packages_to_uninstall: Dict[str, PackageState]
-    state_registry: StateRegistry
-    ordered_packages: List[str]
-    options: UninstallOptions
-    contexts: Dict[str, PackageUninstallContext] = field(default_factory=dict)
-    package_plans: Dict[str, PackageUninstallPlan] = field(default_factory=dict)
 
 
 # =====================================================================

@@ -45,7 +45,7 @@ from ..core.constants import (
 )
 from ..core.exceptions import ConfigError, HookMissingError
 from ..core.mixins import AlwaysTruthy
-from ..core.result_models import HookResult
+from ..models import HookResult
 from ..utils.path_utils import check_is_partially_anchored_path, is_relative_to
 from ..utils.config_utils import get_first_from, validate_known_keys
 

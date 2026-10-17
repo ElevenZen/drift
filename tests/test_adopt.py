@@ -2530,7 +2530,7 @@ render_command = "bash -c 'cat %i %s'"
         """Verifies the 5-state AdoptStatus model (UP_TO_DATE, SUCCESS, PARTIAL, SKIPPED, FAILED),
         separation of conflicted_files vs skipped_files, and pure format_text() methods across plans and results.
         """
-        from drift.core.result_models import AdoptResult, AdoptStatus, PackageAdoptResult
+        from drift.models import AdoptResult, AdoptStatus, PackageAdoptResult
         from drift.primitives.adopt_repo import ItemAdoptOutcome
 
         # 0. Verify ItemAdoptOutcome truthiness
@@ -2641,17 +2641,25 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIn("Simulated error", res_failed.format_text())
 
     def test_adopt_models_reexports_and_non_optional_plan(self) -> None:
-        """Verifies all adopt models reside in drift.core.adopt_models, are re-exported in result_models,
-        have a non-Optional PackageAdoptResult.plan, and cause zero circular imports across import orders.
+        """Verifies all domain models reside in drift.models.*, are re-exported in drift.models,
+        primitives, render, and drift, have a non-Optional PackageAdoptResult.plan,
+        and cause zero circular imports across import orders.
         """
         import drift
-        import drift.core as core_pkg
-        import drift.core.adopt_models as adopt_models
-        import drift.core.result_models as result_models
+        import drift.models as models_pkg
+        import drift.models.adopt_models as adopt_models
+        import drift.models.deploy_models as deploy_models
+        import drift.models.install_models as install_models
+        import drift.models.render_models as render_models
+        import drift.models.reverse_sync_models as reverse_sync_models
+        import drift.models.stage_models as stage_models
+        import drift.models.uninstall_models as uninstall_models
+        import drift.models.workspace_models as workspace_models
         import drift.primitives as primitives_pkg
         import drift.primitives.adopt_repo as adopt_repo
+        import drift.render as render_pkg
 
-        model_names = (
+        adopt_model_names = (
             "AdoptStatus",
             "ItemAdoptOutcome",
             "get_rename_patch_key",
@@ -2662,14 +2670,35 @@ render_command = "bash -c 'cat %i %s'"
             "PackageAdoptResult",
             "AdoptResult",
         )
-        for name in model_names:
+        for name in adopt_model_names:
             canonical = getattr(adopt_models, name)
-            self.assertIs(getattr(result_models, name), canonical)
-            self.assertIs(getattr(core_pkg, name), canonical)
+            self.assertIs(getattr(models_pkg, name), canonical)
             self.assertIs(getattr(adopt_repo, name), canonical)
             self.assertIs(getattr(drift, name), canonical)
         for name in ("ItemAdoptOutcome", "AdoptOptions", "PackageDriftFiles", "PackageAdoptPlan", "AdoptPlan"):
             self.assertIs(getattr(primitives_pkg, name), getattr(adopt_models, name))
+
+        # Verify all other domain model modules are re-exported identically across facades
+        submodule_checks = (
+            (reverse_sync_models, ("PackageReverseSyncPlan", "ReverseSyncPlan", "PackageReverseSyncResult", "ReverseSyncResult")),
+            (render_models, ("RenderOptions", "PackageRenderResult", "RenderResult")),
+            (stage_models, ("StageOptions", "PackageStagePlan", "StagePlan", "StageResult")),
+            (install_models, ("InstallOptions", "PackageInstallContext", "PackageInstallPlan", "InstallPlan", "PackageInstallResult", "InstallResult")),
+            (uninstall_models, ("UninstallOptions", "PackageUninstallContext", "PackageUninstallPlan", "UninstallPlan", "RestoredBackup", "PackageUninstallResult", "UninstallResult")),
+            (deploy_models, ("NextActionType", "DeployOptions", "CompletedStep", "DeployFailure", "DeployResult", "RollbackResult", "PackageDeployPreview", "WorkspaceDeployPreview", "DeployPreview")),
+            (workspace_models, ("WorkspaceDiffType", "GcResult", "NewPackageResult", "AddResourcePlan", "AddResourceResult", "PackageStatus", "StatusResult", "FileDiffDetail", "PackageDiffDetail", "DiffResult", "RepairCheckDetail", "RepairResult", "ComponentStatus", "CheckResult", "WorkspaceHealthReport", "PackageHealthStatus", "PackageHealthResult", "HealthResult", "CloneResult", "HookResult")),
+        )
+        for mod, names in submodule_checks:
+            for name in names:
+                canonical = getattr(mod, name)
+                self.assertIs(getattr(models_pkg, name), canonical)
+                self.assertIs(getattr(drift, name), canonical)
+        self.assertIs(getattr(render_pkg, "RenderOptions"), render_models.RenderOptions)
+        import drift.primitives.render_repo as render_repo
+        self.assertIs(getattr(primitives_pkg, "run_primitive_2_render_packages"), render_repo.run_primitive_2_render_packages)
+        self.assertIs(getattr(primitives_pkg, "run_primitive_3_commit_render_repo"), render_repo.run_primitive_3_commit_render_repo)
+        self.assertIs(getattr(drift, "run_primitive_2_render_packages"), render_repo.run_primitive_2_render_packages)
+        self.assertIs(getattr(drift, "run_primitive_3_commit_render_repo"), render_repo.run_primitive_3_commit_render_repo)
 
         # Verify PackageAdoptResult.plan is non-Optional and syncs package name bidirectionally
         res_from_pkg = adopt_models.PackageAdoptResult(package="pkg_alpha")
@@ -2683,10 +2712,10 @@ render_command = "bash -c 'cat %i %s'"
 
         # Verify zero circular imports when importing modules in various orders in fresh Python processes
         for import_stmt in (
-            "import drift.config; import drift.core.result_models; import drift.primitives.adopt_repo",
-            "import drift.core.result_models; import drift.config; import drift.primitives.adopt_repo",
-            "import drift.core.adopt_models; import drift.config; import drift.core.result_models",
-            "import drift.primitives.adopt_repo; import drift.core.result_models; import drift.config",
+            "import drift.models; import drift.config; import drift.primitives.adopt_repo",
+            "import drift.config; import drift.models; import drift.primitives.adopt_repo",
+            "import drift.models.adopt_models; import drift.models.install_models; import drift.models.render_models; import drift.config",
+            "import drift.primitives.adopt_repo; import drift.models; import drift.config",
         ):
             proc = subprocess.run(
                 [sys.executable, "-c", f"import sys; sys.path.insert(0, 'src'); {import_stmt}"],

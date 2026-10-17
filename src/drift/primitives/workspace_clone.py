@@ -18,7 +18,7 @@ from ..core.constants import (
     DRIFT_IGNORE_FILE_NAME,
     get_default_drift_ignore_content,
 )
-from ..core.result_models import CloneResult
+from ..models import CloneResult
 
 logger = logging.getLogger(__name__)
 

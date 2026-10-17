@@ -138,7 +138,7 @@ Managed within [`enter_plan_sandbox`](../src/drift/primitives/plan_repo.py):
 ### 3.3 Phase 2: Sandbox Staging Planning
 Executed in [`execute_sandbox_stage_phase`](../src/drift/primitives/plan_repo.py):
 * Diffs `sandbox_render/<pkg>` directly against canonical `install/<pkg>`.
-* Compiles [`PackageStagePlan`](../src/drift/core/result_models.py) using the declarative delivery engine without touching the filesystem.
+* Compiles [`PackageStagePlan`](../src/drift/models/stage_models.py) using the declarative delivery engine without touching the filesystem.
 * Rebases action paths so source paths reference canonical `render/` and destination paths reference canonical `install/`.
 * Isolates per-package staging exceptions into `stage_errors[pkg]`.
 
@@ -193,7 +193,7 @@ When errors occur during planning, Drift guarantees that the user is explicitly 
 
 ## 5. Presentation & Formatting Engine
 
-[`WorkspaceDeployPreview`](../src/drift/core/result_models.py) formats simulation results for terminal viewing and automation consumption:
+[`WorkspaceDeployPreview`](../src/drift/models/deploy_models.py) formats simulation results for terminal viewing and automation consumption:
 
 ### 5.1 Terminal Output Conventions
 * **Summary Banner**:

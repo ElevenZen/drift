@@ -277,7 +277,7 @@ def _execute_load_package_config_dag(
 def _load_package_config_static_fallback(package_dir: Path) -> PackageConfig:
     """Static file parsing fallback without workspace context (used in isolated unit tests)."""
     pkg_name = package_dir.name
-    from ..hooks.package_hook import apply_package_hook
+    from ..hooks.package_config_hook import apply_package_hook
 
     candidate_rendered_names = [PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_LOCAL_FILE_NAME]
     candidate_source_files: List[Path] = [

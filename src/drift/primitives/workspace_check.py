@@ -55,10 +55,8 @@ Layers (ordered bottom-up by dependency):
 """
 
 import logging
-from enum import Enum
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Iterable
+from typing import List
 
 from ..config.workspace_config import WorkspaceConfig
 
@@ -85,87 +83,13 @@ from ..utils.git_utils import (
     check_repo_git_user_synced,
 )
 
+from ..models import (
+    ComponentStatus,
+    CheckResult,
+    WorkspaceHealthReport,
+)
+
 logger = logging.getLogger(__name__)
-
-
-# =====================================================================
-# Data Models
-# =====================================================================
-
-class ComponentStatus(str, Enum):
-    GOOD = "good"
-    BROKEN = "broken"
-    NOT_FOUND = "not_found"
-
-
-@dataclass
-class CheckResult:
-    name: str
-    status: ComponentStatus
-    details: str
-    fix_hint: Optional[str] = None
-
-
-@dataclass
-class WorkspaceHealthReport:
-    overall_status: ComponentStatus
-    checks: List[CheckResult] = field(default_factory=list)
-
-    def is_healthy(self) -> bool:
-        return self.overall_status == ComponentStatus.GOOD
-
-    def is_uninitialized(self) -> bool:
-        return self.overall_status == ComponentStatus.NOT_FOUND
-
-    def is_broken(self) -> bool:
-        return self.overall_status == ComponentStatus.BROKEN
-
-    def __bool__(self) -> bool:
-        """For backward compatibility, returns True only if overall_status is GOOD."""
-        return self.is_healthy()
-
-    def get_check(self, name: str) -> Optional[CheckResult]:
-        for c in self.checks:
-            if c.name == name:
-                return c
-        return None
-
-    def format_diagnostic_summary(self) -> str:
-        lines = []
-        for c in self.checks:
-            if c.status == ComponentStatus.GOOD:
-                icon = "✅"
-            elif c.status == ComponentStatus.BROKEN:
-                icon = "❌"
-            else:
-                icon = "⚪"
-            hint_str = f" (Hint: {c.fix_hint})" if c.fix_hint and c.status != ComponentStatus.GOOD else ""
-            lines.append(f"   {icon} {c.name}: [{c.status.value.upper()}] {c.details}{hint_str}")
-        return "\n".join(lines)
-
-    def to_repair_result(
-        self,
-        actions: Iterable[str] = (),
-        dry_run: bool = False
-    ):
-        """Converts this health report and any performed repair actions into a RepairResult object."""
-        from ..core.result_models import RepairResult, RepairCheckDetail
-
-        checks_list = [
-            RepairCheckDetail(
-                name=c.name,
-                status=c.status.value,
-                details=c.details,
-                fix_hint=c.fix_hint
-            )
-            for c in self.checks
-        ]
-        return RepairResult(
-            overall_health=self.overall_status.value,
-            dry_run=dry_run,
-            actions_performed=list(actions),
-            checks=checks_list
-        )
 
 
 # =====================================================================

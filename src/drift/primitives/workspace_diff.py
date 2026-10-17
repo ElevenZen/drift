@@ -74,7 +74,7 @@ from typing import List, Tuple, Sequence, Iterable, Optional
 
 from ..core.constants import DirMode
 from ..config.workspace_config import WorkspaceConfig
-from ..core.result_models import DiffType, DiffResult, PackageDiffDetail, FileDiffDetail
+from ..models import WorkspaceDiffType, DiffResult, PackageDiffDetail, FileDiffDetail
 from ..core.folder_diff import compare_folders
 from ..utils.file_inspect import check_is_trackable
 from ..utils.git_utils import parse_git_status_porcelain, unquote_git_path
@@ -520,18 +520,18 @@ def run_pending_delta_diff(
 def run_side_by_side_diff(
     workspace_config: WorkspaceConfig,
     packages: Sequence[str],
-    diff_type: DiffType,
+    diff_type: WorkspaceDiffType,
 ) -> None:
     """Collects file pairs and launches side-by-side visual diff editor."""
     with tempfile.TemporaryDirectory() as td:
         temp_dir = Path(td)
-        if diff_type == DiffType.TEMPLATE:
+        if diff_type == WorkspaceDiffType.TEMPLATE:
             logger.info("🔍 [Diff A] Visualizing Template Evolution (src/ -> render/)...")
             pairs = collect_repo_diff_pairs(workspace_config.render_path, packages, temp_dir)
-        elif diff_type == DiffType.SYSTEM:
+        elif diff_type == WorkspaceDiffType.SYSTEM:
             logger.info("🔍 [Diff B] Visualizing System Drift (System -> install/)...")
             pairs = collect_repo_diff_pairs(workspace_config.install_path, packages, temp_dir)
-        elif diff_type == DiffType.PENDING:
+        elif diff_type == WorkspaceDiffType.PENDING:
             logger.info("🔍 [Diff Δ] Visualizing Pending Delta (render/ -> install/)...")
             pairs = collect_pending_delta_pairs(workspace_config, packages, temp_dir)
         else:
@@ -545,7 +545,7 @@ def run_side_by_side_diff(
 def run_terminal_diff(
     workspace_config: WorkspaceConfig,
     packages: Sequence[str],
-    diff_type: DiffType,
+    diff_type: WorkspaceDiffType,
     stat: bool = False,
 ) -> None:
     """Dispatches standard terminal git diffs for Diff A, B, or Δ."""
@@ -554,15 +554,15 @@ def run_terminal_diff(
         git_options.append("--stat")
 
     had_output = False
-    if diff_type == DiffType.TEMPLATE:
+    if diff_type == WorkspaceDiffType.TEMPLATE:
         logger.info("🔍 [Diff A] Visualizing Template Evolution (src/ -> render/)...")
         had_output = run_repo_diff(workspace_config.render_path, packages, git_options)
 
-    elif diff_type == DiffType.SYSTEM:
+    elif diff_type == WorkspaceDiffType.SYSTEM:
         logger.info("🔍 [Diff B] Visualizing System Drift (System -> install/)...")
         had_output = run_repo_diff(workspace_config.install_path, packages, git_options)
 
-    elif diff_type == DiffType.PENDING:
+    elif diff_type == WorkspaceDiffType.PENDING:
         logger.info("🔍 [Diff Δ] Visualizing Pending Delta (render/ -> install/)...")
         had_output = run_pending_delta_diff(workspace_config, packages, git_options)
 
@@ -577,7 +577,7 @@ def run_terminal_diff(
 def run_primitive_15_workspace_diff(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
-    diff_type: DiffType = DiffType.PENDING,
+    diff_type: WorkspaceDiffType = WorkspaceDiffType.PENDING,
     side_by_side: bool = False,
     stat: bool = False,
     quiet: bool = False
@@ -603,13 +603,13 @@ def run_primitive_15_workspace_diff(
 
     # Update repositories to reflect latest state
     from .reverse_sync import run_primitive_1_reverse_sync
-    from ..render.render_package import run_primitive_2_render_packages
+    from .render_repo import run_primitive_2_render_packages
 
-    if diff_type in (DiffType.SYSTEM, DiffType.PENDING):
+    if diff_type in (WorkspaceDiffType.SYSTEM, WorkspaceDiffType.PENDING):
         syncable = [pkg for pkg in packages if (workspace_config.install_path / pkg).is_dir()]
         if syncable:
             run_primitive_1_reverse_sync(workspace_config, package_names=syncable)
-    if diff_type in (DiffType.TEMPLATE, DiffType.PENDING):
+    if diff_type in (WorkspaceDiffType.TEMPLATE, WorkspaceDiffType.PENDING):
         renderable = [pkg for pkg in packages if (workspace_config.source_path / pkg).is_dir()]
         if renderable:
             run_primitive_2_render_packages(workspace_config, target_pkgs=renderable)
@@ -617,11 +617,11 @@ def run_primitive_15_workspace_diff(
     # Collect structured diff details
     package_details: List[PackageDiffDetail] = []
     for pkg in packages:
-        if diff_type == DiffType.TEMPLATE:
+        if diff_type == WorkspaceDiffType.TEMPLATE:
             files = collect_git_repo_diff_details(workspace_config.render_path, pkg)
-        elif diff_type == DiffType.SYSTEM:
+        elif diff_type == WorkspaceDiffType.SYSTEM:
             files = collect_git_repo_diff_details(workspace_config.install_path, pkg)
-        elif diff_type == DiffType.PENDING:
+        elif diff_type == WorkspaceDiffType.PENDING:
             files = collect_pending_folder_diff_details(workspace_config, pkg)
         else:
             files = []

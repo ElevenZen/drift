@@ -15,7 +15,7 @@ from drift.primitives.workspace_clone import (
     run_primitive_clone,
 )
 from drift.primitives.workspace_init import init_drift_workspace
-from drift.core.result_models import CloneResult
+from drift.models import CloneResult
 from drift.cli.argparse_backend import run_argparse_cli
 
 

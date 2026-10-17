@@ -10,7 +10,7 @@ from ..config.package_config import PackageConfig
 from ..core.state_registry import load_state_registry
 from ..core.constants import PACKAGE_CONFIG_FILE_NAME, PackageStage
 from ..core.exceptions import HookMissingError
-from ..core.result_models import (
+from ..models import (
     PackageHealthStatus,
     PackageHealthResult,
     HealthResult,

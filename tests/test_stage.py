@@ -29,6 +29,7 @@ from drift.config.package_config import (
 from drift.primitives.package_assertions import assert_install_pkg_dirs_clean
 from drift.primitives.stage_repo import (
     run_primitive_4_stage_render_to_install,
+    StageOptions,
     PackageStagePlan,
     plan_package_stage,
     execute_package_stage,
@@ -234,7 +235,9 @@ class TestStageRepo(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
 
         # Force should also not stage a package whose enable_install is False
-        res_force = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b", force=True)
+        res_force = run_primitive_4_stage_render_to_install(
+            self.workspace_config, "pkg_b", options=StageOptions(force=True)
+        )
         self.assertEqual(len(res_force), 0)
         self.assertFalse(res_force.has_changes)
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
@@ -261,7 +264,9 @@ class TestStageRepo(unittest.TestCase):
         self.assertFalse(plan_disabled.has_changes)
 
         # 3. Invariant: --force NEVER bypasses enable_install = False
-        plan_forced = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"], force=True)
+        plan_forced = prepare_stage_packages(
+            self.workspace_config, target_pkgs=["pkg_b"], options=StageOptions(force=True)
+        )
         self.assertEqual(plan_forced.pkg_metadata, {})
         self.assertEqual(plan_forced.packages_stage_order, [])
         self.assertFalse(plan_forced.has_changes)
@@ -609,11 +614,15 @@ class TestStageRepo(unittest.TestCase):
 
         # Now, staging should raise RuntimeError because of uncommitted modifications
         with self.assertRaises(RuntimeError) as cm:
-            run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a", force=False)
+            run_primitive_4_stage_render_to_install(
+                self.workspace_config, "pkg_a", options=StageOptions(force=False)
+            )
         self.assertIn("has uncommitted local modifications", str(cm.exception))
 
         # Staging with force=True should bypass the check and succeed
-        changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a", force=True)
+        changes = run_primitive_4_stage_render_to_install(
+            self.workspace_config, "pkg_a", options=StageOptions(force=True)
+        )
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_a"].package, "pkg_a")
         self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].updated if a.dst_path is not None], [Path("file1.txt")])
@@ -637,7 +646,9 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn("'pkg_a' (staging)", str(ctx.exception))
 
         # Attempt with force=True - should proceed (and succeed here)
-        run_primitive_4_stage_render_to_install(self.workspace_config, [pkg], force=True)
+        run_primitive_4_stage_render_to_install(
+            self.workspace_config, [pkg], options=StageOptions(force=True)
+        )
         
         # Verify state is 'staged' upon success
         registry = load_state_registry(state_file)
@@ -945,7 +956,7 @@ class TestStageRepo(unittest.TestCase):
 
     def test_package_stage_plan_properties(self) -> None:
         """Verifies PackageStagePlan properties and helper methods."""
-        from drift.core.result_models import PackageStagePlan
+        from drift.models import PackageStagePlan
         from drift.core.file_action import FileAction, FileActionType
 
         actions = [
@@ -1630,11 +1641,14 @@ class TestStageDependencies(unittest.TestCase):
         file_path = self.render_dir / pkg_name / "dry_run_test.txt"
         file_path.write_text("hello dry run stage", encoding="utf-8")
 
-        plan = prepare_stage_packages(self.workspace_config, target_pkgs=[pkg_name])
+        plan = prepare_stage_packages(
+            self.workspace_config,
+            target_pkgs=[pkg_name],
+            options=StageOptions(dry_run=True),
+        )
         res = execute_stage_packages(
             self.workspace_config,
             plan=plan,
-            dry_run=True,
         )
 
         self.assertTrue(res.dry_run)
@@ -1664,7 +1678,7 @@ class TestStageDependencies(unittest.TestCase):
         res = run_primitive_4_stage_render_to_install(
             self.workspace_config,
             target_pkgs=[pkg_name],
-            dry_run=True,
+            options=StageOptions(dry_run=True),
         )
 
         self.assertTrue(res.dry_run)

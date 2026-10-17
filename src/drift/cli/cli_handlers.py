@@ -28,7 +28,7 @@ from .actions import (
     execute_complete,
     execute_install_stub,
 )
-from ..core.result_models import DiffType
+from ..models import WorkspaceDiffType
 from ..primitives.deploy_repo import DeployOptions
 from ..utils.git_utils import get_drift_root
 from .error_boundary import cli_error_boundary
@@ -355,11 +355,11 @@ def handle_diff(
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        diff_type = DiffType.PENDING
+        diff_type = WorkspaceDiffType.PENDING
         if template:
-            diff_type = DiffType.TEMPLATE
+            diff_type = WorkspaceDiffType.TEMPLATE
         elif system:
-            diff_type = DiffType.SYSTEM
+            diff_type = WorkspaceDiffType.SYSTEM
         execute_diff(drift_root, pkgs, diff_type=diff_type, side_by_side=side_by_side, stat=stat, json_mode=cli_ctx.json_mode)
 
 

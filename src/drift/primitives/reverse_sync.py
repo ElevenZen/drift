@@ -55,7 +55,7 @@ from ..core.folder_delivery import (
     DeliveryInspectionContext,
     plan_folder_delivery,
 )
-from ..core.result_models import (
+from ..models import (
     PackageReverseSyncPlan,
     ReverseSyncPlan,
     PackageReverseSyncResult,

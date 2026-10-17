@@ -65,14 +65,14 @@ from ..core.exceptions import DriftError, ConfigError, DriftDetectedError, Rende
 from ..utils.host_facts import init_system_facts
 from ..config.workspace_config import WorkspaceConfig
 from ..primitives.workspace_init import init_drift_workspace
-from ..core.result_models import (
+from ..models import (
     SerializableModel,
     StatusResult,
     PackageStatus,
     DeployResult,
     DeployFailure,
     NextActionType,
-    DiffType,
+    WorkspaceDiffType,
     UninstallResult,
     GcResult,
     AdoptResult,
@@ -232,7 +232,7 @@ def execute_render(
     verbose: bool = False,
 ) -> None:
     """Core function to execute template rendering, shared by both CLI backends."""
-    from ..render.render_package import run_primitive_2_render_packages, RenderOptions
+    from ..primitives.render_repo import run_primitive_2_render_packages, RenderOptions
     from ..hooks.lifecycle_hooks import HookExecFlags
 
     prepare_cli_environment(drift_root)
@@ -264,8 +264,7 @@ def execute_stage(
     verbose: bool = False,
 ) -> None:
     """Core function to execute staging from render to install, shared by both CLI backends."""
-    from ..primitives.stage_repo import run_primitive_4_stage_render_to_install
-    from ..core.result_models import StageResult
+    from ..primitives.stage_repo import run_primitive_4_stage_render_to_install, StageOptions
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="stage")
@@ -273,9 +272,11 @@ def execute_stage(
     res = run_primitive_4_stage_render_to_install(
         workspace_config,
         target_pkgs=package_names,
-        force=force,
-        no_deps=no_deps,
-        dry_run=dry_run,
+        options=StageOptions(
+            force=force,
+            no_deps=no_deps,
+            dry_run=dry_run,
+        ),
     )
     if json_mode:
         print(res.to_json())
@@ -337,7 +338,7 @@ def execute_apply(
 
 def execute_render_commit(drift_root: Path, message: str, package_names: Sequence[str] = (), json_mode: bool = False) -> None:
     """Core function to execute committing render repository changes, shared by both CLI backends."""
-    from ..render.render_package import run_primitive_3_commit_render_repo
+    from ..primitives.render_repo import run_primitive_3_commit_render_repo
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="render-commit")
@@ -494,7 +495,7 @@ def execute_adopt(
     verbose: bool = False,
 ) -> None:
     """Core function to adopt system drifts back to source templates, shared by both CLI backends."""
-    from ..core.result_models import AdoptStatus
+    from ..models import AdoptStatus
     from ..primitives.adopt_repo import run_primitive_adopt_drifts, AdoptOptions
     from ..hooks.lifecycle_hooks import HookExecFlags
 
@@ -529,14 +530,14 @@ def execute_adopt(
 def execute_diff(
     drift_root: Path,
     package_names: Sequence[str] = (),
-    diff_type: Union[DiffType, str] = DiffType.PENDING,
+    diff_type: Union[WorkspaceDiffType, str] = WorkspaceDiffType.PENDING,
     side_by_side: bool = False,
     stat: bool = False,
     json_mode: bool = False
 ) -> None:
     """Core function to visualize changes, shared by both CLI backends."""
     prepare_cli_environment(drift_root)
-    diff_type_enum = diff_type if isinstance(diff_type, DiffType) else DiffType(diff_type)
+    diff_type_enum = diff_type if isinstance(diff_type, WorkspaceDiffType) else WorkspaceDiffType(diff_type)
     assert_workspace_healthy(drift_root, command_name="diff")
     workspace_config = load_workspace_config_default(drift_root)
     from ..primitives.workspace_diff import run_primitive_15_workspace_diff

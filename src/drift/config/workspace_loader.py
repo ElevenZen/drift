@@ -235,7 +235,7 @@ def load_workspace_config(
         combined_dict = load_workspace_config_files_layered(load_configs_from)
 
         # Apply dynamic workspace hook (config/drift_workspace.py or custom hook_file)
-        from ..hooks.workspace_hook import apply_workspace_hook
+        from ..hooks.workspace_config_hook import apply_workspace_hook
         combined_dict = apply_workspace_hook(root, combined_dict)
 
         # Pure in-memory topological resolution and section interpolation

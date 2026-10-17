@@ -77,7 +77,7 @@ from drift.core.folder_delivery import (
         DeliveryInspectionContext,
         plan_folder_delivery,
 )
-from drift.core.result_models import (
+from drift.models import (
         PackageInstallPlan,
 )
 from drift.utils.path_utils import compute_relative_symlink_target

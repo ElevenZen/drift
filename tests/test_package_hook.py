@@ -19,7 +19,7 @@ from drift.core.constants import (
 from drift.core.exceptions import ConfigError
 from drift.config.workspace_config import WorkspaceConfig
 from drift.config.package_config import PackageConfig
-from drift.hooks.package_hook import (
+from drift.hooks.package_config_hook import (
     PackageHookContext,
     resolve_package_hook_path,
     load_package_hook_module,

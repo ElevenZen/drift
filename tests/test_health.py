@@ -23,7 +23,7 @@ from drift.primitives.package_health import (
     run_primitive_health_checks,
 )
 from drift.hooks.lifecycle_hooks import HookExecFlags
-from drift.core.result_models import PackageHealthStatus, HealthResult
+from drift.models import PackageHealthStatus, HealthResult
 from drift.cli.argparse_backend import run_argparse_cli
 
 

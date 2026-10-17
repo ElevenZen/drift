@@ -203,12 +203,12 @@ class TestErrorStacking(unittest.TestCase):
     def test_render_packages_skips_inner_msg_if_already_logged(self) -> None:
         """When render_package raises an already logged exception, run_primitive_2_render_packages logs package context without repeating details."""
         import sys
-        render_pkg_module = sys.modules["drift.render.render_package"]
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.render_repo import run_primitive_2_render_packages
+        render_repo_module = sys.modules["drift.primitives.render_repo"]
 
         inner_err = mark_logged(ConfigError("Detailed syntax error in config"))
-        with patch.object(render_pkg_module, "render_package", side_effect=inner_err):
-            with self.assertLogs("drift.render.render_package", level="ERROR") as cm:
+        with patch.object(render_repo_module, "render_package", side_effect=inner_err):
+            with self.assertLogs("drift.primitives.render_repo", level="ERROR") as cm:
                 res = run_primitive_2_render_packages(self.workspace_config, target_pkgs=["pkg_a"])
 
         self.assertEqual(res.status, "FAILED")

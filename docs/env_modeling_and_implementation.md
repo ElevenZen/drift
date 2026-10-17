@@ -120,14 +120,14 @@ The lifecycle spans 6 operational phases:
 3. **In-Memory Storage**: Stored inside `SYSTEM_FACTS: Dict[str, str]`. Ambient `os.environ` remains untouched.
 
 ### Phase 2: Workspace Configuration Resolution
-1. **Dynamic Workspace Hook**: [`apply_workspace_hook()`](../src/drift/hooks/workspace_hook.py) compiles `real_env = {**secrets_file, **ws_secrets, **os.environ, **system_facts, **ws_overrides}` and passes it to [`WorkspaceHookContext`](../src/drift/hooks/workspace_hook.py).
+1. **Dynamic Workspace Hook**: [`apply_workspace_hook()`](../src/drift/hooks/workspace_config_hook.py) compiles `real_env = {**secrets_file, **ws_secrets, **os.environ, **system_facts, **ws_overrides}` and passes it to [`WorkspaceHookContext`](../src/drift/hooks/workspace_config_hook.py).
 2. **Workspace Env Parsing**: [`workspace_loader.py`](../src/drift/config/workspace_loader.py) parses `[env]` into an `EnvConfig`.
 3. **DAG Resolution**: Calls [`resolve_env_configs()`](../src/drift/utils/env_utils.py) with lower layer secrets from `config/secrets.env`.
 4. **Workspace Interpolation**: Calls [`interpolate_config_dict()`](../src/drift/utils/env_utils.py) using `resolved_env.impact.full_env()`.
 
 ### Phase 3: Package Configuration Resolution
 1. **Fact Gathering**: [`PackageConfig.get_drift_package_facts()`](../src/drift/config/package_config.py) resolves package facts (`drift_package_name`, `drift_package_source_dir`, `drift_package_render_dir`, `drift_package_install_dir`, `drift_package_target_dir`, `drift_package_install_method`).
-2. **Dynamic Package Hook**: [`apply_package_hook()`](../src/drift/hooks/package_hook.py) executes `configure_package(context)`.
+2. **Dynamic Package Hook**: [`apply_package_hook()`](../src/drift/hooks/package_config_hook.py) executes `configure_package(context)`.
 3. **Package Env Resolution**: [`resolve_env_configs()`](../src/drift/utils/env_utils.py) evaluates package tables against workspace effective tables and `all_facts = {**get_cached_system_facts(), **package_facts}`.
 4. **Package Interpolation**: Calls [`interpolate_config_dict()`](../src/drift/utils/env_utils.py) using `resolved_env.impact.full_env()`.
 5. **Package Model Instantiation**: Builds [`PackageConfig`](../src/drift/config/package_config.py) containing `env_resolve`.
@@ -142,7 +142,7 @@ The lifecycle spans 6 operational phases:
 2. **Template Expansion**: Template engines (built-in [`python_envsubst()`](../src/drift/utils/env_utils.py), Jinja2, Mustache, Tera) evaluate templates inside `with pkg_config.package_envs():`.
 
 ### Phase 6: Stage, Install & Lifecycle Hooks
-1. **Pipeline Execution**: Package installations, updates, and uninstalls execute inside [`PackageInstallContext.package_envs()`](../src/drift/primitives/install_repo.py).
+1. **Pipeline Execution**: Package installations, updates, and uninstalls execute inside [`PackageInstallContext.package_envs()`](../src/drift/models/install_models.py).
 2. **Two-Phase Scoping**:
    * Phase 1: Defaults applied conditionally (`overwrite=False`).
    * Phase 2: Overrides applied unconditionally (`overwrite=True`).
@@ -170,8 +170,8 @@ The lifecycle spans 6 operational phases:
 * Package Configuration Model: [`src/drift/config/package_config.py`](../src/drift/config/package_config.py)
 * Package Loader & Interpolation: [`src/drift/config/package_loader.py`](../src/drift/config/package_loader.py)
 * Declarative Requirements Evaluation: [`src/drift/config/package_requirements.py`](../src/drift/config/package_requirements.py)
-* Dynamic Workspace Hooks: [`src/drift/hooks/workspace_hook.py`](../src/drift/hooks/workspace_hook.py)
-* Dynamic Package Hooks: [`src/drift/hooks/package_hook.py`](../src/drift/hooks/package_hook.py)
+* Dynamic Workspace Hooks: [`src/drift/hooks/workspace_config_hook.py`](../src/drift/hooks/workspace_config_hook.py)
+* Dynamic Package Hooks: [`src/drift/hooks/package_config_hook.py`](../src/drift/hooks/package_config_hook.py)
 * Lifecycle Hook Scoping: [`src/drift/hooks/lifecycle_hooks.py`](../src/drift/hooks/lifecycle_hooks.py)
 * Render DAG Hashing: [`src/drift/render/render_dag.py`](../src/drift/render/render_dag.py)
 * Core AI Architectural Reference: [`docs/ai_reference.md`](ai_reference.md)

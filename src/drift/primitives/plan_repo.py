@@ -38,7 +38,7 @@ from ..config.package_config import PackageConfig
 from ..core.constants import STATE_REGISTRY_FILE_NAME
 from ..core.file_action import NO_CHANGE_ACTION_TYPES, filter_display_actions
 from ..core.state_registry import load_state_registry, StateRegistry
-from ..core.result_models import (
+from ..models import (
     PackageDeployPreview,
     WorkspaceDeployPreview,
     PackageReverseSyncPlan,
