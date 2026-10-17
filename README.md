@@ -488,7 +488,7 @@ Instead of relying on slow, procedural loops that blindly re-render templates an
 ### 🛑 7. Proactive Collision Guard & Safeguards
 Drift values your data integrity. Before any physical stage or deployment execution, the **Collision Guard** runs a multi-category safety audit:
 *   **Zero Overwrite of Manual Files**: Any conflicting manual file on the host system is safely backed up to `backup/<package>/overwritten/` before deployment.
-*   **Pruned Files Swept**: Deleted files are cleanly swept to `backup/<package>/deleted_files/`.
+*   **Pruned Files Swept**: Deleted files are cleanly swept to `backup/<package>/deleted/`.
 *   **Symlink Nesting Block**: Drift blocks deployments if the target directory written in configurations is equal to or nested inside the Drift workspace root directory.
 
 > [!IMPORTANT]

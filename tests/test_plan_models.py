@@ -4,7 +4,7 @@ from pathlib import Path
 
 from drift.utils.path_utils import rebase_path
 from drift.core.file_action import (
-    FileAction,
+    NormalFileAction,
     FileActionType,
     NO_CHANGE_ACTION_TYPES,
     NON_MUTATING_ACTION_TYPES,
@@ -54,7 +54,7 @@ class TestPathRebasing(unittest.TestCase):
         self.assertIsNone(rebase_path(None, self.old_base, self.new_base))
 
     def test_rebase_file_action(self) -> None:
-        action = FileAction(
+        action = NormalFileAction(
             action_type=FileActionType.CREATE_COPY,
             src_path=self.old_base / "init.lua",
             dst_path=Path("/home/test_user/.config/nvim/init.lua"),
@@ -72,7 +72,7 @@ class TestPathRebasing(unittest.TestCase):
         self.assertEqual(action.src_path, self.old_base / "init.lua")
 
     def test_file_action_rebased_method(self) -> None:
-        action = FileAction(
+        action = NormalFileAction(
             action_type=FileActionType.RENDER_ITEM,
             src_path=Path("/repo/src/pkg/init.envst.lua"),
             dst_path=self.old_base / "init.lua",
@@ -96,7 +96,7 @@ class TestPackageDeployPreview(unittest.TestCase):
         render_res = PackageRenderResult(
             package="nvim",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.RENDER_ITEM,
                     src_path=Path("/src/init.envst.lua"),
                     dst_path=Path("/render/init.lua"),
@@ -110,7 +110,7 @@ class TestPackageDeployPreview(unittest.TestCase):
         stage_plan = PackageStagePlan(
             package="nvim",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.CREATE_COPY,
                     src_path=Path("/render/init.lua"),
                     dst_path=Path("/install/init.lua"),
@@ -125,7 +125,7 @@ class TestPackageDeployPreview(unittest.TestCase):
             package="nvim",
             target_directory="/host/target",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.CREATE_SYMLINK,
                     src_path=Path("/install/init.lua"),
                     dst_path=Path("/host/target/init.lua"),
@@ -139,12 +139,12 @@ class TestPackageDeployPreview(unittest.TestCase):
         render_res = PackageRenderResult(
             package="nvim",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/src/init.lua"),
                     dst_path=Path("/render/init.lua"),
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.INFO_MESSAGE,
                     reason="info message",
                 ),
@@ -155,12 +155,12 @@ class TestPackageDeployPreview(unittest.TestCase):
         stage_plan = PackageStagePlan(
             package="nvim",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/render/init.lua"),
                     dst_path=Path("/install/init.lua"),
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.INFO_MESSAGE,
                     reason="info message",
                 ),
@@ -173,7 +173,7 @@ class TestPackageDeployPreview(unittest.TestCase):
         stage_plan_with_mutation = PackageStagePlan(
             package="nvim",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.CREATE_COPY,
                     src_path=Path("/render/init.lua"),
                     dst_path=Path("/install/init.lua"),
@@ -188,7 +188,7 @@ class TestPackageDeployPreview(unittest.TestCase):
             target_directory="/host/target",
             can_skip=True,
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/install/init.lua"),
                     dst_path=Path("/host/target/init.lua"),
@@ -201,12 +201,12 @@ class TestPackageDeployPreview(unittest.TestCase):
             package="nvim",
             target_directory="/host/target",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/install/init.lua"),
                     dst_path=Path("/host/target/init.lua"),
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.INFO_MESSAGE,
                     reason="info message",
                 ),
@@ -219,7 +219,7 @@ class TestPackageDeployPreview(unittest.TestCase):
             package="nvim",
             target_directory="/host/target",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.INFO_MESSAGE,
                     reason="info message",
                 ),
@@ -263,7 +263,7 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
         self.render_res = PackageRenderResult(
             package="zsh",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.RENDER_ITEM,
                     src_path=Path("/src/dot-zshrc"),
                     dst_path=Path("/render/.zshrc"),
@@ -366,17 +366,17 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
         render_res = PackageRenderResult(
             package="render_test",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/workspace/src/render_test/unchanged.txt"),
                     dst_path=Path("/workspace/render/render_test/unchanged.txt"),
                     reason="hash match",
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.INFO_MESSAGE,
                     reason="Render cache hit",
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.RENDER_ITEM,
                     src_path=Path("/workspace/src/render_test/changed.txt"),
                     dst_path=Path("/workspace/render/render_test/changed.txt"),
@@ -398,16 +398,16 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
         stage_plan = PackageStagePlan(
             package="stage_test",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/workspace/render/stage_test/same.txt"),
                     dst_path=Path("/workspace/install/stage_test/same.txt"),
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.INFO_MESSAGE,
                     reason="Staged metadata",
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.CREATE_COPY,
                     src_path=Path("/workspace/render/stage_test/new.txt"),
                     dst_path=Path("/workspace/install/stage_test/new.txt"),
@@ -430,16 +430,16 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
             package="install_test",
             target_directory="/home/user",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/workspace/install/install_test/dot-link"),
                     dst_path=Path("/home/user/.link"),
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.INFO_MESSAGE,
                     reason="Symlink verified",
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.CREATE_SYMLINK,
                     src_path=Path("/workspace/install/install_test/dot-newlink"),
                     dst_path=Path("/home/user/.newlink"),
@@ -461,12 +461,12 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
         rev_plan = PackageReverseSyncPlan(
             package="rev_test",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/home/user/.dotfile"),
                     dst_path=Path("/workspace/install/rev_test/dot-dotfile"),
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.UPDATE_COPY,
                     src_path=Path("/home/user/.changed"),
                     dst_path=Path("/workspace/install/rev_test/dot-changed"),
@@ -504,12 +504,12 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
 
     def test_package_deploy_preview_format_text_hooks_and_staging_matrix(self) -> None:
         """Verifies format_text displays hooks and install block when package is staged, even without host file mutations."""
-        action_skip = FileAction(
+        action_skip = NormalFileAction(
             action_type=FileActionType.SKIP_IDENTICAL,
             src_path=Path("/render/pkg/file.txt"),
             dst_path=Path("/target/file.txt"),
         )
-        action_stage = FileAction(
+        action_stage = NormalFileAction(
             action_type=FileActionType.CREATE_COPY,
             src_path=Path("/render/pkg/.drift/hooks/post_install.sh"),
             dst_path=Path("/install/pkg/.drift/hooks/post_install.sh"),
@@ -541,7 +541,7 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
             package="pkg_hooks",
             target_directory="/target",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.UPDATE_COPY,
                     src_path=Path("/install/pkg/file.txt"),
                     dst_path=Path("/target/file.txt"),
@@ -613,17 +613,17 @@ class TestFilterDisplayActions(unittest.TestCase):
 
     def test_filter_display_actions_filtering(self) -> None:
         """Verifies NO_CHANGE actions are filtered out when verbose=False, and preserved when verbose=True."""
-        mutating_action = FileAction(
+        mutating_action = NormalFileAction(
             action_type=FileActionType.CREATE_COPY,
             src_path=Path("/src/file.txt"),
             dst_path=Path("/dst/file.txt"),
         )
-        skip_action = FileAction(
+        skip_action = NormalFileAction(
             action_type=FileActionType.SKIP_IDENTICAL,
             src_path=Path("/src/file.txt"),
             dst_path=Path("/dst/file.txt"),
         )
-        info_action = FileAction(
+        info_action = NormalFileAction(
             action_type=FileActionType.INFO_MESSAGE,
             reason="Informational note",
         )
@@ -640,7 +640,7 @@ class TestFilterDisplayActions(unittest.TestCase):
     def test_is_mutating_action_predicate(self) -> None:
         """Verifies is_mutating_action identifies mutating actions vs NO_CHANGE actions."""
         for no_change_type in NO_CHANGE_ACTION_TYPES:
-            action = FileAction(
+            action = NormalFileAction(
                 action_type=no_change_type,
                 src_path=Path("/src/file.txt"),
                 dst_path=Path("/dst/file.txt"),
@@ -658,7 +658,7 @@ class TestFilterDisplayActions(unittest.TestCase):
             FileActionType.DELETE_ITEM,
         ]
         for mut_type in mutating_types:
-            action = FileAction(
+            action = NormalFileAction(
                 action_type=mut_type,
                 src_path=Path("/src/file.txt"),
                 dst_path=Path("/dst/file.txt"),
@@ -671,16 +671,16 @@ class TestFilterDisplayActions(unittest.TestCase):
             package="uninstall_test",
             target_directory="/opt/app",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.DELETE_ITEM,
                     dst_path=Path("/opt/app/binary"),
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/opt/app/keep"),
                     dst_path=Path("/opt/app/keep"),
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.INFO_MESSAGE,
                     reason="Skipped unmanaged file",
                 ),
@@ -701,12 +701,12 @@ class TestFilterDisplayActions(unittest.TestCase):
         plan = AddResourcePlan(
             package="add_test",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.CREATE_COPY,
                     src_path=Path("/host/file.conf"),
                     dst_path=Path("/repo/src/add_test/file.conf"),
                 ),
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=Path("/host/same.conf"),
                     dst_path=Path("/repo/src/add_test/same.conf"),

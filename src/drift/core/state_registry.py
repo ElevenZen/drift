@@ -208,18 +208,14 @@ class StateRegistry:
         save_state_registry(self)
 
 
-def load_state_registry(filepath: Path) -> StateRegistry:
-    """Loads state.toml from the given filepath. Returns empty registry if file doesn't exist."""
-    if not filepath.exists():
-        return StateRegistry({}, state_file=filepath)
+def parse_state_registry_content(content: str, state_file: Optional[Path] = None) -> StateRegistry:
+    """Parses raw state.toml text content into a StateRegistry instance."""
     try:
-        content = filepath.read_text(encoding="utf-8")
         data = parse_toml(content)
         packages_dict = data.get("packages", {})
-        
+
         packages = {}
         for pkg, v in packages_dict.items():
-            # process package entry in state.toml file.
             if not isinstance(v, dict):
                 packages[str(pkg)] = PackageState(state=str(v))
                 continue
@@ -249,7 +245,18 @@ def load_state_registry(filepath: Path) -> StateRegistry:
                 deployed_files=deployed_files,
                 sudo=sudo,
             )
-        return StateRegistry(packages, state_file=filepath)
+        return StateRegistry(packages, state_file=state_file)
+    except Exception:
+        return StateRegistry({}, state_file=state_file)
+
+
+def load_state_registry(filepath: Path) -> StateRegistry:
+    """Loads state.toml from the given filepath. Returns empty registry if file doesn't exist."""
+    if not filepath.exists():
+        return StateRegistry({}, state_file=filepath)
+    try:
+        content = filepath.read_text(encoding="utf-8")
+        return parse_state_registry_content(content, state_file=filepath)
     except Exception:
         return StateRegistry({}, state_file=filepath)
 

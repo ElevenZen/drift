@@ -25,7 +25,7 @@ from drift.utils.file_inspect import check_can_symlink
 
 CAN_SYMLINK = check_can_symlink()
 
-from drift.core.file_action import FileAction, FileActionType, format_action_line
+from drift.core.file_action import NormalFileAction, FileActionType, format_action_line
 from drift.render.render_cache import NodeHashes, RenderCache
 from drift.render.render_lock import RenderLockfile, RenderBucket
 from drift.render.render_dag import (
@@ -714,7 +714,7 @@ class TestRenderActionLogging(unittest.TestCase):
 
         # CREATE_COPY
         create_line = format_action_line(
-            FileAction(FileActionType.CREATE_COPY, src_path=src, dst_path=dst),
+            NormalFileAction(FileActionType.CREATE_COPY, src_path=src, dst_path=dst),
             drift_root=drift_root,
         )
         self.assertIn("➕ [CREATE_COPY]", create_line)
@@ -722,7 +722,7 @@ class TestRenderActionLogging(unittest.TestCase):
 
         # UPDATE_COPY
         update_line = format_action_line(
-            FileAction(FileActionType.UPDATE_COPY, src_path=src, dst_path=dst),
+            NormalFileAction(FileActionType.UPDATE_COPY, src_path=src, dst_path=dst),
             drift_root=drift_root,
         )
         self.assertIn("✏️ [UPDATE_COPY]", update_line)
@@ -730,7 +730,7 @@ class TestRenderActionLogging(unittest.TestCase):
 
         # RENDER_ITEM
         render_line = format_action_line(
-            FileAction(FileActionType.RENDER_ITEM, src_path=src, dst_path=dst, reason="jinja2"),
+            NormalFileAction(FileActionType.RENDER_ITEM, src_path=src, dst_path=dst, reason="jinja2"),
             drift_root=drift_root,
         )
         self.assertIn("🎨 [RENDER]", render_line)
@@ -738,7 +738,7 @@ class TestRenderActionLogging(unittest.TestCase):
 
         # ENSURE_DIR
         dir_line = format_action_line(
-            FileAction(FileActionType.ENSURE_DIR, dst_path=Path("/workspace/render/pkg_a/dir")),
+            NormalFileAction(FileActionType.ENSURE_DIR, dst_path=Path("/workspace/render/pkg_a/dir")),
             drift_root=drift_root,
         )
         self.assertIn("📁 [ENSURE_DIR]", dir_line)
@@ -746,7 +746,7 @@ class TestRenderActionLogging(unittest.TestCase):
 
         # WRITE_CONFIG
         cfg_line = format_action_line(
-            FileAction(FileActionType.WRITE_CONFIG, dst_path=Path("/workspace/render/pkg_a/.drift/drift_package.toml")),
+            NormalFileAction(FileActionType.WRITE_CONFIG, dst_path=Path("/workspace/render/pkg_a/.drift/drift_package.toml")),
             drift_root=drift_root,
         )
         self.assertIn("⚙️ [WRITE_CONFIG]", cfg_line)
@@ -754,7 +754,7 @@ class TestRenderActionLogging(unittest.TestCase):
 
         # DELETE_ITEM (Pruning)
         prune_line = format_action_line(
-            FileAction(FileActionType.DELETE_ITEM, dst_path=Path("/workspace/render/pkg_a/old.txt")),
+            NormalFileAction(FileActionType.DELETE_ITEM, dst_path=Path("/workspace/render/pkg_a/old.txt")),
             drift_root=drift_root,
         )
         self.assertIn("🗑️ [DELETE_ITEM]", prune_line)
@@ -762,7 +762,7 @@ class TestRenderActionLogging(unittest.TestCase):
 
         # DELETE_TREE
         tree_line = format_action_line(
-            FileAction(FileActionType.DELETE_TREE, dst_path=Path("/workspace/render/pkg_a/old_dir")),
+            NormalFileAction(FileActionType.DELETE_TREE, dst_path=Path("/workspace/render/pkg_a/old_dir")),
             drift_root=drift_root,
         )
         self.assertIn("🗑️ [DELETE_TREE]", tree_line)
@@ -770,7 +770,7 @@ class TestRenderActionLogging(unittest.TestCase):
 
         # SKIP_IDENTICAL with src and reason
         skip_line = format_action_line(
-            FileAction(FileActionType.SKIP_IDENTICAL, src_path=src, dst_path=dst, reason="jinja2"),
+            NormalFileAction(FileActionType.SKIP_IDENTICAL, src_path=src, dst_path=dst, reason="jinja2"),
             drift_root=drift_root,
         )
         self.assertIn("⏭️ [SKIP_IDENTICAL]", skip_line)

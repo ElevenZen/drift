@@ -17,6 +17,8 @@ from .constants import BackupSubfolder, InstallMethod, DRIFT_KEEP_FILE_NAME
 from .exceptions import InstallCollisionError
 from .file_action import (
     FileAction,
+    NormalFileAction,
+    BackupFileAction,
     FileActionType,
     FileActionExecutionContext,
     BACKUP_ACTION_TYPES,
@@ -143,24 +145,25 @@ def _plan_backup_or_delete(
     context: DeliveryInspectionContext,
     target: Path,
     rel_path: Path,
-    reason: Optional[str] = None,
+    reason: str = "",
     is_orphan: bool = False,
     is_tree: bool = False,
 ) -> FileAction:
     """Plans BACKUP_OVERWRITE (or BACKUP_PRUNE if is_orphan) when backup is configured, or DELETE_ITEM/DELETE_TREE when absent."""
-    subfolder = BackupSubfolder.DELETED_FILES if is_orphan else None
+    subfolder = BackupSubfolder.DELETED if is_orphan else None
     backup_dst = context.resolve_backup_path(rel_path, subfolder=subfolder)
-    if backup_dst:
+    if backup_dst and context.backup_pkg_dir:
         action_type = FileActionType.BACKUP_PRUNE if is_orphan else FileActionType.BACKUP_OVERWRITE
-        return FileAction(
+        return BackupFileAction(
             action_type=action_type,
             src_path=target,
             dst_path=backup_dst,
             reason=reason,
+            backup_pkg_root=context.backup_pkg_dir,
         )
 
     action_type = FileActionType.DELETE_TREE if is_tree else FileActionType.DELETE_ITEM
-    return FileAction(
+    return NormalFileAction(
         action_type=action_type,
         dst_path=target,
         reason=reason,
@@ -177,7 +180,7 @@ def _inspect_directory_node(
 ) -> List[FileAction]:
     """Inspects a directory destination against source directory, planning creation, permissions sync, or collision resolution."""
     if has_backed_up_ancestor or not (target_dir.exists() or target_dir.is_symlink()):
-        return [FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=target_dir)]
+        return [NormalFileAction(action_type=FileActionType.ENSURE_DIR, dst_path=target_dir)]
 
     # already a directory, check for permission differences.
     # in reverse mode, if the directory is populated, we should prune the .drift_keep file if it exists
@@ -186,7 +189,7 @@ def _inspect_directory_node(
         if context.reverse_mode and prune_keep_file:
             keep_file = target_dir / DRIFT_KEEP_FILE_NAME
             if keep_file.is_file():
-                node_actions.append(FileAction(
+                node_actions.append(NormalFileAction(
                     action_type=FileActionType.DELETE_ITEM,
                     dst_path=keep_file,
                     reason="Prune .drift_keep from populated directory",
@@ -195,7 +198,7 @@ def _inspect_directory_node(
             src_mode = oct(source_dir.stat().st_mode & 0o777)
             dst_mode = oct(target_dir.stat().st_mode & 0o777)
             effective_src = context.mask_source_path_with_fallback(rel_path, source_dir)
-            node_actions.append(FileAction(
+            node_actions.append(NormalFileAction(
                 action_type=FileActionType.UPDATE_PERMISSION,
                 src_path=effective_src,
                 dst_path=target_dir,
@@ -212,7 +215,7 @@ def _inspect_directory_node(
 
     return [
         _plan_backup_or_delete(context, target_dir, rel_path, reason=reason),
-        FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=target_dir),
+        NormalFileAction(action_type=FileActionType.ENSURE_DIR, dst_path=target_dir),
     ]
 
 
@@ -289,11 +292,11 @@ def _plan_file_creation(
     context: DeliveryInspectionContext,
     source_file: Path,
     system_target: Path,
-    reason: Optional[str] = None,
-) -> FileAction:
+    reason: str = "",
+) -> NormalFileAction:
     """Returns CREATE_SYMLINK or CREATE_COPY depending on the package install method."""
     action_type = FileActionType.CREATE_SYMLINK if context.install_method == InstallMethod.SYMLINK else FileActionType.CREATE_COPY
-    return FileAction(
+    return NormalFileAction(
         action_type=action_type,
         src_path=source_file,
         dst_path=system_target,
@@ -322,22 +325,26 @@ def _inspect_symlink_leaf(
     if _check_symlink_points_to_source(system_target, effective_src):
         if context.install_method == InstallMethod.SYMLINK:
             if context.reinstall:
-                return [FileAction(
+                return [NormalFileAction(
                     action_type=FileActionType.CREATE_SYMLINK,
                     src_path=effective_src,
                     dst_path=system_target,
                     reason="Reinstalling symlink",
                 )]
-            return [FileAction(
+            return [NormalFileAction(
                 action_type=FileActionType.SKIP_IDENTICAL,
                 src_path=effective_src,
                 dst_path=system_target,
                 reason="Symlink already points to source",
             )]
-        # Switching from symlink to copy: backup or delete existing symlink and create physical copy
+        # Switching from symlink to copy: delete existing managed symlink and create physical copy
         return [
-            _plan_backup_or_delete(context, system_target, rel_file, reason="Replacing symlink with copy"),
-            FileAction(
+            NormalFileAction(
+                action_type=FileActionType.DELETE_ITEM,
+                dst_path=system_target,
+                reason="Replacing symlink with copy",
+            ),
+            NormalFileAction(
                 action_type=FileActionType.CREATE_COPY,
                 src_path=effective_src,
                 dst_path=system_target,
@@ -371,7 +378,7 @@ def _inspect_physical_file_leaf(
     if context.install_method == InstallMethod.SYMLINK:
         return [
             _plan_backup_or_delete(context, system_target, rel_file, reason="Physical file collides with symlink"),
-            FileAction(
+            NormalFileAction(
                 action_type=FileActionType.CREATE_SYMLINK,
                 src_path=effective_src,
                 dst_path=system_target,
@@ -382,7 +389,7 @@ def _inspect_physical_file_leaf(
     if context.is_first_time:
         return [
             _plan_backup_or_delete(context, system_target, rel_file, reason="Pre-existing file collision"),
-            FileAction(
+            NormalFileAction(
                 action_type=FileActionType.CREATE_COPY,
                 src_path=effective_src,
                 dst_path=system_target,
@@ -395,7 +402,7 @@ def _inspect_physical_file_leaf(
         differs = True
 
     if differs:
-        return [FileAction(
+        return [NormalFileAction(
             action_type=FileActionType.UPDATE_COPY,
             src_path=effective_src,
             dst_path=system_target,
@@ -405,7 +412,7 @@ def _inspect_physical_file_leaf(
     if permissions_differ(source_file, system_target):
         src_mode = oct(source_file.stat().st_mode & 0o777)
         dst_mode = oct(system_target.stat().st_mode & 0o777)
-        return [FileAction(
+        return [NormalFileAction(
             action_type=FileActionType.UPDATE_PERMISSION,
             src_path=effective_src,
             dst_path=system_target,
@@ -413,14 +420,14 @@ def _inspect_physical_file_leaf(
         )]
 
     if context.reinstall:
-        return [FileAction(
+        return [NormalFileAction(
             action_type=FileActionType.UPDATE_COPY,
             src_path=effective_src,
             dst_path=system_target,
             reason="Reinstalling copy",
         )]
 
-    return [FileAction(
+    return [NormalFileAction(
         action_type=FileActionType.SKIP_IDENTICAL,
         src_path=effective_src,
         dst_path=system_target,
@@ -443,7 +450,7 @@ def _inspect_resolved_leaf_file(
 
     # 1. Source and target are identical
     if source_file == system_target:
-        actions.append(FileAction(
+        actions.append(NormalFileAction(
             action_type=FileActionType.SKIP_IDENTICAL,
             src_path=effective_source,
             dst_path=system_target,
@@ -557,7 +564,7 @@ def _inspect_directory_leaf(
     if context.reverse_mode and not source_dir.is_symlink() and not any(source_dir.iterdir()):
         keep_file = system_target / DRIFT_KEEP_FILE_NAME
         if not keep_file.exists():
-            actions.append(FileAction(
+            actions.append(NormalFileAction(
                 action_type=FileActionType.CREATE_KEEP_FILE,
                 dst_path=keep_file,
                 reason="Track empty folder with .drift_keep",
@@ -734,7 +741,7 @@ def plan_backup_restoration(
         return []
 
     actions: List[FileAction] = [
-        FileAction(
+        NormalFileAction(
             action_type=FileActionType.INFO_MESSAGE,
             reason="Restoring overwritten backups to host...",
         )
@@ -747,7 +754,7 @@ def plan_backup_restoration(
         drift_root=drift_root,
         is_first_time=True,
         backup_pkg_dir=backup_overwritten_dir.parent,
-        backup_subfolder=BackupSubfolder.DELETED_FILES,
+        backup_subfolder=BackupSubfolder.DELETED,
     )
     restore_actions = plan_folder_delivery(
         context=context,
@@ -782,14 +789,14 @@ def plan_symlink_conversions(
             continue
 
         actions.append(
-            FileAction(
+            NormalFileAction(
                 action_type=FileActionType.DELETE_ITEM,
                 dst_path=system_target,
                 reason="Remove symlink for detach",
             )
         )
         actions.append(
-            FileAction(
+            NormalFileAction(
                 action_type=FileActionType.CREATE_COPY,
                 src_path=src_file,
                 dst_path=system_target,
@@ -810,7 +817,7 @@ def plan_file_removals(
         for rel in sorted(deployed_files, reverse=True)
     ]
     return [
-        FileAction(
+        NormalFileAction(
             action_type=FileActionType.DELETE_ITEM,
             dst_path=target,
             reason="Remove deployed file from host",
@@ -830,7 +837,7 @@ def plan_actions_from_folder_diff(
 
     # 1. Deletions first: cleanly clear obsolete paths to avoid directory/file type collisions
     for rel in sorted(diff.deleted, reverse=True):
-        actions.append(FileAction(
+        actions.append(NormalFileAction(
             action_type=FileActionType.DELETE_ITEM,
             dst_path=target_dir / rel,
             reason="Deleted in rendered package",
@@ -841,13 +848,13 @@ def plan_actions_from_folder_diff(
         src = source_dir / rel
         dst = target_dir / rel
         if is_concrete_dir(src):
-            actions.append(FileAction(
+            actions.append(NormalFileAction(
                 action_type=FileActionType.ENSURE_DIR,
                 dst_path=dst,
                 reason="Directory created",
             ))
         else:
-            actions.append(FileAction(
+            actions.append(NormalFileAction(
                 action_type=FileActionType.CREATE_COPY,
                 src_path=src,
                 dst_path=dst,
@@ -862,7 +869,7 @@ def plan_actions_from_folder_diff(
             if is_concrete_dir(dst) and permissions_differ(src, dst):
                 src_mode = oct(src.stat().st_mode & 0o777)
                 dst_mode = oct(dst.stat().st_mode & 0o777)
-                actions.append(FileAction(
+                actions.append(NormalFileAction(
                     action_type=FileActionType.UPDATE_PERMISSION,
                     src_path=src,
                     dst_path=dst,
@@ -880,14 +887,14 @@ def plan_actions_from_folder_diff(
                 permission_reason = f"Permissions changed ({dst_mode} -> {src_mode})"
             else:
                 permission_reason = "Permissions changed"
-            actions.append(FileAction(
+            actions.append(NormalFileAction(
                 action_type=FileActionType.UPDATE_PERMISSION,
                 src_path=src,
                 dst_path=dst,
                 reason=permission_reason,
             ))
         else:
-            actions.append(FileAction(
+            actions.append(NormalFileAction(
                 action_type=FileActionType.UPDATE_COPY,
                 src_path=src,
                 dst_path=dst,
@@ -896,7 +903,7 @@ def plan_actions_from_folder_diff(
 
     # 4. Unmodified matches (identical content and permissions)
     for rel in diff.matches:
-        actions.append(FileAction(
+        actions.append(NormalFileAction(
             action_type=FileActionType.SKIP_IDENTICAL,
             src_path=source_dir / rel,
             dst_path=target_dir / rel,

@@ -8,23 +8,24 @@ Layer 3: Primitive Entry Point
     run_primitive_8_rollback_recovery(workspace_config, package_names, force, flags)
         1. Discover Target Packages & Sentinel Checks:
             workspace_config.filter_install_packages_by_target
-            validate_rollback_packages [Layer 1] (state_registry.get_midway_packages safeguard)
-        2. Classify Packages & Reset Git State:
+            validate_rollback_packages [Layer 1] (state_registry.get_rollback_eligible_packages safeguard)
+        2. Classify Packages & Reset Committed Package Staging Directories:
             is_package_committed_in_install_head [Layer 1]
             reset_install_package_to_head [Layer 1] (git checkout & clean for committed packages)
         3. Unified Dependency Resolution:
-            resolve_package_uninstall_order (reverse topological order across all rollback targets)
-        4. Execute Rollback One-by-One in Reverse Order:
+            resolve_rollback_order [Layer 1]
+                resolve_package_uninstall_order (reverse topological order, with fallback to input order on error)
+        4. Execute 3-Step Rollback One-by-One in Reverse Topological Order:
             If committed package: rollback_reinstall_committed_package [Layer 2]
-                run_primitive_5_install (force=True, resolve_symlinks=True)
+                (Requires install/<pkg> already reset to HEAD via reset_install_package_to_head)
+                - Step 1: rollback_package_wal (undo WAL file actions & restore stashed backups)
+                - Step 2: restore_package_state_from_head
+                - Step 3: run_primitive_5_install (reinstall=False, run_hooks_when_unchanged=True, force=True, raise_on_error=False)
             If first-time package: rollback_uninstalled_first_time_package [Layer 2]
-                run_primitive_7_uninstall_packages (force=True)
-                git clean -fd -- <pkg>
-        5. Restore State Database & Commit History:
-            git checkout HEAD -- state.toml
-            state_registry.set_package_state("installed") for reinstalled packages
-            state_registry.remove_package for uninstalled packages
-            state_registry.save
+                - Step 1: rollback_package_wal (undo WAL file actions & restore stashed backups)
+                - Step 2: clean_first_time_install_package & remove_package_state_entry
+                - Step 3: skipped (zero hooks executed)
+        5. Commit History:
             run_primitive_6_commit_install_repo (commits restored state and cleaned files)
 
 -------------------------------------------------------------------------------
@@ -32,6 +33,11 @@ Layers (ordered bottom-up by dependency):
     Layer 1: Git & State Inspection Helpers
         is_package_committed_in_install_head
         reset_install_package_to_head
+        clean_first_time_install_package
+        load_head_state_registry
+        restore_package_state_from_head
+        remove_package_state_entry
+        resolve_rollback_order
         validate_rollback_packages
     Layer 2: Single-Package Rollback Actions
         rollback_reinstall_committed_package
@@ -41,23 +47,28 @@ Layers (ordered bottom-up by dependency):
 ===============================================================================
 """
 
+from dataclasses import replace
 import logging
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
-from ..config.package_config import PackageConfig, PackageSectionConfig
-from ..models import RollbackResult
-from ..core.state_registry import load_state_registry, StateRegistry
-from .install_repo import run_primitive_5_install, InstallOptions, run_primitive_6_commit_install_repo
-from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
-from .package_assertions import resolve_package_uninstall_order
+from ..config.package_config import PackageConfig, PackageDependencies
+from ..core.file_action import clear_package_wal, rollback_package_wal
+from ..core.state_registry import (
+    StateRegistry,
+    load_state_registry,
+    parse_state_registry_content,
+)
 from ..hooks.lifecycle_hooks import HookExecFlags
+from ..models import RollbackResult
 from ..utils.config_utils import partition
+from ..utils.file_ops import remove_tree
+from .install_repo import InstallOptions, run_primitive_5_install, run_primitive_6_commit_install_repo
+from .package_assertions import resolve_package_uninstall_order
 
 logger = logging.getLogger(__name__)
-
 
 # =====================================================================
 # Layer 1: Git & State Inspection Helpers
@@ -97,6 +108,104 @@ def reset_install_package_to_head(install_base: Path, pkg: str) -> None:
         logger.warning(f"git clean failed for '{pkg}': {res_clean.stderr.strip()}")
 
 
+def clean_first_time_install_package(install_base: Path, pkg: str) -> None:
+    """Removes an uncommitted first-time package directory from the install repository."""
+    pkg_dir = install_base / pkg
+    if pkg_dir.exists() or pkg_dir.is_symlink():
+        remove_tree(pkg_dir)
+    res_clean = subprocess.run(
+        ["git", "-C", str(install_base), "clean", "-fd", "--", pkg],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_clean.returncode != 0:
+        logger.debug(
+            f"git clean for package '{pkg}' exited with code {res_clean.returncode}: {res_clean.stderr.strip()}"
+        )
+
+
+def load_head_state_registry(install_base: Path) -> StateRegistry:
+    """Loads the committed HEAD version of state.toml from the install repository."""
+    state_file = install_base / "state.toml"
+    res = subprocess.run(
+        ["git", "-C", str(install_base), "show", "HEAD:state.toml"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res.returncode != 0:
+        return StateRegistry({}, state_file=state_file)
+    return parse_state_registry_content(res.stdout, state_file=state_file)
+
+
+def restore_package_state_from_head(install_base: Path, pkg: str) -> None:
+    """Restores a single committed package's entry in state.toml from HEAD with state='installed'."""
+    state_file = install_base / "state.toml"
+    registry = load_state_registry(state_file)
+    head_registry = load_head_state_registry(install_base)
+    head_state = head_registry.packages.get(pkg)
+    if head_state is not None:
+        registry.packages[pkg] = replace(head_state, state="installed")
+    else:
+        registry.set_package_state(pkg, "installed")
+    registry.save()
+
+
+def remove_package_state_entry(install_base: Path, pkg: str) -> None:
+    """Removes a first-time package's entry from state.toml."""
+    state_file = install_base / "state.toml"
+    registry = load_state_registry(state_file)
+    registry.remove_package(pkg)
+    registry.save()
+
+
+def _resolve_package_sudo(workspace_config: WorkspaceConfig, pkg: str) -> bool:
+    """Resolves whether a package requires sudo from its install config or fallback to state registry."""
+    install_pkg_dir = workspace_config.install_path / pkg
+    if install_pkg_dir.is_dir():
+        try:
+            meta = PackageConfig.from_install_dir(install_pkg_dir, workspace_config)
+            return meta.package.sudo
+        except Exception:
+            pass
+    registry = load_state_registry(workspace_config.install_path / "state.toml")
+    pkg_state = registry.packages.get(pkg)
+    return pkg_state.sudo if pkg_state is not None else False
+
+
+def _load_package_dependencies_safe(workspace_config: WorkspaceConfig, pkg: str) -> PackageDependencies:
+    """Safely loads a package's dependencies from install/<pkg>, falling back to [] on error."""
+    install_pkg_dir = workspace_config.install_path / pkg
+    if not install_pkg_dir.is_dir():
+        return PackageDependencies()
+    try:
+        meta = PackageConfig.from_install_dir(install_pkg_dir, workspace_config)
+        return meta.package.dependencies
+    except Exception as exc:
+        logger.warning(f"Failed to load package config for '{pkg}' during rollback: {exc}. Assuming no dependencies.")
+        return PackageDependencies()
+
+
+def resolve_rollback_order(
+    workspace_config: WorkspaceConfig,
+    packages_to_rollback: Sequence[str],
+) -> List[str]:
+    """Resolves reverse topological rollback order, falling back to input order if dependency resolution fails."""
+    rollback_deps = {
+        pkg: _load_package_dependencies_safe(workspace_config, pkg)
+        for pkg in packages_to_rollback
+    }
+    try:
+        return resolve_package_uninstall_order(rollback_deps)
+    except Exception as exc:
+        logger.warning(
+            f"Failed to resolve dependency order during rollback ({exc}); "
+            "falling back to default package order."
+        )
+        return list(packages_to_rollback)
+
+
 def validate_rollback_packages(
     state_registry: StateRegistry,
     discovered_packages: Sequence[str],
@@ -131,18 +240,40 @@ def rollback_reinstall_committed_package(
     pkg: str,
     flags: Optional[HookExecFlags] = None,
 ) -> None:
-    """Executes full package reinstallation fallback to restore system files for a single committed package."""
+    """Executes 3-step WAL rollback and incremental reinstall (reinstall=False, run_hooks_when_unchanged=True) for a committed package.
+
+    Precondition:
+        The package staging directory `install/<pkg>` must already be reset to the `HEAD` commit
+        (via `reset_install_package_to_head`) before calling this function.
+    """
     logger.info(f"Rollback reinstallation for committed package '{pkg}'")
+    sudo = _resolve_package_sudo(workspace_config, pkg)
+    pkg_backup_root = workspace_config.backup_path / pkg
+
+    # Step 1: Undo WAL file actions and restore stashed backups
+    rollback_package_wal(pkg_backup_root, sudo=sudo)
+
+    # Step 2: Restore package state entry from HEAD
+    restore_package_state_from_head(workspace_config.install_path, pkg)
+
+    # Step 3: Incremental reinstall (reinstall=False, run_hooks_when_unchanged=True) with hook errors ignored by default
+    rollback_flags = HookExecFlags.resolve(
+        flags,
+        fallback=HookExecFlags(raise_on_error=False),
+    )
     install_res = run_primitive_5_install(
         workspace_config=workspace_config,
         target_pkgs=[pkg],
         options=InstallOptions(
             resolve_symlinks=True,
             force=True,
-            reinstall=True,
-            flags=flags,
+            reinstall=False,
+            run_hooks_when_unchanged=True,
+            no_deps=True,
+            flags=rollback_flags,
         ),
     )
+    clear_package_wal(pkg_backup_root, sudo=sudo)
     if install_res.status != "SUCCESS":
         raise RuntimeError(install_res.error_message or f"Rollback reinstallation failed for package '{pkg}'.")
 
@@ -152,25 +283,17 @@ def rollback_uninstalled_first_time_package(
     pkg: str,
     flags: Optional[HookExecFlags] = None,
 ) -> None:
-    """Cleans up host system files, restores overwritten backups, and removes directory for a first-time package that failed."""
+    """Reverses WAL file actions, restores backups, and removes install state for a failed first-time package (no hooks)."""
     logger.info(f"Rollback uninstallation for first-time package '{pkg}'")
-    uninst_res = run_primitive_7_uninstall_packages(
-        workspace_config=workspace_config,
-        package_names=[pkg],
-        options=UninstallOptions(force=True, flags=flags),
-    )
-    if uninst_res.status != "SUCCESS":
-        raise RuntimeError(uninst_res.error_message or f"Rollback uninstallation of first-time package '{pkg}' failed.")
+    sudo = _resolve_package_sudo(workspace_config, pkg)
+    pkg_backup_root = workspace_config.backup_path / pkg
 
-    # Clean untracked leftover directories in install/ if any remain
-    res_clean = subprocess.run(
-        ["git", "-C", str(workspace_config.install_path), "clean", "-fd", "--", pkg],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if res_clean.returncode != 0:
-        logger.debug(f"git clean for package '{pkg}' exited with code {res_clean.returncode}: {res_clean.stderr.strip()}")
+    # Step 1: Undo WAL file actions and restore stashed backups
+    rollback_package_wal(pkg_backup_root, sudo=sudo)
+
+    # Step 2: Clean install/<pkg> and remove from state.toml (Step 3 skipped, zero hooks run)
+    clean_first_time_install_package(workspace_config.install_path, pkg)
+    remove_package_state_entry(workspace_config.install_path, pkg)
 
 
 # =====================================================================
@@ -236,47 +359,19 @@ def run_primitive_8_rollback_recovery(
         reset_install_package_to_head(install_base, pkg)
 
     # 4. Resolve unified reverse topological order across all packages being rolled back
-    rollback_metadata = {
-        pkg: (
-            PackageConfig.from_install_dir(install_base / pkg, workspace_config)
-            if (install_base / pkg).is_dir()
-            else PackageConfig(PackageSectionConfig(name=pkg))
-        )
-        for pkg in packages_to_rollback
-    }
-    rollback_deps = {pkg: meta.package.dependencies for pkg, meta in rollback_metadata.items()}
-    ordered_rollback = resolve_package_uninstall_order(rollback_deps)
+    ordered_rollback = resolve_rollback_order(workspace_config, packages_to_rollback)
 
     # 5. Dispatch rollback actions one-by-one in reverse topological order
     reinstall_set = set(packages_to_reinstall)
     for pkg in ordered_rollback:
         if pkg in reinstall_set:
-            logger.info(f"Executing Full Package Reinstall to restore system files for: {pkg}")
+            logger.info(f"Executing WAL rollback and incremental reinstall for: {pkg}")
             rollback_reinstall_committed_package(workspace_config, pkg, flags=flags)
         else:
-            logger.info(f"Executing uninstallation rollback for first-time package: {pkg}")
+            logger.info(f"Executing WAL rollback for first-time package: {pkg}")
             rollback_uninstalled_first_time_package(workspace_config, pkg, flags=flags)
 
-    # 6. Restore the state registry entries
-    # Revert state.toml file to HEAD commit
-    res_st = subprocess.run(
-        ["git", "-C", str(install_base), "checkout", "HEAD", "--", "state.toml"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if res_st.returncode != 0:
-        logger.warning(f"Failed to revert state.toml to HEAD: {res_st.stderr.strip()}")
-
-    # Reload registry after checkout to prevent dirty override
-    reloaded_registry = load_state_registry(state_file)
-    for pkg in packages_to_reinstall:
-        reloaded_registry.set_package_state(pkg, "installed")
-    for pkg in packages_to_uninstall:
-        reloaded_registry.remove_package(pkg)
-    reloaded_registry.save()
-
-    # 7. Commit state database and file restorations in install repo
+    # 6. Commit state database and file restorations in install repo
     if packages_to_rollback:
         pkg_word = "packages" if len(packages_to_rollback) > 1 else "package"
         commit_msg = f"Rollback: Restored clean state for {pkg_word} {', '.join(packages_to_rollback)}"
@@ -294,3 +389,4 @@ def run_primitive_8_rollback_recovery(
         target_packages=list(package_names) or discovered,
         restored_packages=packages_to_rollback
     )
+

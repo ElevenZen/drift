@@ -1,15 +1,32 @@
 import os
+import sys
 import shutil
 import tempfile
 import unittest
 import subprocess
+from io import StringIO
 from pathlib import Path
 
 from unittest.mock import patch
-from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
+from drift.core.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
+    InstallMethod,
+    set_test_mode,
+)
+from drift.core.file_action import (
+    FileActionExecutionContext,
+    FileActionType,
+    NormalFileAction,
+    BackupFileAction,
+    execute_delivery_actions,
+)
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.core.state_registry import load_state_registry, save_state_registry
 from drift.primitives.rollback_repo import run_primitive_8_rollback_recovery
+
+set_test_mode(True, enable_logging=False)
 
 
 class TestRollback(unittest.TestCase):
@@ -170,13 +187,27 @@ class TestRollback(unittest.TestCase):
         )
         save_state_registry(registry)
 
-        # 4. Simulate target host having the partially delivered file
-        (self.system_target_dir / "app_config.json").write_text('{"installed": true}', encoding="utf-8")
-
-        # 5. Simulate an existing host file that was backed up during collision guard
-        backup_overwritten = self.backup_dir / pkg_first / "overwritten"
-        backup_overwritten.mkdir(parents=True, exist_ok=True)
-        (backup_overwritten / "existing_host_file.txt").write_text("original user content", encoding="utf-8")
+        # 4. Simulate an existing host file and execute delivery actions with WAL enabled
+        (self.system_target_dir / "existing_host_file.txt").write_text("original user content", encoding="utf-8")
+        pkg_backup_root = self.backup_dir / pkg_first
+        exec_ctx = FileActionExecutionContext(sudo=False, wal_dir=pkg_backup_root / "wal")
+        execute_delivery_actions(
+            exec_ctx,
+            [
+                BackupFileAction(
+                    action_type=FileActionType.BACKUP_OVERWRITE,
+                    src_path=self.system_target_dir / "existing_host_file.txt",
+                    dst_path=pkg_backup_root / "overwritten" / "existing_host_file.txt",
+                    reason="Colliding regular file",
+                    backup_pkg_root=pkg_backup_root,
+                ),
+                NormalFileAction(
+                    action_type=FileActionType.CREATE_COPY,
+                    src_path=pkg_install / "app_config.json",
+                    dst_path=self.system_target_dir / "app_config.json",
+                ),
+            ],
+        )
 
         # Enable in workspace config
         workspace_cfg = WorkspaceConfig(
@@ -241,8 +272,19 @@ class TestRollback(unittest.TestCase):
         (self.pkg_a_install / "file.txt").write_text("corrupted pkg_a", encoding="utf-8")
         (self.system_target_dir / "file.txt").write_text("corrupted pkg_a on host", encoding="utf-8")
 
-        # Put new file on host
-        (self.system_target_dir / "brand_new.txt").write_text("brand new on host", encoding="utf-8")
+        # Deliver new file on host with WAL enabled
+        pkg_backup_root = self.backup_dir / pkg_first
+        exec_ctx = FileActionExecutionContext(sudo=False, wal_dir=pkg_backup_root / "wal")
+        execute_delivery_actions(
+            exec_ctx,
+            [
+                NormalFileAction(
+                    action_type=FileActionType.CREATE_COPY,
+                    src_path=pkg_install / "brand_new.txt",
+                    dst_path=self.system_target_dir / "brand_new.txt",
+                )
+            ],
+        )
 
         # Set both packages to "installing"
         state_file = self.install_dir / "state.toml"
@@ -475,8 +517,332 @@ class TestRollback(unittest.TestCase):
         self.assertEqual(current_reg.get_package_state("pkg_a"), "installed")
         self.assertEqual(current_reg.get_package_state("pkg_b"), "installed")
 
+    def test_rollback_committed_package_preserves_original_backup_via_wal_and_incremental_reinstall(self) -> None:
+        """Verifies 3-step rollback restores UPDATE_COPY, CREATE_COPY, BACKUP_PRUNE, and BACKUP_OVERWRITE without clobbering original backups."""
+        from drift.primitives.install_repo import run_primitive_5_install
+
+        # 1. Establish original user backup in backup/pkg_a/overwritten/file.txt and committed v1 with file.txt + extra.txt
+        pkg_backup_root = self.backup_dir / "pkg_a"
+        orig_backup = pkg_backup_root / "overwritten" / "file.txt"
+        orig_backup.parent.mkdir(parents=True, exist_ok=True)
+        orig_backup.write_text("original user host file v0", encoding="utf-8")
+
+        (self.pkg_a_install / "file.txt").write_text("clean v1", encoding="utf-8")
+        (self.pkg_a_install / "extra.txt").write_text("extra v1", encoding="utf-8")
+        (self.system_target_dir / "file.txt").write_text("clean v1", encoding="utf-8")
+        (self.system_target_dir / "extra.txt").write_text("extra v1", encoding="utf-8")
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installed")
+        registry.sync_deployed_files(
+            "pkg_a",
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            deployable_files=[Path("file.txt"), Path("extra.txt")],
+        )
+        save_state_registry(registry)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit v1 with extra"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # 2. Simulate uncommitted v2 deployment that modifies file.txt, deletes extra.txt, adds new_dir/added.txt,
+        #    collides with host collide_v2.txt, and fails in post_install hook
+        (self.pkg_a_install / "file.txt").write_text("dirty v2", encoding="utf-8")
+        (self.pkg_a_install / "extra.txt").unlink()
+        (self.pkg_a_install / "new_dir").mkdir(parents=True, exist_ok=True)
+        (self.pkg_a_install / "new_dir" / "added.txt").write_text("added in v2", encoding="utf-8")
+        (self.pkg_a_install / "collide_v2.txt").write_text("pkg collide v2", encoding="utf-8")
+        ext_target = self.system_target_dir / "ext_user_target.txt"
+        ext_target.write_text("user collide v2 on host", encoding="utf-8")
+        (self.system_target_dir / "collide_v2.txt").symlink_to(ext_target)
+
+        hooks_dir = self.pkg_a_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        hook_script = hooks_dir / "post_install.py"
+        hook_script.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(1)\n", encoding="utf-8")
+        hook_script.chmod(0o755)
+        (self.pkg_a_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+
+        [hooks]
+        post_install = "drift_hooks/post_install.py"
+        post_update = "drift_hooks/post_install.py"
+        """, encoding="utf-8")
+
+        from drift.core.exceptions import HookExecutionError
+        with self.assertRaises(HookExecutionError):
+            run_primitive_5_install(self.workspace_config, ["pkg_a"])
+
+        # Verify dirty midway state on host and in WAL before rollback
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "dirty v2")
+        self.assertFalse((self.system_target_dir / "extra.txt").exists())
+        self.assertTrue((self.system_target_dir / "new_dir" / "added.txt").is_file())
+        self.assertFalse((self.system_target_dir / "collide_v2.txt").is_symlink())
+        self.assertEqual((self.system_target_dir / "collide_v2.txt").read_text(encoding="utf-8"), "pkg collide v2")
+        self.assertTrue((pkg_backup_root / "wal" / "actions.json").is_file())
+
+        # 3. Execute 3-step rollback
+        res_rb = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        self.assertEqual(res_rb.status, "SUCCESS")
+        self.assertEqual(res_rb.restored_packages, ["pkg_a"])
+
+        # Verify host state is 100% restored to v1:
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "clean v1")
+        self.assertEqual((self.system_target_dir / "extra.txt").read_text(encoding="utf-8"), "extra v1")
+        self.assertFalse((self.system_target_dir / "new_dir").exists())
+        self.assertEqual((self.system_target_dir / "collide_v2.txt").read_text(encoding="utf-8"), "user collide v2 on host")
+
+        # Crucial invariant: original user backup in overwritten/file.txt was NEVER overwritten by "dirty v2"!
+        self.assertEqual(orig_backup.read_text(encoding="utf-8"), "original user host file v0")
+        self.assertFalse((pkg_backup_root / "wal").exists())
+
+    def test_rollback_committed_package_restores_stashed_overwritten_and_deleted_backups(self) -> None:
+        """Verifies that stashed backups in backup/<pkg>/wal/stash/{overwritten,deleted}/ are restored on rollback."""
+        pkg_backup_root = self.backup_dir / "pkg_a"
+        prior_overwritten = pkg_backup_root / "overwritten" / "shared.conf"
+        prior_deleted = pkg_backup_root / "deleted" / "pruned.conf"
+        prior_overwritten.parent.mkdir(parents=True, exist_ok=True)
+        prior_deleted.parent.mkdir(parents=True, exist_ok=True)
+        prior_overwritten.write_text("v0 overwritten backup", encoding="utf-8")
+        prior_deleted.write_text("v0 deleted backup", encoding="utf-8")
+
+        # Simulate midway transaction that overwrites both backup slots
+        host_shared = self.system_target_dir / "shared.conf"
+        host_pruned = self.system_target_dir / "pruned.conf"
+        host_shared.write_text("v1 host shared", encoding="utf-8")
+        host_pruned.write_text("v1 host pruned", encoding="utf-8")
+
+        exec_ctx = FileActionExecutionContext(sudo=False, wal_dir=pkg_backup_root / "wal")
+        execute_delivery_actions(
+            exec_ctx,
+            [
+                BackupFileAction(
+                    action_type=FileActionType.BACKUP_OVERWRITE,
+                    src_path=host_shared,
+                    dst_path=prior_overwritten,
+                    reason="Colliding file",
+                    backup_pkg_root=pkg_backup_root,
+                ),
+                BackupFileAction(
+                    action_type=FileActionType.BACKUP_PRUNE,
+                    src_path=host_pruned,
+                    dst_path=prior_deleted,
+                    reason="Orphan prune",
+                    backup_pkg_root=pkg_backup_root,
+                ),
+            ],
+        )
+
+        # Mark pkg_a as installing
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installing")
+        save_state_registry(registry)
+
+        # Verify stash exists before rollback
+        self.assertTrue((pkg_backup_root / "wal" / "stash" / "overwritten" / "shared.conf").is_file())
+        self.assertTrue((pkg_backup_root / "wal" / "stash" / "deleted" / "pruned.conf").is_file())
+
+        # Rollback
+        res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Verify host files restored AND original v0 backups restored from stash
+        self.assertEqual(host_shared.read_text(encoding="utf-8"), "v1 host shared")
+        self.assertEqual(host_pruned.read_text(encoding="utf-8"), "v1 host pruned")
+        self.assertEqual(prior_overwritten.read_text(encoding="utf-8"), "v0 overwritten backup")
+        self.assertEqual(prior_deleted.read_text(encoding="utf-8"), "v0 deleted backup")
+        self.assertFalse((pkg_backup_root / "wal").exists())
+
+    def test_rollback_first_time_package_skips_all_hooks_and_cleans_empty_backup_dir(self) -> None:
+        """Verifies first-time package rollback executes zero lifecycle hooks and cleans up empty backup/<pkg>/."""
+        pkg_first = "pkg_first_no_hooks"
+        pkg_install = self.install_dir / pkg_first
+        hooks_dir = pkg_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        marker_file = self.system_target_dir / "hook_ran_marker.txt"
+        hook_script = hooks_dir / "any_hook.py"
+        hook_script.write_text(
+            f"#!/usr/bin/env python3\nfrom pathlib import Path\nPath({repr(marker_file.as_posix())}).write_text('ran')\n",
+            encoding="utf-8",
+        )
+        hook_script.chmod(0o755)
+
+        (pkg_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg_first}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+
+        [hooks]
+        pre_install = "drift_hooks/any_hook.py"
+        post_install = "drift_hooks/any_hook.py"
+        pre_uninstall = "drift_hooks/any_hook.py"
+        post_uninstall = "drift_hooks/any_hook.py"
+        """, encoding="utf-8")
+        (pkg_install / "first.txt").write_text("first content", encoding="utf-8")
+
+        pkg_backup_root = self.backup_dir / pkg_first
+        exec_ctx = FileActionExecutionContext(sudo=False, wal_dir=pkg_backup_root / "wal")
+        execute_delivery_actions(
+            exec_ctx,
+            [
+                NormalFileAction(
+                    action_type=FileActionType.CREATE_COPY,
+                    src_path=pkg_install / "first.txt",
+                    dst_path=self.system_target_dir / "first.txt",
+                )
+            ],
+        )
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg_first, "installing")
+        save_state_registry(registry)
+
+        ws_cfg = WorkspaceConfig(
+            drift_root=self.drift_root,
+            workspace=WorkspaceSectionConfig(default_target_directory=self.system_target_dir),
+            packages_enable={pkg_first: True},
+            packages_enable_default=False,
+        )
+
+        res = run_primitive_8_rollback_recovery(ws_cfg, [pkg_first], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertFalse(marker_file.exists())
+        self.assertFalse((self.system_target_dir / "first.txt").exists())
+        self.assertFalse(pkg_install.exists())
+        self.assertFalse(pkg_backup_root.exists())
+
+    def test_rollback_committed_package_ignores_hook_errors_by_default(self) -> None:
+        """Verifies Step 3 reinstall for committed packages ignores hook failures by default (raise_on_error=False)."""
+        hooks_dir = self.pkg_a_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        failing_hook = hooks_dir / "fail_hook.py"
+        failing_hook.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(42)\n", encoding="utf-8")
+        failing_hook.chmod(0o755)
+
+        (self.pkg_a_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+
+        [hooks]
+        pre_install = "drift_hooks/fail_hook.py"
+        post_install = "drift_hooks/fail_hook.py"
+        pre_update = "drift_hooks/fail_hook.py"
+        post_update = "drift_hooks/fail_hook.py"
+        """, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit failing hook in HEAD"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Dirty pkg_a and mark installing
+        (self.pkg_a_install / "file.txt").write_text("dirty", encoding="utf-8")
+        (self.system_target_dir / "file.txt").write_text("dirty on host", encoding="utf-8")
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installing")
+        save_state_registry(registry)
+
+        res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.restored_packages, ["pkg_a"])
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "clean content")
+        reloaded = load_state_registry(state_file)
+        self.assertEqual(reloaded.get_package_state("pkg_a"), "installed")
+
+    def test_rollback_committed_package_runs_hooks_when_wal_restores_all_files(self) -> None:
+        """Verifies Step 3 executes pre_update/post_update hooks via run_hooks_when_unchanged=True even when Step 1 WAL restores all host files."""
+        hooks_dir = self.pkg_a_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        marker_file = self.system_target_dir / "rollback_hook_ran.txt"
+        update_hook = hooks_dir / "post_update.py"
+        update_hook.write_text(
+            f"#!/usr/bin/env python3\nfrom pathlib import Path\nPath({repr(marker_file.as_posix())}).write_text('hook_executed')\n",
+            encoding="utf-8",
+        )
+        update_hook.chmod(0o755)
+
+        (self.pkg_a_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+
+        [hooks]
+        post_update = "drift_hooks/post_update.py"
+        """, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit post_update hook in HEAD"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Simulate a failed deploy where WAL recorded a newly added file (so Step 1 WAL rollback
+        # deletes the added file and leaves host files 100% identical to HEAD before Step 3 runs)
+        pkg_backup_root = self.backup_dir / "pkg_a"
+        added_src = self.pkg_a_install / "added_v2.txt"
+        added_src.write_text("v2 added", encoding="utf-8")
+        exec_ctx = FileActionExecutionContext(sudo=False, wal_dir=pkg_backup_root / "wal")
+        execute_delivery_actions(
+            exec_ctx,
+            [
+                NormalFileAction(
+                    action_type=FileActionType.CREATE_COPY,
+                    src_path=added_src,
+                    dst_path=self.system_target_dir / "added_v2.txt",
+                )
+            ],
+        )
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installing")
+        save_state_registry(registry)
+
+        res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertFalse((self.system_target_dir / "added_v2.txt").exists())
+        self.assertTrue(marker_file.is_file())
+        self.assertEqual(marker_file.read_text(encoding="utf-8"), "hook_executed")
+
+    def test_rollback_falls_back_to_default_order_on_cyclic_dependencies_or_corrupt_config(self) -> None:
+        """Verifies rollback succeeds using fallback order when uncommitted packages have cyclic dependencies or corrupt config."""
+        for pkg, dep in (("pkg_cyc_1", "pkg_cyc_2"), ("pkg_cyc_2", "pkg_cyc_1")):
+            pkg_dir = self.install_dir / pkg / DRIFT_INTERNAL_DIR_NAME
+            pkg_dir.mkdir(parents=True, exist_ok=True)
+            (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+                f'[package]\nname = "{pkg}"\ndependencies = ["{dep}"]\n',
+                encoding="utf-8",
+            )
+            self.workspace_config.packages_enable[pkg] = True
+
+        pkg_corrupt = "pkg_corrupt"
+        corrupt_dir = self.install_dir / pkg_corrupt / DRIFT_INTERNAL_DIR_NAME
+        corrupt_dir.mkdir(parents=True, exist_ok=True)
+        (corrupt_dir / PACKAGE_CONFIG_FILE_NAME).write_text("[[[invalid toml", encoding="utf-8")
+        self.workspace_config.packages_enable[pkg_corrupt] = True
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        for pkg in ("pkg_cyc_1", "pkg_cyc_2", pkg_corrupt):
+            registry.set_package_state(pkg, "staging")
+        save_state_registry(registry)
+
+        res = run_primitive_8_rollback_recovery(
+            self.workspace_config,
+            ["pkg_cyc_1", "pkg_cyc_2", pkg_corrupt],
+            force=False,
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertCountEqual(res.restored_packages, ["pkg_cyc_1", "pkg_cyc_2", pkg_corrupt])
+        reloaded = load_state_registry(state_file)
+        for pkg in ("pkg_cyc_1", "pkg_cyc_2", pkg_corrupt):
+            self.assertIsNone(reloaded.get_package_state(pkg))
+            self.assertFalse((self.install_dir / pkg).exists())
+
 
 if __name__ == "__main__":
     unittest.main()
-
-

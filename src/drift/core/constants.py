@@ -64,7 +64,6 @@ LEGACY_WORKSPACE_CONFIG_FILE_NAMES = (
 )
 PACKAGE_CONFIG_FILE_NAME = "drift_package.toml"
 PACKAGE_CONFIG_LOCAL_FILE_NAME = "drift_package.local.toml"
-PACKAGE_CONFIG_FILE_NAME_LIST = (PACKAGE_CONFIG_FILE_NAME, )
 SECRETS_ENV_FILE_NAME = "secrets.env"
 DRIFT_IGNORE_FILE_NAME = ".drift_ignore"
 DRIFT_IGNORE_LEGACY_FILE_NAME = ".driftignore"
@@ -191,7 +190,15 @@ class InstallMethod(str, Enum):
 class BackupSubfolder(str, Enum):
     """Subfolders within backup/<pkg>/ for different backup categories."""
     OVERWRITTEN = "overwritten"
-    DELETED_FILES = "deleted_files"
+    DELETED = "deleted"
+    WAL = "wal"
+    STASH = "stash"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+WAL_ACTIONS_FILE_NAME = "actions.json"
 
 
 class DirMode(str, Enum):

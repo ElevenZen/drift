@@ -9,7 +9,7 @@ Layer 3: Public Primitive Entry Point
         1. Orphan Package Uninstallation:
             run_primitive_7_uninstall_packages(package_names=(), force=True)
                 (Uninstalls all installed packages disabled in workspace config)
-        2. Database Purge (render/ and install/):
+        2. Database Purge (render/, install/, and backup/ WAL):
             purge_render_folders(workspace_config, dry_run) [Layer 2]
                 filter_candidate_package_dirs [Layer 1]
                 filter (is_zombie_package_dir OR disabled OR missing from src/)
@@ -18,6 +18,10 @@ Layer 3: Public Primitive Entry Point
                 filter_candidate_package_dirs [Layer 1]
                 filter (is_zombie_package_dir OR (unregistered AND (disabled OR missing from src/)))
                 remove_purged_folders [Layer 1]
+            purge_redundant_wal_folders(workspace_config, state_registry, ghost_packages, dry_run) [Layer 2]
+                filter_candidate_package_dirs [Layer 1]
+                filter (check_has_package_wal_dir AND not in rollback_eligible_pkgs)
+                clear_package_wal [core.file_action]
         3. Scoped Database Git Commits:
             commit_repo_changes (scoped to purged folder names in render/ and install/)
         4. Return GcResult
@@ -28,11 +32,13 @@ Layers (ordered bottom-up by dependency):
         filter_candidate_package_dirs
         is_zombie_package_dir
         filter_zombie_package_dirs
+        check_has_package_wal_dir
         remove_purged_folders
     Layer 2: Database Purge Handlers
         purge_zombie_folders
         purge_render_folders
         purge_install_folders
+        purge_redundant_wal_folders
     Layer 3: Public Primitive Entry Point
         run_primitive_9_purge_workspace_garbage
 ===============================================================================
@@ -44,9 +50,16 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Iterator, Iterable
 
 from ..config.workspace_config import WorkspaceConfig
-from ..core.state_registry import load_state_registry
+from ..core.state_registry import StateRegistry, load_state_registry
+from ..core.file_action import clear_package_wal
 from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
-from ..core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, CONFIG_DIR_NAME, FORBIDDEN_PACKAGE_NAMES
+from ..core.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    CONFIG_DIR_NAME,
+    FORBIDDEN_PACKAGE_NAMES,
+    BackupSubfolder,
+)
 from ..utils.git_utils import commit_repo_changes
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..models import GcResult
@@ -80,6 +93,12 @@ def is_zombie_package_dir(item: Path) -> bool:
 def filter_zombie_package_dirs(items: Iterable[Path]) -> Iterator[Path]:
     """Filters package directories that lack any valid package config file."""
     return filter(is_zombie_package_dir, items)
+
+
+def check_has_package_wal_dir(pkg_backup_dir: Path) -> bool:
+    """Returns True if backup/<pkg>/wal exists on disk (as directory, file, or symlink)."""
+    wal_dir = pkg_backup_dir / BackupSubfolder.WAL
+    return wal_dir.exists() or wal_dir.is_symlink()
 
 
 def remove_purged_folders(
@@ -128,6 +147,7 @@ def purge_render_folders(
 
 def purge_install_folders(
     workspace_config: WorkspaceConfig,
+    state_registry: Optional[StateRegistry] = None,
     dry_run: bool = False,
 ) -> List[str]:
     """
@@ -138,17 +158,13 @@ def purge_install_folders(
     """
     install_path = workspace_config.install_path
     registry_path = install_path / "state.toml"
-    registered_pkgs = set()
-    if registry_path.exists():
-        try:
-            registry = load_state_registry(registry_path)
-            registered_pkgs = set(registry.packages.keys())
-        except Exception as exc:
-            logger.warning(
-                f"⚠️  Failed to load state registry at '{registry_path}': {exc}. "
-                f"Proceeding with folder-based purge only."
-            )
-
+    registry = state_registry if state_registry is not None else load_state_registry(registry_path)
+    if not registry.packages:
+        logger.warning(
+            f"⚠️  State registry at '{registry_path}' is empty or missing. "
+            f"Proceeding with folder-based purge only."
+        )
+    registered_pkgs = set(registry.packages.keys())
 
     items = filter_candidate_package_dirs(install_path)
     purged_items = filter(
@@ -170,6 +186,67 @@ def purge_install_folders(
     return purged
 
 
+def purge_redundant_wal_folders(
+    workspace_config: WorkspaceConfig,
+    state_registry: Optional[StateRegistry] = None,
+    ghost_packages: Iterable[str] = (),
+    target_pkgs: Iterable[str] = (),
+    dry_run: bool = False,
+    log_level: int = logging.INFO,
+) -> List[str]:
+    """
+    Purges redundant backup/<pkg>/wal/ folders for packages not in an uncommitted/rollback-eligible state:
+    1. Packages registered in state.toml with state 'installed'.
+    2. Packages not registered in state.toml (e.g. uninstalled or ghost packages).
+    Packages currently in a rollback-eligible state ('staging', 'staged', 'installing') keep their WAL.
+    If target_pkgs is non-empty, only evaluates candidate packages in target_pkgs.
+    """
+    backup_path = workspace_config.backup_path
+    registry_path = workspace_config.install_path / "state.toml"
+    registry = state_registry if state_registry is not None else load_state_registry(registry_path)
+    if not registry.packages:
+        logger.warning(
+            f"⚠️  State registry at '{registry_path}' is empty or missing. "
+            f"Proceeding with empty state registry for WAL purge."
+        )
+
+    ghost_set = set(ghost_packages)
+    rollback_eligible_pkgs = {
+        pkg for pkg, _ in registry.get_rollback_eligible_packages()
+        if pkg not in ghost_set
+    }
+    target_set = set(target_pkgs)
+
+    items = filter_candidate_package_dirs(backup_path)
+    redundant_items = filter(
+        lambda item: (
+            (not target_set or item.name in target_set)
+            and check_has_package_wal_dir(item)
+            and item.name not in rollback_eligible_pkgs
+        ),
+        items,
+    )
+    purged_pkgs = [item.name for item in redundant_items]
+    if not purged_pkgs:
+        return []
+
+    if dry_run:
+        logger.log(
+            log_level,
+            f"🔍 [DRY RUN] Would purge redundant WAL folder(s) from backup database: {', '.join(purged_pkgs)}",
+        )
+    else:
+        logger.log(
+            log_level,
+            f"🗑️  [PURGE] Removing redundant WAL folder(s) from backup database: {', '.join(purged_pkgs)}",
+        )
+        for pkg in purged_pkgs:
+            pkg_sudo = registry.packages[pkg].sudo if pkg in registry.packages else False
+            clear_package_wal(backup_path / pkg, sudo=pkg_sudo)
+
+    return purged_pkgs
+
+
 def run_primitive_9_purge_workspace_garbage(
     workspace_config: WorkspaceConfig,
     dry_run: bool = False,
@@ -179,6 +256,7 @@ def run_primitive_9_purge_workspace_garbage(
     Identifies and removes garbage from the drift workspace databases.
     1. Uninstalls orphan packages (present in state but disabled in config).
     2. Removes package folders in render/ and install/ that are disabled, missing from source, or lack config.
+    3. Removes redundant backup/<pkg>/wal/ folders for packages not in an uncommitted/rollback-eligible state.
     """
     # --- Part 1: Orphan Package Uninstallation ---
     # We let run_primitive_7_uninstall_packages handle orphan identification if package_names is empty
@@ -209,7 +287,7 @@ def run_primitive_9_purge_workspace_garbage(
         if not dry_run:
             state_registry.save()
 
-    # --- Part 2: Database Folder Purge (Disabled packages & zombie folders) ---
+    # --- Part 2: Database Folder Purge (Disabled packages, zombie folders, redundant WALs) ---
     # Purge render/
     render_zombies = purge_render_folders(
         workspace_config, 
@@ -218,8 +296,17 @@ def run_primitive_9_purge_workspace_garbage(
     
     # Purge install/
     install_zombies = purge_install_folders(
-        workspace_config, 
-        dry_run=dry_run
+        workspace_config,
+        state_registry=state_registry,
+        dry_run=dry_run,
+    )
+
+    # Purge redundant backup/<pkg>/wal/ folders
+    purged_wal_pkgs = purge_redundant_wal_folders(
+        workspace_config,
+        state_registry=state_registry,
+        ghost_packages=ghost_packages,
+        dry_run=dry_run,
     )
 
     render_commit_msg: Optional[str] = None
@@ -253,7 +340,13 @@ def run_primitive_9_purge_workspace_garbage(
                 repo_name="install repo"
             )
     
-    if not uninstalled_orphans and not render_zombies and not install_zombies and not ghost_packages:
+    if (
+        not uninstalled_orphans
+        and not render_zombies
+        and not install_zombies
+        and not ghost_packages
+        and not purged_wal_pkgs
+    ):
         logger.info("✨ Workspace is clean. No garbage detected.")
 
     return GcResult(
@@ -263,6 +356,7 @@ def run_primitive_9_purge_workspace_garbage(
         uninstalled_orphans=list(uninstalled_orphans),
         purged_render_zombies=render_zombies,
         purged_install_zombies=install_zombies,
+        purged_wal_packages=purged_wal_pkgs,
         render_commit_message=render_commit_msg,
         install_commit_message=install_commit_msg
     )

@@ -456,22 +456,24 @@ def execute_sequential_compile_and_apply(
         reinstall=reinstall,
     )
 
-    # NOTE [Stage Delta Filter & Reinstall Bridge]:
+    # NOTE [Stage Delta Filter & Unchanged Host Hook Bridge]:
     # Stage 3 (stage_repo) tracks modifications across ALL files in render/<pkg>/ vs install/<pkg>/,
     # including non-deployable control plane files (.drift/hooks/*, .drift/drift_package.toml).
     # Consequently, changed_pkgs accurately reflects whether anything in the package was updated.
     # However, Primitive 5's internal change-detection (plan_package_install) only inspects physical
     # deployable files against host state. If a staging change only affected non-deployable files (e.g.
     # an updated lifecycle hook script or altered hook flags), Primitive 5 would see 0 host mutations
-    # and skip the package unless reinstall=True.
-    # Therefore, we pass reinstall=True to ensure that all packages filtered as changed by staging are
-    # fully processed by Primitive 5 (ensuring hooks execute and state updates).
+    # and skip the package unless run_hooks_when_unchanged=True (or reinstall=True).
+    # Therefore, we pass reinstall=reinstall and run_hooks_when_unchanged=True so file delivery remains
+    # strictly incremental (unless --reinstall was explicitly requested), while ensuring that all packages
+    # selected for deployment execute their lifecycle hooks and update state.toml.
     install_plan: Optional[InstallPlan] = None
     if pkgs_to_install:
         install_options = InstallOptions(
             resolve_symlinks=True,
             force=force,
-            reinstall=True,
+            reinstall=reinstall,
+            run_hooks_when_unchanged=True,
             flags=hook_flags,
             no_deps=no_deps,
         )

@@ -1215,7 +1215,7 @@ class TestReverseSync(unittest.TestCase):
             install_method=InstallMethod.COPY,
             is_first_time=False,
             backup_pkg_dir=None,
-            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            backup_subfolder=BackupSubfolder.DELETED,
             reverse_mode=False,
         )
 

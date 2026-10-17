@@ -12,7 +12,7 @@ The `apply` verb executes the transition from the staged baseline in **Zone 3 (`
 ### 1. Pre-Flight Assertion & Collision Guard
 Before modifying any live file on your system, Drift runs a comprehensive pre-flight verification:
 * **Zero Overwrite Protection**: Untracked or manual files on the host that would collide with deployment are safely backed up to `backup/<package>/overwritten/` before the operation.
-* **Orphan Sweeping**: Files removed from package configuration are pruned from the host and swept safely into `backup/<package>/deleted_files/`.
+* **Orphan Sweeping**: Files removed from package configuration are pruned from the host and swept safely into `backup/<package>/deleted/`.
 * **Cross-Package Collision Detection**: Proactively verifies destination paths across all targeted packages, guaranteeing that no two packages claim or deploy to the same host path.
 * **Nesting Prevention**: Blocks deployment if a target directory is equal to or nested inside your Drift workspace root, preventing destructive recursive symlink loops.
 * **Escalation Verification**: Validates `sudo` capability before attempting deployment if any package target requires elevated root privileges.

@@ -32,6 +32,7 @@ class GcResult(SerializableModel):
     uninstalled_orphans: List[str] = field(default_factory=list)
     purged_render_zombies: List[str] = field(default_factory=list)
     purged_install_zombies: List[str] = field(default_factory=list)
+    purged_wal_packages: List[str] = field(default_factory=list)
     render_commit_message: Optional[str] = None
     install_commit_message: Optional[str] = None
     error_message: Optional[str] = None

@@ -77,6 +77,7 @@ from ..core.file_action import (
     FileActionExecutionContext,
     FileActionType,
     FileAction,
+    clear_package_wal,
     execute_delivery_actions,
 )
 from ..core.folder_delivery import (
@@ -169,6 +170,7 @@ def clean_up_package_directories(context: PackageUninstallContext) -> None:
         except Exception as e:
             logger.warning(f"   Failed to clean up install directory {context.install_pkg_dir}: {e}")
 
+    clear_package_wal(context.backup_pkg_dir, sudo=context.sudo)
     prune_empty_parents(context.backup_pkg_dir, context.backup_pkg_dir.parent)
 
 

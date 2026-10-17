@@ -494,7 +494,7 @@ class TestStageRepo(unittest.TestCase):
         changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
         # Physical file is now deleted from install/ without polluting backup/
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
-        backup_file = os.path.join(self.backup_dir, "pkg_a", "deleted_files", "file1.txt")
+        backup_file = os.path.join(self.backup_dir, "pkg_a", "deleted", "file1.txt")
         self.assertFalse(os.path.exists(backup_file))
 
     def test_stage_deleting_drift_ignore_removes_it_from_install(self) -> None:
@@ -957,14 +957,14 @@ class TestStageRepo(unittest.TestCase):
     def test_package_stage_plan_properties(self) -> None:
         """Verifies PackageStagePlan properties and helper methods."""
         from drift.models import PackageStagePlan
-        from drift.core.file_action import FileAction, FileActionType
+        from drift.core.file_action import FileAction, NormalFileAction, FileActionType
 
-        actions = [
-            FileAction(action_type=FileActionType.CREATE_COPY, src_path=Path("/tmp/render/a.txt"), dst_path=Path("/tmp/a.txt")),
-            FileAction(action_type=FileActionType.UPDATE_COPY, src_path=Path("/tmp/render/m.txt"), dst_path=Path("/tmp/m.txt")),
-            FileAction(action_type=FileActionType.UPDATE_PERMISSION, src_path=Path("/tmp/render/p.txt"), dst_path=Path("/tmp/p.txt")),
-            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=Path("/tmp/d.txt")),
-            FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=Path("/tmp/sub")),
+        actions: List[FileAction] = [
+            NormalFileAction(action_type=FileActionType.CREATE_COPY, src_path=Path("/tmp/render/a.txt"), dst_path=Path("/tmp/a.txt")),
+            NormalFileAction(action_type=FileActionType.UPDATE_COPY, src_path=Path("/tmp/render/m.txt"), dst_path=Path("/tmp/m.txt")),
+            NormalFileAction(action_type=FileActionType.UPDATE_PERMISSION, src_path=Path("/tmp/render/p.txt"), dst_path=Path("/tmp/p.txt")),
+            NormalFileAction(action_type=FileActionType.DELETE_ITEM, dst_path=Path("/tmp/d.txt")),
+            NormalFileAction(action_type=FileActionType.ENSURE_DIR, dst_path=Path("/tmp/sub")),
         ]
         plan = PackageStagePlan(package="test_pkg", actions=actions)
 
@@ -1565,7 +1565,7 @@ class TestStageDependencies(unittest.TestCase):
 
     def test_stage_result_container_and_methods(self) -> None:
         """Verifies StageResult properties, dictionary compatibility, formatting, and serialization."""
-        from drift.core.file_action import FileAction, FileActionType
+        from drift.core.file_action import NormalFileAction, FileActionType
 
         # 1. Empty StageResult
         empty_res = StageResult()
@@ -1584,7 +1584,7 @@ class TestStageDependencies(unittest.TestCase):
         plan_a = PackageStagePlan(
             package="pkg_a",
             actions=[
-                FileAction(
+                NormalFileAction(
                     action_type=FileActionType.CREATE_COPY,
                     src_path=Path("/tmp/render/pkg_a/foo.txt"),
                     dst_path=Path("/tmp/install/pkg_a/foo.txt"),

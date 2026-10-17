@@ -59,6 +59,7 @@ from ..core.file_action import (
     FileActionExecutionContext,
     FileActionType,
     FileAction,
+    NormalFileAction,
     execute_delivery_actions,
 )
 from ..models import (
@@ -215,11 +216,11 @@ def plan_resource_import(
     src_dir_to_render: Path,
     src_on_system: Path,
     rel_target: Path,
-) -> FileAction:
+) -> NormalFileAction:
     """Compiles a single planned resource import action."""
     rel_src = decode_dot_prefix(rel_target)
     dest_path = src_dir_to_render / rel_src
-    return FileAction(
+    return NormalFileAction(
         action_type=FileActionType.CREATE_COPY,
         src_path=src_on_system,
         dst_path=dest_path,
@@ -235,7 +236,7 @@ def plan_add_resources(
     dry_run: bool = False,
 ) -> AddResourcePlan:
     """Compiles the declarative import plan containing all planned resource import actions."""
-    planned_actions = [
+    planned_actions: List[FileAction] = [
         plan_resource_import(src_dir_to_render, src, rel_tgt)
         for src, rel_tgt in worklist
     ]

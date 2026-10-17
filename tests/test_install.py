@@ -67,6 +67,8 @@ from drift.core.file_action import (
         FileActionExecutionContext,
         FileActionType,
         FileAction,
+        NormalFileAction,
+        BackupFileAction,
         DELETE_ACTION_TYPES,
         execute_single_action,
         execute_delivery_actions,
@@ -945,8 +947,8 @@ class TestInstallRepo(unittest.TestCase):
         # file1.txt should still exist
         self.assertTrue(system_file1.exists() or system_file1.is_symlink())
 
-        # Assert file2.txt was backed up under deleted_files
-        backup_pruned = self.backup_dir / pkg / "deleted_files" / "file2.txt"
+        # Assert file2.txt was backed up under deleted
+        backup_pruned = self.backup_dir / pkg / "deleted" / "file2.txt"
         self.assertTrue(backup_pruned.exists())
         with open(backup_pruned, "r", encoding="utf-8") as f:
             content = f.read()
@@ -999,7 +1001,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse(os.path.islink(system_file2))
 
         # Assert no backup was created (since the broken symlink contains no real file target content)
-        backup_pruned = self.backup_dir / pkg / "deleted_files" / "file2.txt"
+        backup_pruned = self.backup_dir / pkg / "deleted" / "file2.txt"
         self.assertFalse(backup_pruned.exists())
 
     @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
@@ -1639,9 +1641,9 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res.packages[0].plan.overwritten_backups if a.src_path is not None], ["app.conf"])
 
     @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
-    def test_switch_method_from_symlink_to_copy_backs_up_and_replaces_symlinks(self) -> None:
+    def test_switch_method_from_symlink_to_copy_deletes_and_replaces_symlinks(self) -> None:
         """Verifies that when a package deployed with 'symlink' switches to 'copy',
-        the collision handler backs up the previous symlinks/files into overwritten/
+        the collision handler deletes the previous symlinks via DELETE_ITEM (without polluting overwritten/)
         and replaces them with physical copies.
         """
         pkg = "pkg_symlink_to_copy"
@@ -1690,9 +1692,14 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse(host_tool.is_symlink())
         self.assertEqual(host_tool.read_text(encoding="utf-8"), "#!/bin/bash\necho hi")
 
-        # - Previous deployed files are backed up to overwritten/
-        self.assertTrue((self.backup_dir / pkg / "overwritten" / "config.json").exists())
-        self.assertTrue((self.backup_dir / pkg / "overwritten" / "sub" / "tool.sh").exists())
+        # - Previous symlinks were deleted via DELETE_ITEM without polluting overwritten/
+        delete_actions = [
+            a for a in res2.packages[0].plan.actions
+            if a.action_type == FileActionType.DELETE_ITEM and a.reason == "Replacing symlink with copy"
+        ]
+        self.assertEqual(len(delete_actions), 2)
+        self.assertFalse((self.backup_dir / pkg / "overwritten" / "config.json").exists())
+        self.assertFalse((self.backup_dir / pkg / "overwritten" / "sub" / "tool.sh").exists())
 
     @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_switch_method_from_copy_to_symlink_backs_up_and_replaces_physical_files(self) -> None:
@@ -2383,7 +2390,7 @@ class TestInstallRepo(unittest.TestCase):
             is_first_time=True,
             drift_root=self.workspace_config.drift_root,
         )
-        action = FileAction(
+        action = NormalFileAction(
             action_type=FileActionType.ENSURE_DIR,
             dst_path=file_path,
         )
@@ -2399,7 +2406,7 @@ class TestInstallRepo(unittest.TestCase):
         with self.assertRaises(NotADirectoryError):
             ensure_dir(symlink_path)
 
-        action_symlink = FileAction(
+        action_symlink = NormalFileAction(
             action_type=FileActionType.ENSURE_DIR,
             dst_path=symlink_path,
         )
@@ -2407,7 +2414,7 @@ class TestInstallRepo(unittest.TestCase):
             execute_single_action(context.file_action_context, action_symlink)
 
     def test_backup_prune_backs_up_and_removes_file(self) -> None:
-        """Verifies execute_single_action with BACKUP_PRUNE atomically backs up to deleted_files and deletes target."""
+        """Verifies execute_single_action with BACKUP_PRUNE atomically backs up to deleted and deletes target."""
         pkg = "pkg_prune_test"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -2427,11 +2434,12 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        action = FileAction(
+        action = BackupFileAction(
             action_type=FileActionType.BACKUP_PRUNE,
             src_path=target_file,
-            dst_path=self.backup_dir / pkg / "deleted_files" / "orphan.txt",
+            dst_path=self.backup_dir / pkg / "deleted" / "orphan.txt",
             reason="Orphaned file 'orphan.txt' prune",
+            backup_pkg_root=self.backup_dir / pkg,
         )
         execute_single_action(context.file_action_context, action)
 
@@ -2439,8 +2447,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse(target_file.exists())
         self.assertFalse(target_file.is_symlink())
 
-        # 2. Backup must exist in backup/<pkg>/deleted_files/orphan.txt
-        backup_file = self.backup_dir / pkg / "deleted_files" / "orphan.txt"
+        # 2. Backup must exist in backup/<pkg>/deleted/orphan.txt
+        backup_file = self.backup_dir / pkg / "deleted" / "orphan.txt"
         self.assertTrue(backup_file.is_file())
         self.assertEqual(backup_file.read_text(encoding="utf-8"), "orphan content to be pruned")
 
@@ -2478,7 +2486,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(len(plan.pruned), 1)
         self.assertEqual(plan.pruned[0].action_type, FileActionType.BACKUP_PRUNE)
         self.assertEqual(plan.pruned[0].src_path, orphan_host)
-        self.assertEqual(plan.pruned[0].dst_path, self.backup_dir / pkg / "deleted_files" / "old_deleted.txt")
+        self.assertEqual(plan.pruned[0].dst_path, self.backup_dir / pkg / "deleted" / "old_deleted.txt")
 
         # Execute package actions
         execute_package_actions(context=context, plan=plan)
@@ -2486,8 +2494,8 @@ class TestInstallRepo(unittest.TestCase):
         # Orphan removed from host
         self.assertFalse(orphan_host.exists())
 
-        # Backup created in deleted_files
-        backup_file = self.backup_dir / pkg / "deleted_files" / "old_deleted.txt"
+        # Backup created in deleted
+        backup_file = self.backup_dir / pkg / "deleted" / "old_deleted.txt"
         self.assertTrue(backup_file.is_file())
         self.assertEqual(backup_file.read_text(encoding="utf-8"), "historical orphan content")
 
@@ -2664,11 +2672,11 @@ class TestInstallRepo(unittest.TestCase):
         res2 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res2.status, "SUCCESS")
 
-        # Assert orphan backup in backup/<pkg>/deleted_files/ uses 'dot-' prefix
-        backup_pruned = self.backup_dir / pkg / "deleted_files" / "dot-bashrc"
+        # Assert orphan backup in backup/<pkg>/deleted/ uses 'dot-' prefix
+        backup_pruned = self.backup_dir / pkg / "deleted" / "dot-bashrc"
         self.assertTrue(backup_pruned.is_file())
         self.assertEqual(backup_pruned.read_text(encoding="utf-8"), "package bashrc")
-        self.assertFalse((self.backup_dir / pkg / "deleted_files" / ".bashrc").exists())
+        self.assertFalse((self.backup_dir / pkg / "deleted" / ".bashrc").exists())
 
     def test_cross_package_intra_batch_conflict_collects_all(self) -> None:
         """Verifies that intra-batch cross-package destination collisions collect all conflicting paths in one report."""
@@ -3245,7 +3253,7 @@ class TestInstallRepo(unittest.TestCase):
             install_method=InstallMethod.COPY,
             is_first_time=False,
             backup_pkg_dir=None,
-            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            backup_subfolder=BackupSubfolder.DELETED,
             reverse_mode=True,
         )
 
@@ -3389,8 +3397,8 @@ class TestInstallRepo(unittest.TestCase):
         # Test resolve_backup_path (encodes hidden dot to dot- prefix in backup store)
         backup_path = delivery_ctx.resolve_backup_path(Path(".app.conf"))
         self.assertEqual(backup_path, self.backup_dir / pkg / "overwritten" / "dot-app.conf")
-        deleted_backup_path = delivery_ctx.resolve_backup_path(Path(".app.conf"), subfolder=BackupSubfolder.DELETED_FILES)
-        self.assertEqual(deleted_backup_path, self.backup_dir / pkg / "deleted_files" / "dot-app.conf")
+        deleted_backup_path = delivery_ctx.resolve_backup_path(Path(".app.conf"), subfolder=BackupSubfolder.DELETED)
+        self.assertEqual(deleted_backup_path, self.backup_dir / pkg / "deleted" / "dot-app.conf")
 
         # Test path translations in normal mode
         self.assertEqual(delivery_ctx.translate_target_rel_path(Path("dot-config/app.conf")), Path(".config/app.conf"))
@@ -3447,7 +3455,7 @@ class TestInstallRepo(unittest.TestCase):
             install_method=InstallMethod.COPY,
             is_first_time=False,
             backup_pkg_dir=None,
-            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            backup_subfolder=BackupSubfolder.DELETED,
             reverse_mode=True,
         )
 
@@ -4121,7 +4129,7 @@ class TestInstallDependencies(unittest.TestCase):
             install_method=InstallMethod.COPY,
             is_first_time=False,
             backup_pkg_dir=None,
-            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            backup_subfolder=BackupSubfolder.DELETED,
             reverse_mode=True,
         )
 
@@ -4175,7 +4183,7 @@ class TestInstallDependencies(unittest.TestCase):
             install_method=InstallMethod.COPY,
             is_first_time=False,
             backup_pkg_dir=None,
-            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            backup_subfolder=BackupSubfolder.DELETED,
             reverse_mode=True,
         )
 
@@ -4218,7 +4226,7 @@ class TestInstallDependencies(unittest.TestCase):
             install_method=InstallMethod.COPY,
             is_first_time=False,
             backup_pkg_dir=None,
-            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            backup_subfolder=BackupSubfolder.DELETED,
             reverse_mode=False,
         )
 
@@ -4281,14 +4289,14 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
     def test_skip_identical_requires_src_path(self) -> None:
         """Verifies FileActionType.SKIP_IDENTICAL enforces src_path presence via __post_init__."""
         with self.assertRaises(ValueError) as ctx:
-            FileAction(
+            NormalFileAction(
                 action_type=FileActionType.SKIP_IDENTICAL,
                 dst_path=Path("/tmp/target.txt"),
             )
         self.assertIn("FileActionType.SKIP_IDENTICAL must have src_path set", str(ctx.exception))
 
         # Successfully instantiates when src_path is provided
-        action = FileAction(
+        action = NormalFileAction(
             action_type=FileActionType.SKIP_IDENTICAL,
             src_path=Path("/tmp/source.txt"),
             dst_path=Path("/tmp/target.txt"),
@@ -4308,7 +4316,7 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
                 exec_ctx = FileActionExecutionContext()
 
                 # 1. CREATE_COPY logs at INFO
-                copy_action = FileAction(
+                copy_action = NormalFileAction(
                     action_type=FileActionType.CREATE_COPY,
                     src_path=src_file,
                     dst_path=dst_file,
@@ -4319,7 +4327,7 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
                 self.assertTrue(dst_file.is_file())
 
                 # 2. SKIP_IDENTICAL logs at DEBUG (and NOT at INFO)
-                skip_action = FileAction(
+                skip_action = NormalFileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
                     src_path=src_file,
                     dst_path=dst_file,
@@ -4334,7 +4342,7 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
 
                 # 3. ENSURE_DIR conditional logging:
                 new_dir = tmp_root / "new_folder"
-                dir_action = FileAction(
+                dir_action = NormalFileAction(
                     action_type=FileActionType.ENSURE_DIR,
                     dst_path=new_dir,
                 )
@@ -4358,7 +4366,7 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
     def test_render_action_types_rejected_and_info_logging(self) -> None:
         """Verifies execute_single_action rejects render actions and logs INFO_MESSAGE properly."""
         exec_ctx = FileActionExecutionContext()
-        render_act = FileAction(
+        render_act = NormalFileAction(
             action_type=FileActionType.RENDER_ITEM,
             src_path=Path("/tmp/tpl"),
             dst_path=Path("/tmp/out"),
@@ -4367,7 +4375,7 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
             execute_single_action(exec_ctx, render_act)
         self.assertIn("cannot be executed by the host delivery engine", str(cm.exception))
 
-        config_act = FileAction(
+        config_act = NormalFileAction(
             action_type=FileActionType.WRITE_CONFIG,
             dst_path=Path("/tmp/cfg"),
         )
@@ -4379,7 +4387,7 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
         set_test_mode(True, enable_logging=True)
         try:
             with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
-                info_act = FileAction(
+                info_act = NormalFileAction(
                     action_type=FileActionType.INFO_MESSAGE,
                     reason="Package hook executed successfully",
                 )

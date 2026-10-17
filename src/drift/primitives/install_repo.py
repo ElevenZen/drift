@@ -132,13 +132,14 @@ from .package_assertions import (
 )
 from ..utils.process_utils import run_command, assert_can_escalate
 from ..utils.config_utils import partition
-from ..core.sync_ops import backup_file_or_dir_external
 from ..core.file_action import (
     FileActionExecutionContext,
     FileActionType,
     FileAction,
+    NormalFileAction,
     NO_CHANGE_ACTION_TYPES,
     is_mutating_action,
+    clear_package_wal,
     execute_delivery_actions,
 )
 from ..core.folder_delivery import (
@@ -183,7 +184,7 @@ def plan_package_install(
     # 1. Undeploy from previous location if target directory migrated
     if target_migrated_from is not None:
         actions.append(
-            FileAction(
+            NormalFileAction(
                 action_type=FileActionType.INFO_MESSAGE,
                 reason=(
                     f"🔄 [MIGRATE] Target directory for package '{context.pkg_name}' changed: "
@@ -203,7 +204,7 @@ def plan_package_install(
 
     # 2. Informational banner indicating package install begins
     actions.append(
-        FileAction(
+        NormalFileAction(
             action_type=FileActionType.INFO_MESSAGE,
             reason=f"🚀 Installing package: {context.pkg_name}",
         )
@@ -221,7 +222,13 @@ def plan_package_install(
         is_mutating_action(a)
         for a in actions
     )
-    can_skip = not context.reinstall and not context.is_first_time and target_migrated_from is None and not has_mutations
+    can_skip = (
+        not context.reinstall
+        and not context.run_hooks_when_unchanged
+        and not context.is_first_time
+        and target_migrated_from is None
+        and not has_mutations
+    )
 
     return PackageInstallPlan(
         package=context.pkg_name,
@@ -247,8 +254,9 @@ def execute_package_actions(
     resolve_symlinks: bool = True,
 ) -> None:
     """Executes all planned actions in deterministic order on the host filesystem."""
-    action_ctx = FileActionExecutionContext(
-        sudo=context.sudo,
+    clear_package_wal(context.backup_pkg_dir, sudo=context.sudo)
+    action_ctx = replace(
+        context.file_action_context,
         resolve_symlinks=resolve_symlinks,
     )
     execute_delivery_actions(action_ctx, plan.actions)
@@ -379,11 +387,11 @@ def execute_package_install(
     # (such as modifications to .drift/hooks/*, .drift/drift_package.toml, or .drift/.drift_ignore).
     # If only a hook script or package config was modified while deployable files on the host remain identical,
     # has_mutations evaluates to False and Primitive 5 will SKIP the package (and bypass hook execution)
-    # unless options.reinstall is True.
+    # unless options.reinstall or options.run_hooks_when_unchanged is True.
     # When invoking Primitive 5 via the deploy pipeline ('drift deploy'), deploy_repo bridges this by
-    # filtering changed packages at the staging boundary and setting options.reinstall=True. When invoking
-    # Primitive 5 directly ('drift apply'), callers must supply -r / --reinstall to execute hooks when
-    # only non-deployable package files have changed.
+    # filtering changed packages at the staging boundary and setting options.run_hooks_when_unchanged=True.
+    # When invoking Primitive 5 directly ('drift apply'), callers must supply -r / --reinstall to execute
+    # hooks when only non-deployable package files have changed.
     if plan.can_skip:
         logger.info(f"Skipping package '{context.pkg_name}' installation (no changes detected and reinstall is False).")
         return PackageInstallResult(
@@ -416,6 +424,7 @@ def install_one_package(
         state_registry=state_registry,
         metadata=metadata,
         reinstall=opts.reinstall,
+        run_hooks_when_unchanged=opts.run_hooks_when_unchanged,
     )
     assert_packages_install_dirs_exist(workspace_config.install_path, [context.pkg_name])
 
@@ -601,6 +610,7 @@ def prepare_install(
             state_registry=state_registry,
             metadata=pkg_metadata_map[pkg],
             reinstall=opts.reinstall,
+            run_hooks_when_unchanged=opts.run_hooks_when_unchanged,
         )
         for pkg in action_order
         if pkg in pkg_metadata_map
@@ -766,6 +776,7 @@ def run_primitive_6_commit_install_repo(
     If there are no changes to commit, it returns gracefully without raising an error.
     """
     from ..utils.git_utils import commit_repo_changes
+    from .workspace_gc import purge_redundant_wal_folders
     
     install_dir = workspace_config.install_path
     
@@ -780,3 +791,9 @@ def run_primitive_6_commit_install_repo(
         logger.info(f"💾 Committed install repo changes: {commit_message}")
     else:
         logger.info("Nothing to commit, install repository is clean.")
+
+    purge_redundant_wal_folders(
+        workspace_config,
+        target_pkgs=target_pkgs,
+        log_level=logging.DEBUG,
+    )

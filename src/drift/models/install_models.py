@@ -44,6 +44,7 @@ class InstallOptions(AlwaysTruthy):
     resolve_symlinks: bool = True
     force: bool = False
     reinstall: bool = False
+    run_hooks_when_unchanged: bool = False
     dry_run: bool = False
     no_deps: bool = False
     flags: Optional[HookExecFlags] = None
@@ -73,6 +74,7 @@ class PackageInstallContext:
     source_dir_mask: Optional[Path] = None
     hooks: PackageHooks = field(default_factory=_default_package_hooks)
     reinstall: bool = False
+    run_hooks_when_unchanged: bool = False
 
     def rebase_install_dir(self, install_base: Path) -> PackageInstallContext:
         """Returns a copy of PackageInstallContext bound to the canonical install_base directory."""
@@ -86,6 +88,7 @@ class PackageInstallContext:
     def file_action_context(self) -> FileActionExecutionContext:
         return FileActionExecutionContext(
             sudo=self.sudo,
+            wal_dir=self.backup_pkg_dir / BackupSubfolder.WAL,
         )
 
     @property
@@ -122,6 +125,7 @@ class PackageInstallContext:
         state_registry: StateRegistry,
         metadata: PackageConfig,
         reinstall: bool = False,
+        run_hooks_when_unchanged: bool = False,
     ) -> PackageInstallContext:
         from ..core.ignore import DriftIgnore
         pkg = metadata.name
@@ -134,7 +138,7 @@ class PackageInstallContext:
         )
         backup_pkg_dir = workspace_config.backup_path / pkg
         pkg_state = state_registry.packages.get(pkg)
-        is_first_time = pkg_state is None or pkg_state.last_deployed is None
+        is_first_time = pkg_state is None or (pkg_state.last_deployed is None and pkg_state.state != "installed")
         ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir, is_source=False)
         install_method = metadata.get_install_method(workspace_config)
         return cls(
@@ -150,6 +154,7 @@ class PackageInstallContext:
             source_dir_mask=source_dir_mask,
             hooks=metadata.hooks,
             reinstall=reinstall,
+            run_hooks_when_unchanged=run_hooks_when_unchanged,
         )
 
 

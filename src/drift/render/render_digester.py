@@ -46,7 +46,7 @@ from ..core.constants import (
     DirMode,
 )
 from ..core.exceptions import CyclicDependencyError
-from ..core.file_action import FileAction, FileActionType, format_action_line
+from ..core.file_action import FileAction, NormalFileAction, FileActionType, format_action_line
 from ..core.folder_diff import list_folder_paths
 from ..utils.file_ops import prune_empty_parents
 from ..utils.path_utils import to_relative_path
@@ -182,11 +182,11 @@ def check_and_apply_cache(
             context.cache.set(target_path, cached, src_path=src_path)
 
         engine_name = getattr(getattr(node, "engine_config", None), "name", None)
-        action = FileAction(
+        action = NormalFileAction(
             action_type=FileActionType.SKIP_IDENTICAL,
             src_path=src_path or target_path,
             dst_path=target_path,
-            reason=engine_name,
+            reason=engine_name or "<unnamed engine>",
         )
         context.result.actions.append(action)
         from .render_hasher import format_hash_log
@@ -226,7 +226,7 @@ def prune_obsolete_config_files(context: DigestionContext) -> List[Path]:
         if cand.is_file() and cand not in active_set:
             if not context.dry_run:
                 cand.unlink()
-            action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=cand)
+            action = NormalFileAction(action_type=FileActionType.DELETE_ITEM, dst_path=cand)
             context.log_action(action)
             pruned.append(cand)
 
@@ -250,7 +250,7 @@ def prune_obsolete_hooks(context: DigestionContext) -> List[Path]:
                 if not context.dry_run:
                     disk_cand.unlink()
                     prune_empty_parents(disk_cand.parent, hooks_dir)
-                action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
+                action = NormalFileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
                 context.log_action(action)
                 pruned.append(cand)
             elif disk_cand.is_dir():
@@ -258,7 +258,7 @@ def prune_obsolete_hooks(context: DigestionContext) -> List[Path]:
                     if not any(disk_cand.iterdir()):
                         disk_cand.rmdir()
                         prune_empty_parents(disk_cand.parent, hooks_dir)
-                action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
+                action = NormalFileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
                 context.log_action(action)
                 pruned.append(cand)
 
@@ -287,7 +287,7 @@ def prune_obsolete_payload_files(context: DigestionContext) -> List[Path]:
                 if not context.dry_run:
                     disk_cand.unlink()
                     prune_empty_parents(disk_cand.parent, disk_pkg)
-                action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
+                action = NormalFileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
                 context.log_action(action)
                 pruned.append(cand)
             elif disk_cand.is_dir():
@@ -295,7 +295,7 @@ def prune_obsolete_payload_files(context: DigestionContext) -> List[Path]:
                     if not any(disk_cand.iterdir()):
                         disk_cand.rmdir()
                         prune_empty_parents(disk_cand.parent, disk_pkg)
-                action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
+                action = NormalFileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
                 context.log_action(action)
                 pruned.append(cand)
 

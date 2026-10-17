@@ -772,8 +772,8 @@ fi
         self.assertTrue(restored_target.is_file())
         self.assertEqual(restored_target.read_text(encoding="utf-8"), "deeply nested config")
 
-    def test_uninstall_backup_restore_colliding_file_backed_up_to_deleted_files(self):
-        """Verifies uninstallation preserves pre-existing host files colliding with restored files into deleted_files."""
+    def test_uninstall_backup_restore_colliding_file_backed_up_to_deleted(self):
+        """Verifies uninstallation preserves pre-existing host files colliding with restored files into deleted."""
         pkg = "pkg_collision_restore"
         install_pkg_dir = self.install_dir / pkg
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -798,9 +798,9 @@ fi
         )
 
         plan = plan_package_uninstall(context)
-        expected_backup_dst = self.backup_dir / pkg / BackupSubfolder.DELETED_FILES.value / "settings.json"
+        expected_backup_dst = self.backup_dir / pkg / BackupSubfolder.DELETED.value / "settings.json"
 
-        # Verify plan: BACKUP_OVERWRITE of colliding file into deleted_files, then CREATE_COPY of restored file
+        # Verify plan: BACKUP_OVERWRITE of colliding file into deleted, then CREATE_COPY of restored file
         backup_action = next((a for a in plan.actions if a.action_type == FileActionType.BACKUP_OVERWRITE and a.src_path == colliding_file), None)
         self.assertIsNotNone(backup_action)
         assert backup_action is not None
@@ -817,7 +817,7 @@ fi
 
         # Verify host target has restored content
         self.assertEqual(colliding_file.read_text(encoding="utf-8"), '{"restored": true}')
-        # Verify colliding host content was safely preserved in deleted_files/
+        # Verify colliding host content was safely preserved in deleted/
         self.assertTrue(expected_backup_dst.is_file())
         self.assertEqual(expected_backup_dst.read_text(encoding="utf-8"), '{"colliding_host": true}')
 

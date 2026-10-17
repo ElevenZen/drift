@@ -11,12 +11,12 @@ In dotfile management and system configuration orchestration, moving files from 
 * **Asymmetric Node Types**: A destination path on the host might be a concrete regular file, an internal symlink pointing into the workspace, an external foreign symlink, a broken symlink, an empty directory, or a populated directory.
 * **Ancestor Inversion**: Deploying a leaf file like `~/.config/nvim/init.lua` may fail if `~/.config/nvim` is unexpectedly a flat file, a broken symlink, or missing altogether. Ancestors must be validated and created from shallowest to deepest before leaf files are touched.
 * **Type Collisions**: If a package updates an asset from a flat file to a directory (or vice versa), naive copy/symlink operations fail or corrupt the tree unless the opposing node is cleanly cleared first.
-* **Silent Overwrite vs. Backup Routing**: Overwriting unmanaged user files without a safety net leads to permanent data loss. The delivery engine must deterministically route collisions to designated backup subfolders (`overwritten_files` vs. `deleted_files`).
+* **Silent Overwrite vs. Backup Routing**: Overwriting unmanaged user files without a safety net leads to permanent data loss. The delivery engine must deterministically route collisions to designated backup subfolders (`overwritten` vs. `deleted`).
 * **Bidirectional Dual-Mode Parity**: The exact same delivery algebra must be capable of forward deployment (`install/` $\to$ host) and reverse synchronization (host $\to$ `install/`), while handling dot-prefix encoding (`dot-config` $\leftrightarrow$ `.config`) transparently.
 
 ### 1.2 The Delivery Engine Mission
 The folder delivery engine solves these challenges by acting as a **pure, declarative simulation and planning core**:
-1. **Side-Effect Free Planning**: Separates inspection and planning from execution. It returns a deterministic, ordered list of [`FileAction`](../src/drift/core/file_action.py) objects.
+1. **Side-Effect Free Planning**: Separates inspection and planning from execution. It returns a deterministic, ordered list of [`FileAction`](../src/drift/core/file_action.py) objects (`NormalFileAction` and `BackupFileAction`).
 2. **Exhaustive Collision Matrix**: Handles every permutation of source node type (file, symlink, directory) and target node state (missing, concrete file, symlink to source, foreign symlink, broken symlink, directory).
 3. **Ancestor-First Reification**: Inspects and resolves parent directory collisions strictly from shallowest to deepest before evaluating leaf nodes.
 4. **Manifest-Driven Orphan Pruning**: Compares candidate deployable files against historical `deployed_files` manifests to safely prune orphaned files without touching unrelated user data.
@@ -52,7 +52,7 @@ An immutable, frozen dataclass encapsulating all runtime parameters required for
 | `install_method` | `InstallMethod` | `SYMLINK` (symbolic linking) or `COPY` (physical file copy) |
 | `is_first_time` | `bool` | True if package has never been deployed (triggers first-time collisions) |
 | `backup_pkg_dir` | `Optional[Path]` | Base directory for package backups (`<drift_root>/backup/<pkg>/`) |
-| `backup_subfolder` | `BackupSubfolder` | Target subfolder (`overwritten_files` vs. `deleted_files`) |
+| `backup_subfolder` | `BackupSubfolder` | Target subfolder (`overwritten` vs. `deleted`) |
 | `source_dir_mask` | `Optional[Path]` | Virtual path mask used during sandboxed dry-runs (`drift plan`) |
 | `reverse_mode` | `bool` | Inverts source $\leftrightarrow$ target semantics for reverse synchronization |
 | `reinstall` | `bool` | Forces recreation of symlinks/copies even when contents match |
@@ -114,7 +114,7 @@ plan_folder_delivery(context, deployable_files, deployed_files)
 │               │   ├── Points to effective source:
 │               │   │   ├── InstallMethod.SYMLINK & reinstall -> CREATE_SYMLINK
 │               │   │   ├── InstallMethod.SYMLINK & normal -> SKIP_IDENTICAL
-│               │   │   └── InstallMethod.COPY -> BACKUP/DELETE + CREATE_COPY
+│               │   │   └── InstallMethod.COPY -> DELETE_ITEM + CREATE_COPY
 │               │   └── Points elsewhere -> BACKUP/DELETE (internal vs external) + create
 │               │
 │               └── Sub-case 3d.5: Target is Physical File -> _inspect_physical_file_leaf()
@@ -176,10 +176,10 @@ Compiles a [`FolderDiff`](../src/drift/core/folder_diff.py) (comparing `render/<
 4. **Matches**: Generates `SKIP_IDENTICAL` actions for unchanged files, preserving execution visibility.
 
 ### 4.2 Backup Restoration (`plan_backup_restoration`)
-Plans the safe restoration of historical files backed up in `backup/<pkg>/overwritten_files/`:
+Plans the safe restoration of historical files backed up in `backup/<pkg>/overwritten/`:
 * Configures an isolated `DeliveryInspectionContext` with `InstallMethod.COPY` and `is_first_time=True`.
 * Employs the full `plan_folder_delivery` pipeline to ensure intermediate directories are safely re-created and permissions are verified.
-* Re-routes any secondary collisions into `backup/<pkg>/deleted_files/`, guaranteeing zero data loss during restore attempts.
+* Re-routes any secondary collisions into `backup/<pkg>/deleted/`, guaranteeing zero data loss during restore attempts.
 
 ### 4.3 Symlink Detach (`plan_symlink_conversions`)
 Implements `drift detach <pkg>`, converting a live symlinked deployment into standalone physical copies:

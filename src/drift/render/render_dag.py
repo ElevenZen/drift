@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from .render_digester import DigestionContext
 
 from ..core.constants import PACKAGE_CONFIG_FILE_NAME
-from ..core.file_action import FileAction, FileActionType, format_action_line
+from ..core.file_action import FileAction, NormalFileAction, FileActionType, format_action_line
 from .render_cache import NodeHashes
 
 
@@ -181,7 +181,7 @@ class StaticFileNode(FileNode[Path]):
             if self.dst_path.is_file()
             else FileActionType.CREATE_COPY
         )
-        action = FileAction(
+        action = NormalFileAction(
             action_type=action_type,
             src_path=self.src_path,
             dst_path=self.dst_path,
@@ -233,7 +233,7 @@ class DirectoryNode(PathNode[Path, Optional[Path]]):
             self.dst_path.mkdir(parents=True, exist_ok=True)
             keep_file.touch()
 
-        action = FileAction(
+        action = NormalFileAction(
             action_type=FileActionType.ENSURE_DIR,
             src_path=self.src_path,
             dst_path=self.dst_path,
@@ -276,7 +276,7 @@ class CachedNode(FileNode[Path]):
             context.result.skipped_paths.append(keep_file)
         if self.hashes and self.hashes.merkle_hash:
             context.active_hashes.add(self.hashes.merkle_hash)
-        action = FileAction(
+        action = NormalFileAction(
             action_type=FileActionType.SKIP_IDENTICAL,
             src_path=self.src_path,
             dst_path=self.dst_path,
@@ -330,7 +330,7 @@ class EngineOutputFileNode(FileNode[Path]):
         if self.engine_config is None:
             raise ValueError(f"EngineOutputFileNode for '{self.dst_path}' lacks engine_config")
 
-        action = FileAction(
+        action = NormalFileAction(
             action_type=FileActionType.RENDER_ITEM,
             src_path=tmpl,
             dst_path=dst,
@@ -452,7 +452,7 @@ class PackageConfigNode(FileNode[Optional[Path]]):
         action_type = (
             FileActionType.SKIP_IDENTICAL if already_matched else FileActionType.WRITE_CONFIG
         )
-        action = FileAction(
+        action = NormalFileAction(
             action_type=action_type,
             src_path=self.src_path or target_path,
             dst_path=target_path,
@@ -485,7 +485,7 @@ class PackageConfigNode(FileNode[Optional[Path]]):
         context.result.pruned_paths.extend(pruned)
         for p in pruned:
             context.result.actions.append(
-                FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=p)
+                NormalFileAction(action_type=FileActionType.DELETE_ITEM, dst_path=p)
             )
 
         # 7. Update lockfile bucket
@@ -521,7 +521,7 @@ class PackageHooksNode(Node):
         pruned = prune_obsolete_hooks(context)
         context.result.pruned_paths.extend(pruned)
         context.result.actions.extend(
-            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=p)
+            NormalFileAction(action_type=FileActionType.DELETE_ITEM, dst_path=p)
             for p in pruned
         )
         context.lockfile.update_bucket_hashes(RenderBucket.HOOKS, context.active_hashes)
@@ -546,7 +546,7 @@ class PackagePayloadNode(Node):
         pruned = prune_obsolete_payload_files(context)
         context.result.pruned_paths.extend(pruned)
         context.result.actions.extend(
-            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=p)
+            NormalFileAction(action_type=FileActionType.DELETE_ITEM, dst_path=p)
             for p in pruned
         )
         context.lockfile.update_bucket_hashes(RenderBucket.PAYLOAD, context.active_hashes)

@@ -182,7 +182,7 @@ Reconciles the sandbox `render/` folder into the `install/` database:
 Applies changes to the physical active system across a two-phase architecture:
 *   **Pre-Flight Inspection (`prepare_install`)**: Validates readiness guards (`assert_packages_install_ready`), verifies hook file existence, checks escalation privileges, audits cross-package path collisions, and resolves prerequisite topological deploy order (`InstallPlan`).
 *   **Execution Phase (`execute_install`)**: Deploys prerequisites first using strongly-typed `InstallConfig(force, dry_run, flags, no_deps)`.
-*   **Collision Guard & Planning (`plan_package_install`)**: Pure read-only per-path planner compiling inspectable `PackageInstallPlan`. Backs up colliding physical files to `backup/<package>/overwritten/` with `dot-` prefix translation (`decode_dot_prefix`), and historical orphans to `backup/<package>/deleted_files/`.
+*   **Collision Guard & Planning (`plan_package_install`)**: Pure read-only per-path planner compiling inspectable `PackageInstallPlan`. Backs up colliding physical files to `backup/<package>/overwritten/` with `dot-` prefix translation (`decode_dot_prefix`), and historical orphans to `backup/<package>/deleted/`.
 *   **Empty Folder Deployment**: [`filter_deployable_files`](../src/drift/core/ignore.py) with `include_empty_dirs=True` records empty directory leaf nodes into `deployed_files` (translating `.drift_keep` into its parent folder). Empty directories are deployed as concrete directories via `FileActionType.CREATE_DIR` (`mkdir -p`) and never symlinked. Empty directories are excluded from cross-package conflict assertions (`include_empty_dirs=False`), allowing multiple packages to share folder hierarchies.
 *   **Privilege & State Recording**: Deploys files with root escalation if `sudo = true` is configured in `drift_package.toml`. The `sudo` boolean, target directory, install method, and `deployed_files` manifest are atomically updated in `install/state.toml`.
 *   **Hooks**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment (skipped during `--dry-run`).
@@ -197,7 +197,7 @@ Locks the deployed configurations and `state.toml` into the local state database
 Removes or detaches packages from the system using strongly-typed `UninstallConfig(force, dry_run, detach, no_deps, flags)`:
 1.  **Declarative Plan-then-Execute Architecture**:
     *   **Context Gathering (`PackageUninstallContext`)**: Gathers domain-level parameters (`pkg_name`, `target_dir`, `install_method`, `deployed_files`, `sudo`, `install_pkg_dir`, `backup_pkg_dir`, `drift_root`, `hooks`, `detach`, `is_missing_install_dir`) directly from `StateRegistry` without retaining heavy `PackageConfig` instances. The recorded `sudo` privilege is preserved from `state.toml`, guaranteeing consistent elevated permissions even if the package config in `install/` was altered or missing.
-    *   **Action Execution Context Derivation**: Derives an `FileActionExecutionContext` carrying execution flags (`sudo`, `resolve_symlinks`). Backup restoration collision paths are planned directly into `deleted_files/` via `plan_backup_restoration`'s `backup_subfolder=BackupSubfolder.DELETED_FILES` and `is_first_time=True`, ensuring any pre-existing host files or directories colliding with restored files or ancestors are backed up to `deleted_files/` rather than corrupting the active `overwritten/` backup store or unbacked in-place overwrites.
+    *   **Action Execution Context Derivation**: Derives an `FileActionExecutionContext` carrying execution flags (`sudo`, `resolve_symlinks`). Backup restoration collision paths are planned directly into `deleted/` via `plan_backup_restoration`'s `backup_subfolder=BackupSubfolder.DELETED` and `is_first_time=True`, ensuring any pre-existing host files or directories colliding with restored files or ancestors are backed up to `deleted/` rather than corrupting the active `overwritten/` backup store or unbacked in-place overwrites.
     *   **Discrete Action Decomposition (`plan_package_uninstall`)**:
         *   *Standard Uninstall*: Compiles `plan_file_removals` (`DELETE_ITEM`) followed by `plan_backup_restoration` (emitting an `INFO_MESSAGE` header, ensuring ancestor directory creation with `ENSURE_DIR`, and restoring original files via `CREATE_COPY`). Deployed empty directories are pruned using [`remove_file_or_empty_dir`](../src/drift/utils/file_ops.py), which safely removes empty folders via `rmdir` while skipping populated directories with a warning. Shared empty directories are protected via reference counting and only removed when their reference count reaches 0.
         *   *Detach Mode*: Compiles `plan_symlink_conversions` (`DELETE_ITEM` symlinks and `CREATE_COPY` physical files from `install/<pkg>/`), leaving `overwritten/` backups intact.
@@ -1116,7 +1116,7 @@ Deployment is executed through a single unified declarative pipeline via the per
 *   **Host-Level Declarative Comparison**: Rather than maintaining separate "surgical" and "full" codepaths driven by staging deltas, the installation engine inspects deployable files directly against host state.
     *   **Identical Files & Symlinks**: Existing relative symlinks pointing to correct targets and existing file copies with identical contents receive `SKIP_IDENTICAL` (zero filesystem I/O, zero link re-creation).
     *   **New or Differing Files**: Missing or modified files receive `CREATE_SYMLINK`, `CREATE_COPY`, or `UPDATE_COPY` (with `BACKUP_OVERWRITE` if colliding with an untracked node).
-    *   **Historical Orphan Reconciliation**: Historical files in `deployed_files` that are no longer part of the package receive `BACKUP_PRUNE` (atomically backed up to `backup/<pkg>/deleted_files/` and removed from the host).
+    *   **Historical Orphan Reconciliation**: Historical files in `deployed_files` that are no longer part of the package receive `BACKUP_PRUNE` (atomically backed up to `backup/<pkg>/deleted/` and removed from the host).
 *   **Infinite Loop & Ancestor Protection**: Before creating any link or file, intermediate ancestor directories are inspected (`_inspect_ancestor_directories`). If any parent directory is an internal symlink pointing into `drift_root` or is blocked by an existing file, it is backed up to `backup/<package>/overwritten/` and replaced with a concrete directory (`ENSURE_DIR`), preventing circular symlink loops.
 *   **Target Migration & Redeployment**: Standalone deployment (`drift apply`), pipeline deployment (`drift deploy`), rollback (`drift rollback`), and `--reinstall` all execute through this unified planner. If a package's target directory migrated (`target_migrated_from`), Drift undeploys from the former destination and plans complete deployment at the new destination.
 
@@ -1154,9 +1154,9 @@ Rather than relying on mutating collision routines or monolithic filesystem fold
         *   **Untracked / Type Collision**: Plans `BACKUP_OVERWRITE` to `backup/<package>/overwritten/<path>` followed by `CREATE_COPY`.
 3.  **Orphan Reconciliation (`_inspect_orphans`)**:
     *   Compares the current package files against the historical `deployed_files` manifest stored in `install/state.toml`.
-    *   Any previously deployed files that are no longer part of the package are planned as `BACKUP_PRUNE` (swept safely into `backup/<package>/deleted_files/<path>` and physically removed from the host in a single atomic action).
+    *   Any previously deployed files that are no longer part of the package are planned as `BACKUP_PRUNE` (swept safely into `backup/<package>/deleted/<path>` and physically removed from the host in a single atomic action).
 4.  **Dotfile Backup Translation (`decode_dot_prefix`)**:
-    *   When saving displaced host files into `backup/<package>/overwritten/` or `backup/<package>/deleted_files/`, leading dots on path components are translated back to `dot-` prefixes (e.g. `.bashrc` $\rightarrow$ `dot-bashrc`, `.config/nvim` $\rightarrow$ `dot-config/nvim`).
+    *   When saving displaced host files into `backup/<package>/overwritten/` or `backup/<package>/deleted/`, leading dots on path components are translated back to `dot-` prefixes (e.g. `.bashrc` $\rightarrow$ `dot-bashrc`, `.config/nvim` $\rightarrow$ `dot-config/nvim`).
     *   This ensures that the backup archive mirrors the exact structural naming conventions of `src/` and `install/`.
 
 #### 3. Inspectable Simulation & Execution Separation
@@ -1168,7 +1168,7 @@ Rather than relying on mutating collision routines or monolithic filesystem fold
 
 > [!IMPORTANT]
 > **Transient `backup/` Directory Policy & User Responsibility**:
-> Drift creates timestamped and package-scoped subdirectories under `backup/<package>/overwritten/` and `backup/<package>/deleted_files/` to protect pre-existing host files from silent loss.
+> Drift creates timestamped and package-scoped subdirectories under `backup/<package>/overwritten/` and `backup/<package>/deleted/` to protect pre-existing host files from silent loss.
 > *   **Not Versioned or Tracked by Drift**: The `backup/` folder is intentionally unmanaged and untracked by Git in Drift.
 > *   **User Responsibility**: It is solely the user's responsibility to periodically review `backup/`, archive important displaced configurations, or commit them into personal backup storage before cleaning.
 
@@ -1310,7 +1310,7 @@ To safely determine whether a package should execute its `pre/post_install` or `
     3.  If the package is **listed** with a recorded deployment timestamp, it is classified as an **Update/Redeploy** (triggers `pre/post_update`).
 *   **Desired-State Manifest Tracking**:
     To ensure self-healing and robust deletion behavior during standalone executions, retries, or rollbacks without relying on event-driven stages (Primitive 4), the registry tracks the precise relative paths of all successfully deployed files under the `deployed_files` array.
-    Upon each full redeployment, the engine compares the current desired files inside `install/<package>/` with the historical `deployed_files` manifest. Any orphaned files found in `deployed_files` but no longer present in `install/` are dynamically treated as delete instructions. They are safely backed up to `backup/<package>/deleted_files/` and surgically pruned from the active host system, ensuring zero file-leaks.
+    Upon each full redeployment, the engine compares the current desired files inside `install/<package>/` with the historical `deployed_files` manifest. Any orphaned files found in `deployed_files` but no longer present in `install/` are dynamically treated as delete instructions. They are safely backed up to `backup/<package>/deleted/` and surgically pruned from the active host system, ensuring zero file-leaks.
 
 ### I. Fully-Controlled Directories (FCD) Audit Mechanics & Ignore Reconciliation
 A package can declare a list of subdirectories under `target_directory` as **Fully-Controlled Directories (FCD)** using the `fully_controlled_dirs` configuration array. These directories are designated as fully owned and managed by the workspace dotfiles package.
@@ -1432,7 +1432,7 @@ For each redeployable package:
 *   **Declarative Plan Compilation (`plan_package_install`)**:
     - *Intermediate Directory Inspection*: Evaluates all intermediate directory levels between `target_dir` and the destination file, planning `BACKUP_OVERWRITE` and `ENSURE_DIR` if blocked by files or internal symlinks.
     - *Leaf Inspection*: Evaluates leaf destinations according to `install_method` (`symlink` or `copy`), planning `CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, or `BACKUP_OVERWRITE`. Empty directories are planned as `CREATE_DIR` (`mkdir -p`) and never symlinked.
-    - *Orphan Reconciliation*: Compares deployable files against historical `deployed_files`, planning `BACKUP_PRUNE` to `backup/<pkg>/deleted_files/` and physical removal.
+    - *Orphan Reconciliation*: Compares deployable files against historical `deployed_files`, planning `BACKUP_PRUNE` to `backup/<pkg>/deleted/` and physical removal.
     - *Dry-Run Preview*: If `--dry-run` is active, displays the plan summary and exits without modifying the host filesystem or executing lifecycle hooks.
 *   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`).
 *   **Target Manifest Synchronization**: Synchronizes deployable targets to `state.toml` before physical delivery so crashes have an authoritative list for recovery.

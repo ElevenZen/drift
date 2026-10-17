@@ -5,12 +5,11 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
-from typing import cast, Any
+from typing import cast, Any, Dict
 from drift.core.constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
-    PACKAGE_CONFIG_FILE_NAME_LIST,
     DRIFT_INTERNAL_DIR_NAME,
     DEFAULT_HOOK_TIMEOUT,
     InstallMethod,

@@ -43,8 +43,8 @@ from drift.utils.file_ops import (
     copy_file,
     copy_symlink,
 )
-from drift.core.sync_ops import (
-    backup_file_or_dir_external,
+from drift.core.file_action import (
+    backup_item,
 )
 
 
@@ -962,6 +962,215 @@ class TestFileUtils(unittest.TestCase):
             os.symlink = orig_os_symlink
             Path.symlink_to = orig_path_symlink_to  # type: ignore[method-assign]
             check_can_symlink.cache_clear()
+
+    def test_backup_file_action_non_optional_fields_and_serialization(self) -> None:
+        """Verifies FileAction, NormalFileAction, and BackupFileAction type hierarchy and JSON serialization."""
+        from drift.core.file_action import FileAction, NormalFileAction, BackupFileAction, FileActionType
+
+        normal_action = NormalFileAction(
+            action_type=FileActionType.ENSURE_DIR,
+            dst_path=self.root / "dir",
+        )
+        self.assertIsInstance(normal_action, FileAction)
+        self.assertIsInstance(normal_action, NormalFileAction)
+        self.assertFalse(isinstance(normal_action, BackupFileAction))
+
+        backup_action = BackupFileAction(
+            action_type=FileActionType.BACKUP_OVERWRITE,
+            src_path=self.root / "target" / "file.txt",
+            dst_path=self.root / "backup" / "pkg" / "overwritten" / "file.txt",
+            reason="Colliding regular file",
+            backup_pkg_root=self.root / "backup" / "pkg",
+        )
+        self.assertIsInstance(backup_action, FileAction)
+        self.assertFalse(isinstance(backup_action, NormalFileAction))
+        self.assertIsInstance(backup_action, BackupFileAction)
+
+        # Round-trip serialization for NormalFileAction and BackupFileAction
+        normal_serialized = normal_action.to_dict()
+        self.assertEqual(NormalFileAction.from_dict(normal_serialized), normal_action)
+        self.assertEqual(FileAction.from_dict(normal_serialized), normal_action)
+        self.assertIsInstance(FileAction.from_dict(normal_serialized), NormalFileAction)
+
+        serialized = backup_action.to_dict()
+        self.assertEqual(serialized["action_type"], "BACKUP_OVERWRITE")
+        self.assertEqual(serialized["reason"], "Colliding regular file")
+        self.assertEqual(Path(serialized["backup_pkg_root"]), self.root / "backup" / "pkg")
+
+        restored = BackupFileAction.from_dict(serialized)
+        self.assertEqual(restored, backup_action)
+        self.assertEqual(restored.backup_pkg_root, self.root / "backup" / "pkg")
+        self.assertEqual(FileAction.from_dict(serialized), backup_action)
+        self.assertIsInstance(FileAction.from_dict(serialized), BackupFileAction)
+
+    def test_backup_item_and_wal_stashing(self) -> None:
+        """Verifies backup_item moves existing backup_dest into wal/stash/ via rebase_path and preserves earliest stash."""
+        from drift.core.file_action import restore_wal_stash
+
+        backup_pkg_root = self.root / "backup" / "pkg_stash"
+        backup_dest_overwritten = backup_pkg_root / "overwritten" / "nested" / "app.conf"
+        stash_dest_overwritten = backup_pkg_root / "wal" / "stash" / "overwritten" / "nested" / "app.conf"
+
+        # 1. Cold backup: no existing backup at backup_dest -> no stash created
+        src1 = self.root / "host_v1.conf"
+        src1.write_text("original host v1", encoding="utf-8")
+        backup_item(src1, backup_dest_overwritten, backup_pkg_root=backup_pkg_root, sudo=False)
+        self.assertFalse(src1.exists())
+        self.assertEqual(backup_dest_overwritten.read_text(encoding="utf-8"), "original host v1")
+        self.assertFalse(stash_dest_overwritten.exists())
+
+        # 2. Second backup to same backup_dest: existing v1 is stashed to wal/stash/overwritten/nested/app.conf
+        src2 = self.root / "host_v2.conf"
+        src2.write_text("intermediate host v2", encoding="utf-8")
+        backup_item(src2, backup_dest_overwritten, backup_pkg_root=backup_pkg_root, sudo=False)
+        self.assertFalse(src2.exists())
+        self.assertEqual(backup_dest_overwritten.read_text(encoding="utf-8"), "intermediate host v2")
+        self.assertTrue(stash_dest_overwritten.is_file())
+        self.assertEqual(stash_dest_overwritten.read_text(encoding="utf-8"), "original host v1")
+
+        # 3. Third backup in same uncommitted transaction: earliest stash (v1) is preserved, not overwritten by v2
+        src3 = self.root / "host_v3.conf"
+        src3.write_text("latest host v3", encoding="utf-8")
+        backup_item(src3, backup_dest_overwritten, backup_pkg_root=backup_pkg_root, sudo=False)
+        self.assertEqual(backup_dest_overwritten.read_text(encoding="utf-8"), "latest host v3")
+        self.assertEqual(stash_dest_overwritten.read_text(encoding="utf-8"), "original host v1")
+
+        # 4. Also test stashing in deleted/ subfolder
+        backup_dest_deleted = backup_pkg_root / "deleted" / "old.txt"
+        stash_dest_deleted = backup_pkg_root / "wal" / "stash" / "deleted" / "old.txt"
+        del_v1 = self.root / "del_v1.txt"
+        del_v1.write_text("deleted v1", encoding="utf-8")
+        backup_item(del_v1, backup_dest_deleted, backup_pkg_root=backup_pkg_root, sudo=False)
+
+        del_v2 = self.root / "del_v2.txt"
+        del_v2.write_text("deleted v2", encoding="utf-8")
+        backup_item(del_v2, backup_dest_deleted, backup_pkg_root=backup_pkg_root, sudo=False)
+        self.assertEqual(backup_dest_deleted.read_text(encoding="utf-8"), "deleted v2")
+        self.assertEqual(stash_dest_deleted.read_text(encoding="utf-8"), "deleted v1")
+
+        # 5. Restore WAL stash: restores v1 to both overwritten/ and deleted/, cleans up wal/stash/
+        restore_wal_stash(backup_pkg_root, sudo=False)
+        self.assertEqual(backup_dest_overwritten.read_text(encoding="utf-8"), "original host v1")
+        self.assertEqual(backup_dest_deleted.read_text(encoding="utf-8"), "deleted v1")
+        self.assertFalse((backup_pkg_root / "wal" / "stash").exists())
+
+    def test_wal_recording_and_rollback_package_wal(self) -> None:
+        """Verifies WAL recording of reversible actions (including newly created ENSURE_DIR chains) and LIFO reversal."""
+        from drift.core.file_action import (
+            FileActionExecutionContext,
+            FileActionType,
+            NormalFileAction,
+            BackupFileAction,
+            execute_delivery_actions,
+            load_wal_actions,
+            rollback_package_wal,
+        )
+
+        target_dir = self.root / "target"
+        pre_existing_dir = target_dir / "existing_parent"
+        pre_existing_dir.mkdir(parents=True, exist_ok=True)
+
+        pkg_src_dir = self.root / "pkg_src"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        src_copy = pkg_src_dir / "copied.txt"
+        src_copy.write_text("pkg copied content", encoding="utf-8")
+
+        backup_pkg_root = self.root / "backup" / "pkg_wal"
+        wal_dir = backup_pkg_root / "wal"
+
+        # Pre-existing backup in overwritten/ that will be overwritten during this transaction
+        prior_backup = backup_pkg_root / "overwritten" / "collide.txt"
+        prior_backup.parent.mkdir(parents=True, exist_ok=True)
+        prior_backup.write_text("earliest backup before transaction", encoding="utf-8")
+
+        # Host colliding file and orphan file
+        host_collide = target_dir / "collide.txt"
+        host_collide.write_text("host file at start of transaction", encoding="utf-8")
+        host_orphan = target_dir / "orphan.txt"
+        host_orphan.write_text("orphan file at start of transaction", encoding="utf-8")
+
+        new_dir_chain_leaf = pre_existing_dir / "new_level1" / "new_level2"
+        copied_target = new_dir_chain_leaf / "copied.txt"
+        keep_target = new_dir_chain_leaf / ".drift_keep"
+
+        actions = [
+            # Pre-existing dir -> should NOT record in WAL
+            NormalFileAction(action_type=FileActionType.ENSURE_DIR, dst_path=pre_existing_dir),
+            # Newly created 2-level dir chain -> should record new_level1 then new_level2 in WAL
+            NormalFileAction(action_type=FileActionType.ENSURE_DIR, dst_path=new_dir_chain_leaf),
+            # Backup overwrite (also triggers stash of prior_backup)
+            BackupFileAction(
+                action_type=FileActionType.BACKUP_OVERWRITE,
+                src_path=host_collide,
+                dst_path=prior_backup,
+                reason="Colliding regular file",
+                backup_pkg_root=backup_pkg_root,
+            ),
+            # Backup prune
+            BackupFileAction(
+                action_type=FileActionType.BACKUP_PRUNE,
+                src_path=host_orphan,
+                dst_path=backup_pkg_root / "deleted" / "orphan.txt",
+                reason="Orphan prune",
+                backup_pkg_root=backup_pkg_root,
+            ),
+            # Create copy and keep file
+            NormalFileAction(action_type=FileActionType.CREATE_COPY, src_path=src_copy, dst_path=copied_target),
+            NormalFileAction(action_type=FileActionType.CREATE_KEEP_FILE, dst_path=keep_target),
+        ]
+
+        exec_ctx = FileActionExecutionContext(sudo=False, wal_dir=wal_dir)
+        execute_delivery_actions(exec_ctx, actions)
+
+        # Verify WAL recorded 6 actions (new_level1, new_level2, BACKUP_OVERWRITE, BACKUP_PRUNE, CREATE_COPY, CREATE_KEEP_FILE)
+        recorded = load_wal_actions(wal_dir / "actions.json")
+        self.assertEqual(len(recorded), 6)
+        self.assertEqual(recorded[0].action_type, FileActionType.ENSURE_DIR)
+        self.assertEqual(recorded[0].dst_path, pre_existing_dir / "new_level1")
+        self.assertEqual(recorded[1].action_type, FileActionType.ENSURE_DIR)
+        self.assertEqual(recorded[1].dst_path, new_dir_chain_leaf)
+
+        # Verify intermediate state before rollback
+        self.assertTrue(copied_target.is_file())
+        self.assertTrue(keep_target.is_file())
+        self.assertFalse(host_collide.exists())
+        self.assertFalse(host_orphan.exists())
+        self.assertEqual(prior_backup.read_text(encoding="utf-8"), "host file at start of transaction")
+        self.assertTrue((backup_pkg_root / "wal" / "stash" / "overwritten" / "collide.txt").is_file())
+
+        # Execute WAL rollback
+        reverted = rollback_package_wal(backup_pkg_root, sudo=False)
+        self.assertTrue(reverted)
+
+        # Verify all mutations were cleanly reversed in LIFO order:
+        self.assertFalse(copied_target.exists())
+        self.assertFalse(keep_target.exists())
+        self.assertFalse(new_dir_chain_leaf.exists())
+        self.assertFalse((pre_existing_dir / "new_level1").exists())
+        # Pre-existing ancestor directory must remain untouched
+        self.assertTrue(pre_existing_dir.is_dir())
+        # Backed up files restored to host
+        self.assertEqual(host_collide.read_text(encoding="utf-8"), "host file at start of transaction")
+        self.assertEqual(host_orphan.read_text(encoding="utf-8"), "orphan file at start of transaction")
+        # Stashed prior backup restored to backup_pkg_root/overwritten/collide.txt
+        self.assertEqual(prior_backup.read_text(encoding="utf-8"), "earliest backup before transaction")
+        # WAL directory cleaned up
+        self.assertFalse(wal_dir.exists())
+
+    def test_rollback_package_wal_missing_file_logs_warning_and_skips(self) -> None:
+        """Verifies rollback_package_wal logs a warning and returns False when wal/actions.json does not exist."""
+        from drift.core.file_action import rollback_package_wal
+
+        missing_pkg_backup = self.root / "backup" / "nonexistent_pkg"
+        set_test_mode(True, enable_logging=True)
+        try:
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+                with self.assertLogs("drift.core.file_action", level="WARNING") as cm:
+                    reverted = rollback_package_wal(missing_pkg_backup, sudo=False)
+            self.assertFalse(reverted)
+            self.assertTrue(any("WAL file not found" in msg for msg in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
 
 
 if __name__ == "__main__":
