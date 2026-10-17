@@ -21,11 +21,12 @@ from drift.core.constants import (
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.config.render_engine_config import RenderEngineRegistry
 from drift.hooks.lifecycle_hooks import HookExecFlags
-from drift.core.result_models import PackageAdoptPlan, AdoptPlan
 from drift.primitives.adopt_repo import (
+    AdoptOptions,
+    AdoptPlan,
+    PackageAdoptPlan,
     get_drifted_packages,
     assert_source_file_clean,
-    get_package_drifts,
     generate_unified_patch,
     check_patch_conflicts,
     apply_source_patch,
@@ -40,8 +41,8 @@ from drift.primitives.adopt_repo import (
     fallback_side_by_side,
     adopt_one_package_drifts,
     run_primitive_adopt_drifts,
-    plan_adopt_repo,
-    execute_adopt_repo,
+    prepare_adopt,
+    execute_adopt,
     plan_package_adopt,
     execute_package_adopt,
     handle_single_addition,
@@ -171,7 +172,7 @@ class TestAdopt(unittest.TestCase):
         # Passing force=True should bypass check without error
         assert_source_file_clean(clean_file, force=True, pkg=pkg)
 
-    def test_get_package_drifts(self) -> None:
+    def test_plan_package_adopt(self) -> None:
         pkg = "pkg_a"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -196,13 +197,13 @@ class TestAdopt(unittest.TestCase):
         tracked_file.write_text("modified content", encoding="utf-8")
 
         # Run drift extraction
-        plan = get_package_drifts(self.workspace_config, pkg)
+        plan = plan_package_adopt(self.workspace_config, pkg)
         self.assertEqual(plan.additions, [Path("added.txt")])
         self.assertEqual(plan.deletions, [Path("deleted.txt")])
         self.assertEqual(plan.modifications, [Path("tracked.txt")])
         self.assertEqual(plan.renames, [])
 
-    def test_get_package_drifts_rename(self) -> None:
+    def test_plan_package_adopt_rename(self) -> None:
         pkg = "pkg_a"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -217,7 +218,7 @@ class TestAdopt(unittest.TestCase):
         subprocess.run(["git", "mv", "pkg_a/old_name.txt", "pkg_a/new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # Get package drifts
-        plan = get_package_drifts(self.workspace_config, pkg)
+        plan = plan_package_adopt(self.workspace_config, pkg)
 
         # Rename should be detected as a distinct rename branch
         self.assertEqual(plan.deletions, [])
@@ -532,7 +533,7 @@ class TestAdopt(unittest.TestCase):
         src_new_file.write_text("collision", encoding="utf-8")
 
         # 3. Run adopt_one_package_drifts non-interactively
-        adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+        adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
 
         # 4. Check git status. Both pkg_a/dot-old.txt and pkg_a/dot-new.txt should be unstaged (not in staged index)
         # because the rename conflicted and was skipped, triggering selective git restore --staged.
@@ -571,7 +572,7 @@ class TestAdopt(unittest.TestCase):
         # Create a drift in install/
         (pkg_install_dir / "new_file.txt").write_text("drift content", encoding="utf-8")
 
-        adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+        adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
 
         # Hook must have run and generated hook_executed.txt in render pkg .drift/hooks dir
         hook_out = self.workspace_path / "render" / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "hook_executed.txt"
@@ -613,7 +614,7 @@ class TestAdopt(unittest.TestCase):
         # Create a drift in install/
         (pkg_install_dir / "new_file.txt").write_text("drift content", encoding="utf-8")
 
-        adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+        adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
 
         # Hook must have run and generated hook_executed.txt in render pkg .drift/hooks dir
         hook_out = self.workspace_path / "render" / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "hook_executed.txt"
@@ -654,7 +655,9 @@ class TestAdopt(unittest.TestCase):
 
         with self.assertRaises(RuntimeError) as ctx:
             adopt_one_package_drifts(
-                self.workspace_config, pkg, interactive=False, flags=HookExecFlags(streaming=False)
+                self.workspace_config,
+                pkg,
+                options=AdoptOptions(interactive=False, flags=HookExecFlags(streaming=False)),
             )
         self.assertIn("failed with exit code 1", str(ctx.exception))
 
@@ -692,7 +695,7 @@ class TestAdopt(unittest.TestCase):
         # 2. Add new file
         (pkg_install_dir / "new_tool.sh").write_text("#!/bin/sh\necho new_tool\n", encoding="utf-8")
 
-        adopt_res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+        adopt_res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
         self.assertEqual(adopt_res.status, "SUCCESS")
         self.assertIn("dot-config/app.conf", adopt_res.adopted_modifications)
         self.assertIn("new_tool.sh", adopt_res.adopted_additions)
@@ -737,7 +740,7 @@ class TestAdopt(unittest.TestCase):
         install_script.chmod(0o755)
 
         # Run adopt
-        run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+        run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=False))
 
         # Source script should now have executable bit (0o755) on POSIX systems
         if sys.platform != "win32":
@@ -777,7 +780,7 @@ class TestAdopt(unittest.TestCase):
         install_file.write_text("CONFLICTING_MODIFICATION=VALUE\nEXTRA_LINE=999\n", encoding="utf-8")
 
         # Run adopt
-        run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+        run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=False))
 
         # HEAD commit in install/ repo MUST NOT have changed (install was not committed)
         head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
@@ -823,11 +826,20 @@ class TestAdopt(unittest.TestCase):
         (install_conflict / "server.conf").write_text("CONFLICTING_KEY=VALUE\nPORT=9999\n", encoding="utf-8")
 
         # Run adopt across both packages
-        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg_clean, pkg_conflict], interactive=False)
+        resolved = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg_clean, pkg_conflict],
+            options=AdoptOptions(interactive=False),
+        )
 
-        # Only pkg_clean should be resolved
+        # Only pkg_clean should be fully resolved
         self.assertEqual(list(resolved), [pkg_clean])
-        self.assertEqual(resolved.status, "FAILED")
+        self.assertEqual(resolved.status, "PARTIAL")
+        pkg_res_map = {p.package: p for p in resolved.packages}
+        self.assertEqual(pkg_res_map[pkg_clean].status, "SUCCESS")
+        self.assertEqual(pkg_res_map[pkg_conflict].status, "SKIPPED")
+        self.assertEqual(pkg_res_map[pkg_conflict].conflicted_files, ["server.conf"])
+        self.assertEqual(pkg_res_map[pkg_conflict].skipped_files, [])
 
         # src/ for pkg_clean should be adopted
         self.assertEqual((src_clean / "config.json").read_text(encoding="utf-8"), '{"version": 2}')
@@ -868,11 +880,15 @@ class TestAdopt(unittest.TestCase):
         (install_pkg / "static_file.txt").write_text("static v2", encoding="utf-8")
         (install_pkg / "template_file.conf").write_text("CONFLICT=TRUE\nLINE=Z\n", encoding="utf-8")
 
-        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=False))
 
-        # Package was not fully resolved
+        # Package was partially resolved (static_file adopted, template_file conflicted)
         self.assertEqual(list(resolved), [])
-        self.assertEqual(resolved.status, "FAILED")
+        self.assertEqual(resolved.status, "PARTIAL")
+        self.assertEqual(resolved.packages[0].status, "PARTIAL")
+        self.assertEqual(resolved.packages[0].adopted_modifications, ["static_file.txt"])
+        self.assertEqual(resolved.packages[0].conflicted_files, ["template_file.conf"])
+        self.assertEqual(resolved.packages[0].skipped_files, [])
 
         # HEAD commit in install/ DID change because static_file was adopted and committed
         head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
@@ -912,7 +928,7 @@ class TestAdopt(unittest.TestCase):
         # Drift mode to 0o755 in install/
         install_script.chmod(0o755)
 
-        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=False))
 
         # Package must be resolved cleanly
         self.assertEqual(list(resolved), [pkg])
@@ -952,7 +968,7 @@ class TestAdopt(unittest.TestCase):
 
         # Mock input to choose [5] Skip file
         with patch("builtins.input", return_value="5"):
-            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
+            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=True))
 
         self.assertEqual(list(resolved), [])
 
@@ -991,7 +1007,7 @@ class TestAdopt(unittest.TestCase):
 
         # Interactive choose [4] Skip file
         with patch("builtins.input", return_value="4"):
-            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
+            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=True))
 
         self.assertEqual(list(resolved), [])
 
@@ -1030,7 +1046,7 @@ class TestAdopt(unittest.TestCase):
 
         # Interactive choose [3] Skip file
         with patch("builtins.input", return_value="3"):
-            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
+            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=True))
 
         self.assertEqual(list(resolved), [])
 
@@ -1069,7 +1085,7 @@ class TestAdopt(unittest.TestCase):
 
         # Interactive choose [5] Skip file
         with patch("builtins.input", return_value="5"):
-            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
+            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=True))
 
         self.assertEqual(list(resolved), [])
 
@@ -1114,7 +1130,7 @@ class TestAdopt(unittest.TestCase):
         (install_pkg / "new_tool.conf").write_text("tool=active\n", encoding="utf-8")
 
         # Run adopt
-        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=False))
         self.assertEqual(list(resolved), [pkg])
         self.assertEqual(resolved.status, "SUCCESS")
 
@@ -1150,7 +1166,7 @@ class TestAdopt(unittest.TestCase):
         (install_pkg / "renamed_dest.txt").write_text("content to rename", encoding="utf-8")
 
         # Run adopt in dry_run mode
-        res = adopt_one_package_drifts(self.workspace_config, pkg, dry_run=True)
+        res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(dry_run=True))
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.adopted_renames, ["source_name.txt -> renamed_dest.txt"])
         self.assertEqual(res.adopted_additions, [])
@@ -1274,7 +1290,7 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "new_file.txt").write_text("new content added\n", encoding="utf-8")
 
         # 3. Run adopt
-        res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+        res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.adopted_modifications, ["config.ini"])
         self.assertEqual(res.adopted_deletions, ["app.txt"])
@@ -1327,7 +1343,7 @@ render_command = "bash -c 'cat %i %s'"
         subprocess.run(["git", "mv", f"{pkg}/document.md", f"{pkg}/manual.md"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # Run adopt
-        res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+        res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.adopted_renames, ["document.md -> manual.md"])
 
@@ -1361,7 +1377,7 @@ render_command = "bash -c 'cat %i %s'"
         with patch("builtins.input", return_value="2"), \
              patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
              patch("sys.stdout", StringIO()) as mock_stdout:
-            res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=True)
+            res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=True))
             self.assertEqual(res.status, "SUCCESS")
             mock_editor.assert_called_once_with(src_pkg / "config.txt")
             self.assertEqual((src_pkg / "config.txt").read_text(encoding="utf-8"), "line1\nline2_modified\n")
@@ -1390,7 +1406,7 @@ render_command = "bash -c 'cat %i %s'"
 
         with patch("builtins.input", return_value="3"), \
              patch("drift.primitives.adopt_repo.launch_side_by_side_editor") as mock_sbs:
-            res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=True)
+            res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=True))
             self.assertEqual(res.status, "SUCCESS")
             mock_sbs.assert_called_once_with([(src_pkg / "config.txt", install_pkg / "config.txt")])
 
@@ -1418,7 +1434,7 @@ render_command = "bash -c 'cat %i %s'"
 
         with patch("builtins.input", return_value="2"), \
              patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor:
-            res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=True)
+            res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=True))
             self.assertEqual(res.status, "SUCCESS")
             mock_editor.assert_called_once_with(src_pkg / "new_name.txt")
             self.assertTrue((src_pkg / "new_name.txt").is_file())
@@ -1446,7 +1462,7 @@ render_command = "bash -c 'cat %i %s'"
             (install_pkg / "file.txt").write_text("changed_text\n", encoding="utf-8")
 
             with self.assertLogs("drift.primitives.adopt_repo", level="DEBUG") as cm:
-                adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+                adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
                 self.assertTrue(any("Diff for 'file.txt'" in log for log in cm.output))
                 self.assertTrue(any("+changed_text" in log for log in cm.output))
         finally:
@@ -1478,7 +1494,9 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "file_b.txt").write_text("drifted_b\n", encoding="utf-8")
 
         # 3. Adopting without force should SUCCEED because file_b is clean in src/
-        res = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=False)
+        res = run_primitive_adopt_drifts(
+            self.workspace_config, [pkg], options=AdoptOptions(interactive=False, force=False)
+        )
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual((src_pkg / "file_b.txt").read_text(encoding="utf-8"), "drifted_b\n")
         # file_a should remain untouched and dirty
@@ -1489,12 +1507,16 @@ render_command = "bash -c 'cat %i %s'"
 
         # 5. Adopting without force should FAIL with RuntimeError pointing to file_a.txt
         with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=False)
+            run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], options=AdoptOptions(interactive=False, force=False)
+            )
         self.assertIn("file_a.txt", str(ctx.exception))
         self.assertIn(f"drift adopt {pkg} --force", str(ctx.exception))
 
         # 6. Adopting with force=True should SUCCEED and overwrite file_a.txt
-        res_force = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=True)
+        res_force = run_primitive_adopt_drifts(
+            self.workspace_config, [pkg], options=AdoptOptions(interactive=False, force=True)
+        )
         self.assertEqual(res_force.status, "SUCCESS")
         self.assertEqual((src_pkg / "file_a.txt").read_text(encoding="utf-8"), "drifted_a\n")
 
@@ -1523,18 +1545,22 @@ render_command = "bash -c 'cat %i %s'"
 
         # Adopting deletion without force should fail
         with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=False)
+            run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], options=AdoptOptions(interactive=False, force=False)
+            )
         self.assertIn("del_me.txt", str(ctx.exception))
         self.assertIn(f"drift adopt {pkg} --force", str(ctx.exception))
         self.assertTrue((src_pkg / "del_me.txt").exists())
 
         # Adopting deletion with force=True should succeed and delete source file
-        res = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=True)
+        res = run_primitive_adopt_drifts(
+            self.workspace_config, [pkg], options=AdoptOptions(interactive=False, force=True)
+        )
         self.assertEqual(res.status, "SUCCESS")
         self.assertFalse((src_pkg / "del_me.txt").exists())
 
-    def test_plan_adopt_repo_and_execute_adopt_repo(self) -> None:
-        """Verifies decoupled plan_adopt_repo and execute_adopt_repo workflow."""
+    def test_prepare_adopt_and_execute_adopt(self) -> None:
+        """Verifies decoupled prepare_adopt and execute_adopt workflow."""
         pkg1 = "pkg_plan_1"
         pkg2 = "pkg_plan_2"
 
@@ -1563,7 +1589,11 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg2 / "new_tool.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
 
         # 1. Plan Phase
-        plan = plan_adopt_repo(self.workspace_config, [pkg1, pkg2])
+        plan = prepare_adopt(
+            self.workspace_config,
+            [pkg1, pkg2],
+            options=AdoptOptions(interactive=False, no_render=True),
+        )
         self.assertIsInstance(plan, AdoptPlan)
         self.assertTrue(plan.has_drifts)
         self.assertEqual(sorted(plan.drifted_packages), sorted([pkg1, pkg2]))
@@ -1588,7 +1618,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res_cached.returncode, 0, "Index should be clean after planning")
 
         # 2. Execution Phase
-        exec_res = execute_adopt_repo(self.workspace_config, plan, interactive=False)
+        exec_res = execute_adopt(self.workspace_config, plan)
         self.assertEqual(exec_res.status, "SUCCESS")
         self.assertEqual(len(exec_res.packages), 2)
 
@@ -1644,7 +1674,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res_cached.returncode, 0)
 
         # Execute
-        result = execute_package_adopt(self.workspace_config, pkg_plan, interactive=False)
+        result = execute_package_adopt(self.workspace_config, pkg_plan, options=AdoptOptions(interactive=False))
         self.assertEqual(result.status, "SUCCESS")
         self.assertEqual(result.adopted_renames, ["old_name.conf -> new_name.conf"])
 
@@ -1653,7 +1683,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertTrue((src_pkg / "new_name.conf").exists())
         self.assertEqual((src_pkg / "new_name.conf").read_text(encoding="utf-8"), modified_content)
 
-    def test_get_package_drifts_keep_file_addition_translation(self) -> None:
+    def test_plan_package_adopt_keep_file_addition_translation(self) -> None:
         """Verifies that .drift_keep addition in install/ is translated to parent directory addition in adopt plan."""
         pkg = "pkg_keep_add"
         src_pkg = self.src_dir / pkg
@@ -1666,11 +1696,11 @@ render_command = "bash -c 'cat %i %s'"
         new_dir.mkdir(parents=True, exist_ok=True)
         (new_dir / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
 
-        plan = get_package_drifts(self.workspace_config, pkg)
+        plan = plan_package_adopt(self.workspace_config, pkg)
         self.assertIn(Path("my_empty_folder"), plan.additions)
         self.assertNotIn(Path("my_empty_folder") / DRIFT_KEEP_FILE_NAME, plan.additions)
 
-    def test_get_package_drifts_keep_file_deletion_translation(self) -> None:
+    def test_plan_package_adopt_keep_file_deletion_translation(self) -> None:
         """Verifies that .drift_keep deletion in install/ is translated to parent directory deletion in adopt plan."""
         pkg = "pkg_keep_del"
         src_pkg = self.src_dir / pkg
@@ -1691,11 +1721,11 @@ render_command = "bash -c 'cat %i %s'"
         # Delete the empty folder in install/
         shutil.rmtree(old_dir)
 
-        plan = get_package_drifts(self.workspace_config, pkg)
+        plan = plan_package_adopt(self.workspace_config, pkg)
         self.assertIn(Path("old_empty_folder"), plan.deletions)
         self.assertNotIn(Path("old_empty_folder") / DRIFT_KEEP_FILE_NAME, plan.deletions)
 
-    def test_get_package_drifts_keep_file_rename_split(self) -> None:
+    def test_plan_package_adopt_keep_file_rename_split(self) -> None:
         """Verifies that renaming a .drift_keep file is split into deletion and addition."""
         pkg = "pkg_keep_rename"
         src_pkg = self.src_dir / pkg
@@ -1718,14 +1748,14 @@ render_command = "bash -c 'cat %i %s'"
         # Unstage so it's a working tree change
         subprocess.run(["git", "-C", str(self.install_dir), "restore", "--staged", "--", pkg], check=True)
 
-        plan = get_package_drifts(self.workspace_config, pkg)
+        plan = plan_package_adopt(self.workspace_config, pkg)
         # Renames should NOT contain keep files
         self.assertEqual(len(plan.renames), 0)
         # Deletions should have dir_a, additions should have dir_b
         self.assertIn(Path("dir_a"), plan.deletions)
         self.assertIn(Path("dir_b"), plan.additions)
 
-    def test_get_package_drifts_corrupt_keep_file_warning(self) -> None:
+    def test_plan_package_adopt_corrupt_keep_file_warning(self) -> None:
         """Verifies that modified keep files log a warning and are stripped from modifications."""
         pkg = "pkg_corrupt_keep"
         src_pkg = self.src_dir / pkg
@@ -1746,7 +1776,7 @@ render_command = "bash -c 'cat %i %s'"
         set_test_mode(True, enable_logging=True)
         try:
             with self.assertLogs("drift.primitives.adopt_repo", level="WARNING") as log_cm:
-                plan = get_package_drifts(self.workspace_config, pkg)
+                plan = plan_package_adopt(self.workspace_config, pkg)
                 self.assertTrue(any("CORRUPT" in msg for msg in log_cm.output))
         finally:
             set_test_mode(True, enable_logging=False)
@@ -2025,9 +2055,8 @@ render_command = "bash -c 'cat %i %s'"
 
     def test_adopt_custom_engine_template_patches_instead_of_overwriting(self) -> None:
         """Verifies custom render engine templates (e.g. .j2) are patched rather than statically overwritten,
-        and dry_run_adopt classifies static .toml/.sh files as static overwrites rather than templates.
+        and PackageAdoptPlan.format_text classifies static .toml/.sh files as static overwrites rather than templates.
         """
-        from drift.primitives.adopt_repo import dry_run_adopt
         from drift.config.render_engine_config import RenderEngineConfig
 
         pkg = "pkg_j2_adopt"
@@ -2088,21 +2117,15 @@ render_command = "bash -c 'cat %i %s'"
         )
         install_static.write_text("mode = 'v2'\n", encoding="utf-8")
 
-        plan = get_package_drifts(self.workspace_config, pkg)
+        plan = plan_package_adopt(self.workspace_config, pkg)
 
-        # Verify dry_run_adopt logs `config.toml.j2` as a template patch and `static.toml` as a Static Overwrite
-        set_test_mode(True, enable_logging=True)
-        try:
-            with self.assertLogs("drift.primitives.adopt_repo", level="INFO") as log_cm:
-                dry_run_adopt(plan)
-                joined_logs = "\n".join(log_cm.output)
-                self.assertIn("config.toml [Patch applies cleanly to: config.toml.j2]", joined_logs)
-                self.assertIn("static.toml [Static Overwrite of: static.toml]", joined_logs)
-        finally:
-            set_test_mode(True, enable_logging=False)
+        # Verify plan.format_text() formats `config.toml.j2` as a template patch and `static.toml` as a Static Overwrite
+        preview_text = plan.format_text()
+        self.assertIn("config.toml [Patch applies cleanly to: config.toml.j2]", preview_text)
+        self.assertIn("static.toml [Static Overwrite of: static.toml]", preview_text)
 
         # Execute adopt and verify `{{ hostname }}` in config.toml.j2 was preserved (patched, not overwritten!)
-        res = execute_package_adopt(self.workspace_config, plan, interactive=False)
+        res = execute_package_adopt(self.workspace_config, plan, AdoptOptions(interactive=False))
         self.assertEqual(res.status, "SUCCESS")
         self.assertIn("{{ hostname }}", src_j2.read_text(encoding="utf-8"))
         self.assertIn("port = 9090", src_j2.read_text(encoding="utf-8"))
@@ -2188,8 +2211,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
 
     def test_adopt_repo_converged_files_partition_and_direct_staging(self) -> None:
-        """Verifies get_package_drifts partitions converged files into plan.converged_files, supports skip_patches=True, and execute_package_adopt stages them directly without touching src/."""
-        from drift.primitives.adopt_repo import dry_run_adopt
+        """Verifies plan_package_adopt partitions converged files into plan.converged_files, supports skip_patches=True, and execute_package_adopt stages them directly without touching src/."""
         from drift.utils.git_utils import get_git_status_porcelain
 
         pkg = "pkg_adopt_conv_plan"
@@ -2208,15 +2230,15 @@ render_command = "bash -c 'cat %i %s'"
 
         # Modify conv_mod.txt in render/ and install/ (e.g. template rendered in render/, reverse-synced in install/),
         # while leaving conv_mod.txt in src/ with an uncommitted local edit!
-        # Because conv_mod.txt is converged (install/ == render/), normal adopt should stage it directly
+        # Because conv_mod.txt is converged (install/ == render/), normal adopt with no_render=True should stage it directly
         # without touching src/conv_mod.txt or triggering a dirty-source error!
         (src_pkg / "conv_mod.txt").write_text("uncommitted_template_source", encoding="utf-8")
         (render_pkg / "conv_mod.txt").write_text("v2-rendered-and-synced", encoding="utf-8")
         (install_pkg / "conv_mod.txt").write_text("v2-rendered-and-synced", encoding="utf-8")
         (install_pkg / "div_mod.txt").write_text("v2-diverged-host", encoding="utf-8")
 
-        # 1. Verify get_package_drifts partitions converged vs divergent
-        pkg_plan = get_package_drifts(self.workspace_config, pkg)
+        # 1. Verify plan_package_adopt partitions converged vs divergent
+        pkg_plan = plan_package_adopt(self.workspace_config, pkg)
         self.assertEqual(pkg_plan.converged_files, [Path("conv_mod.txt")])
         self.assertEqual(pkg_plan.modifications, [Path("div_mod.txt")])
         self.assertNotIn("conv_mod.txt", pkg_plan.mod_patches)
@@ -2225,8 +2247,8 @@ render_command = "bash -c 'cat %i %s'"
         self.assertTrue(pkg_plan.has_divergent_drifts)
         self.assertEqual(pkg_plan.total_drifts, 2)
 
-        # 2. Verify plan_adopt_repo(..., skip_patches=True) skips unified diff generation
-        no_patch_plan = plan_adopt_repo(self.workspace_config, [pkg], skip_patches=True)
+        # 2. Verify prepare_adopt(..., AdoptOptions(skip_patches=True, no_render=True)) skips unified diff generation
+        no_patch_plan = prepare_adopt(self.workspace_config, [pkg], AdoptOptions(skip_patches=True, no_render=True))
         no_patch_pkg_plan = no_patch_plan.get_package_plan(pkg)
         assert no_patch_pkg_plan is not None
         self.assertEqual(no_patch_pkg_plan.converged_files, [Path("conv_mod.txt")])
@@ -2234,19 +2256,15 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(no_patch_pkg_plan.mod_patches, {})
         self.assertEqual(no_patch_pkg_plan.rename_patches, {})
 
-        # 3. Verify dry_run_adopt logs converged files
-        set_test_mode(True, enable_logging=True)
-        try:
-            with self.assertLogs("drift.primitives.adopt_repo", level="INFO") as log_cm:
-                dry_run_adopt(pkg_plan)
-                joined = "\n".join(log_cm.output)
-                self.assertIn("Converged (already identical to render/, will be staged directly):", joined)
-                self.assertIn("conv_mod.txt", joined)
-        finally:
-            set_test_mode(True, enable_logging=False)
+        # 3. Verify pkg_plan.format_text() formats converged files
+        preview_text = pkg_plan.format_text()
+        self.assertIn("Converged (already identical to render/, will be staged directly):", preview_text)
+        self.assertIn("conv_mod.txt", preview_text)
 
-        # 4. Execute normal adopt and verify both converged and divergent files are resolved and committed
-        res = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=False)
+        # 4. Execute normal adopt (with no_render=True to preserve synthetic render/ state) and verify both converged and divergent files are resolved and committed
+        res = run_primitive_adopt_drifts(
+            self.workspace_config, [pkg], AdoptOptions(interactive=False, force=False, no_render=True)
+        )
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.packages[0].adopted_converged, ["conv_mod.txt"])
         self.assertEqual(res.packages[0].adopted_modifications, ["div_mod.txt"])
@@ -2257,9 +2275,428 @@ render_command = "bash -c 'cat %i %s'"
         # install/ is completely clean
         self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
 
+    def test_adopt_end_to_end_live_host_drifts_copy_and_symlink_two_pass_idempotency(self) -> None:
+        """Two-Pass Idempotency Test: Verifies run_primitive_adopt_drifts automatically runs reverse-sync and render before adopting live host edits across copy and symlink packages."""
+        from drift.primitives.deploy_repo import run_primitive_deploy_pipeline
+        from drift.primitives.workspace_repair import repair_drift_workspace
+        from drift.utils.git_utils import get_git_status_porcelain
+
+        repair_drift_workspace(self.workspace_path)
+
+        pkg_copy = "pkg_live_copy"
+        pkg_sym = "pkg_live_sym"
+        target_copy = Path(self.temp_dir.name) / "target_live_copy"
+        target_sym = Path(self.temp_dir.name) / "target_live_sym"
+
+        src_copy = self.src_dir / pkg_copy
+        src_sym = self.src_dir / pkg_sym
+        src_copy.mkdir(parents=True, exist_ok=True)
+        src_sym.mkdir(parents=True, exist_ok=True)
+
+        # Configure pkg_copy with install_method = "copy" and an env var
+        (src_copy / "drift_package.toml").write_text(
+            '[package]\n'
+            f'target_directory = "{target_copy.as_posix()}"\n'
+            'install_method = "copy"\n'
+            '[env.default]\n'
+            'APP_HOST = "localhost"\n',
+            encoding="utf-8",
+        )
+        # Template file in pkg_copy with enough context lines for clean git apply
+        (src_copy / "app.envst.conf").write_text(
+            "host = $APP_HOST\n"
+            "line_a = 1\n"
+            "line_b = 2\n"
+            "line_c = 3\n"
+            "port = 8000\n",
+            encoding="utf-8",
+        )
+        # Converged template in pkg_copy: user updates both src/ template and live target
+        (src_copy / "conv.envst.conf").write_text(
+            "host = $APP_HOST\n"
+            "mode = v1\n",
+            encoding="utf-8",
+        )
+
+        # Configure pkg_sym with install_method = "symlink"
+        (src_sym / "drift_package.toml").write_text(
+            '[package]\n'
+            f'target_directory = "{target_sym.as_posix()}"\n'
+            'install_method = "symlink"\n',
+            encoding="utf-8",
+        )
+        (src_sym / "sym.txt").write_text("sym_v1\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init live packages"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        # Deploy both packages (render -> stage -> apply)
+        deploy_res = run_primitive_deploy_pipeline(self.workspace_config, [pkg_copy, pkg_sym])
+        self.assertEqual(deploy_res.status, "SUCCESS")
+
+        # Now simulate live user workflow WITHOUT running reverse-sync or render manually:
+        # 1. User edits live copy target `target_copy/app.conf` (port 8000 -> 9000)
+        (target_copy / "app.conf").write_text(
+            "host = localhost\n"
+            "line_a = 1\n"
+            "line_b = 2\n"
+            "line_c = 3\n"
+            "port = 9000\n",
+            encoding="utf-8",
+        )
+        # 2. User updates `src_copy/conv.envst.conf` AND `target_copy/conv.conf` to match ("mode = v2")
+        (src_copy / "conv.envst.conf").write_text(
+            "host = $APP_HOST\n"
+            "mode = v2\n",
+            encoding="utf-8",
+        )
+        (target_copy / "conv.conf").write_text(
+            "host = localhost\n"
+            "mode = v2\n",
+            encoding="utf-8",
+        )
+        # 3. User edits live symlink target `target_sym/sym.txt`
+        (target_sym / "sym.txt").write_text("sym_v2\n", encoding="utf-8")
+
+        # Pass 1 (Cold / Mutation Pass): Run `run_primitive_adopt_drifts` directly!
+        res1 = run_primitive_adopt_drifts(self.workspace_config, [pkg_copy, pkg_sym])
+        self.assertEqual(res1.status, "SUCCESS")
+        pkg_results = {r.package: r for r in res1.packages}
+        self.assertEqual(pkg_results[pkg_copy].status, "SUCCESS")
+        self.assertEqual(pkg_results[pkg_copy].adopted_converged, ["conv.conf"])
+        self.assertEqual(pkg_results[pkg_copy].adopted_modifications, ["app.conf"])
+        self.assertEqual(pkg_results[pkg_sym].status, "SUCCESS")
+        self.assertEqual(pkg_results[pkg_sym].adopted_modifications, ["sym.txt"])
+
+        # Verify template variable `$APP_HOST` was preserved in `src_copy/app.envst.conf` and port was patched to 9000
+        self.assertEqual(
+            (src_copy / "app.envst.conf").read_text(encoding="utf-8"),
+            "host = $APP_HOST\n"
+            "line_a = 1\n"
+            "line_b = 2\n"
+            "line_c = 3\n"
+            "port = 9000\n",
+        )
+        # Verify converged template `src_copy/conv.envst.conf` kept `$APP_HOST`
+        self.assertEqual(
+            (src_copy / "conv.envst.conf").read_text(encoding="utf-8"),
+            "host = $APP_HOST\n"
+            "mode = v2\n",
+        )
+        # Verify static file in `src_sym/sym.txt` was updated
+        self.assertEqual((src_sym / "sym.txt").read_text(encoding="utf-8"), "sym_v2\n")
+        # Verify install/ git repository is completely clean
+        self.assertEqual(get_git_status_porcelain(self.install_dir), [])
+
+        # Pass 2 (Warm / Idempotent Pass): Re-running immediately produces UP_TO_DATE with zero adopted changes or mutations
+        res2 = run_primitive_adopt_drifts(self.workspace_config, [pkg_copy, pkg_sym])
+        self.assertEqual(res2.status, "UP_TO_DATE")
+        self.assertTrue(all(p.status == "UP_TO_DATE" and not p.has_adopted_changes for p in res2.packages))
+        self.assertEqual(get_git_status_porcelain(self.install_dir), [])
+
+    def test_adopt_options_no_reverse_sync_and_no_render_flags(self) -> None:
+        """Verifies AdoptOptions(no_reverse_sync=True) skips pulling live copy changes and AdoptOptions(no_render=True) skips rendering src/ before planning."""
+        from drift.primitives.deploy_repo import run_primitive_deploy_pipeline
+        from drift.primitives.workspace_repair import repair_drift_workspace
+
+        repair_drift_workspace(self.workspace_path)
+
+        pkg = "pkg_opt_flags"
+        target_dir = Path(self.temp_dir.name) / "target_opt_flags"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "drift_package.toml").write_text(
+            '[package]\n'
+            f'target_directory = "{target_dir.as_posix()}"\n'
+            'install_method = "copy"\n'
+            '[env.default]\n'
+            'GREETING = "hello"\n',
+            encoding="utf-8",
+        )
+        (src_pkg / "msg.envst.txt").write_text("$GREETING v1\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init opt flags pkg"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        run_primitive_deploy_pipeline(self.workspace_config, [pkg])
+
+        # Edit live target file in target_dir AND update template in src_pkg to match ("$GREETING v2\n")
+        (target_dir / "msg.txt").write_text("hello v2\n", encoding="utf-8")
+        (src_pkg / "msg.envst.txt").write_text("$GREETING v2\n", encoding="utf-8")
+
+        # 1. With no_reverse_sync=True, live target edit in target_dir is NOT pulled into install/, so install/ has no drifts!
+        plan_no_sync = prepare_adopt(
+            self.workspace_config, [pkg], AdoptOptions(no_reverse_sync=True, no_render=True)
+        )
+        self.assertFalse(plan_no_sync.has_drifts)
+
+        # 2. With no_reverse_sync=False and no_render=True, reverse-sync pulls "hello v2\n" into install/,
+        #    but render/ still has "hello v1\n", so msg.txt is classified as a divergent modification (NOT converged)!
+        plan_no_render = prepare_adopt(
+            self.workspace_config, [pkg], AdoptOptions(no_reverse_sync=False, no_render=True)
+        )
+        pkg_plan_no_render = plan_no_render.get_package_plan(pkg)
+        assert pkg_plan_no_render is not None
+        self.assertEqual(pkg_plan_no_render.converged_files, [])
+        self.assertEqual(pkg_plan_no_render.modifications, [Path("msg.txt")])
+
+        # 3. With default options (no_reverse_sync=False, no_render=False), render updates render/ to "hello v2\n",
+        #    so msg.txt is recognized as converged!
+        plan_default = prepare_adopt(
+            self.workspace_config, [pkg], AdoptOptions(no_reverse_sync=False, no_render=False)
+        )
+        pkg_plan_default = plan_default.get_package_plan(pkg)
+        assert pkg_plan_default is not None
+        self.assertEqual(pkg_plan_default.converged_files, [Path("msg.txt")])
+        self.assertEqual(pkg_plan_default.modifications, [])
+
+    def test_adopt_pre_source_hook_deduplication_with_and_without_no_render(self) -> None:
+        """Verifies pre_source hook executes exactly once per package whether pre-adoption rendering is enabled or disabled via no_render."""
+        from drift.hooks.lifecycle_hooks import HookExecFlags
+        from drift.primitives.deploy_repo import run_primitive_deploy_pipeline
+        from drift.primitives.workspace_repair import repair_drift_workspace
+
+        if sys.platform == "win32":
+            return
+
+        repair_drift_workspace(self.workspace_path)
+
+        pkg = "pkg_hook_dedup"
+        target_dir = Path(self.temp_dir.name) / "target_hook_dedup"
+        marker_file = Path(self.temp_dir.name) / "pre_source_count.log"
+        src_pkg = self.src_dir / pkg
+        hooks_dir = src_pkg / "drift_hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        hook_script = hooks_dir / "pre_source.sh"
+        hook_script.write_text(
+            f"#!/bin/sh\necho 'fired' >> \"{marker_file.as_posix()}\"\n",
+            encoding="utf-8",
+        )
+        hook_script.chmod(0o755)
+
+        (src_pkg / "drift_package.toml").write_text(
+            '[package]\n'
+            f'target_directory = "{target_dir.as_posix()}"\n'
+            'install_method = "copy"\n'
+            '[hooks]\n'
+            'pre_source = "drift_hooks/pre_source.sh"\n',
+            encoding="utf-8",
+        )
+        (src_pkg / "data.txt").write_text("v1\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init hook dedup pkg"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        # Deploy initial state (this fires pre_source once during deploy's render step; clear marker afterwards)
+        run_primitive_deploy_pipeline(self.workspace_config, [pkg])
+        if marker_file.exists():
+            marker_file.unlink()
+
+        # Case 1: Default adopt (no_render=False) -> pre_source runs during pre-adoption render and is NOT duplicated during execute_package_adopt
+        (target_dir / "data.txt").write_text("v2\n", encoding="utf-8")
+        res1 = run_primitive_adopt_drifts(self.workspace_config, [pkg], AdoptOptions(no_render=False))
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertTrue(marker_file.exists())
+        self.assertEqual(len(marker_file.read_text(encoding="utf-8").splitlines()), 1)
+
+        # Commit updated src/data.txt so source cleanliness guard passes for Case 2
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit v2 src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        marker_file.unlink()
+
+        # Case 2: Adopt with no_render=True -> pre_source was not triggered in prepare_adopt, so execute_package_adopt triggers it once
+        (target_dir / "data.txt").write_text("v3\n", encoding="utf-8")
+        res2 = run_primitive_adopt_drifts(self.workspace_config, [pkg], AdoptOptions(no_render=True))
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertTrue(marker_file.exists())
+        self.assertEqual(len(marker_file.read_text(encoding="utf-8").splitlines()), 1)
+
+        # Commit updated src/data.txt so source cleanliness guard passes for Case 3
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit v3 src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        marker_file.unlink()
+
+        # Case 3: Adopt with no_hooks=True -> pre_source is suppressed in both prepare_adopt and execute_package_adopt
+        (target_dir / "data.txt").write_text("v4\n", encoding="utf-8")
+        res3 = run_primitive_adopt_drifts(
+            self.workspace_config, [pkg], AdoptOptions(flags=HookExecFlags(no_hooks=True))
+        )
+        self.assertEqual(res3.status, "SUCCESS")
+        self.assertFalse(marker_file.exists())
+
+    def test_adopt_status_5_state_matrix_and_format_text(self) -> None:
+        """Verifies the 5-state AdoptStatus model (UP_TO_DATE, SUCCESS, PARTIAL, SKIPPED, FAILED),
+        separation of conflicted_files vs skipped_files, and pure format_text() methods across plans and results.
+        """
+        from drift.core.result_models import AdoptResult, AdoptStatus, PackageAdoptResult
+        from drift.primitives.adopt_repo import ItemAdoptOutcome
+
+        # 0. Verify ItemAdoptOutcome truthiness
+        self.assertTrue(bool(ItemAdoptOutcome.ADOPTED))
+        self.assertFalse(bool(ItemAdoptOutcome.SKIPPED))
+        self.assertFalse(bool(ItemAdoptOutcome.CONFLICT))
+
+        pkg = "pkg_status_matrix"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "clean.txt").write_text("v1\n", encoding="utf-8")
+        (install_pkg / "clean.txt").write_text("v1\n", encoding="utf-8")
+        (src_pkg / "tmpl.conf.envst").write_text("KEY=$VAL\nLINE=1\n", encoding="utf-8")
+        (install_pkg / "tmpl.conf").write_text("KEY=RENDERED\nLINE=1\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init status matrix src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init status matrix install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # 1. UP_TO_DATE: No drifts in package or workspace
+        res_up_to_date = run_primitive_adopt_drifts(
+            self.workspace_config, [pkg], AdoptOptions(no_render=True, no_reverse_sync=True)
+        )
+        self.assertEqual(res_up_to_date.status, AdoptStatus.UP_TO_DATE)
+        self.assertEqual(res_up_to_date.packages[0].status, AdoptStatus.UP_TO_DATE)
+        self.assertEqual(res_up_to_date.format_text(verbose=False), "✨ No drifted packages found in local state database.")
+        self.assertIn(f"📦 Package '{pkg}' [✨ UP_TO_DATE]:", res_up_to_date.format_text(verbose=True))
+        self.assertIn("No drifts detected.", res_up_to_date.format_text(verbose=True))
+
+        # 2. Dry-run preview formatting (conflict vs clean modification)
+        (install_pkg / "clean.txt").write_text("v2\n", encoding="utf-8")
+        (install_pkg / "tmpl.conf").write_text("CONFLICT_LINE=X\nLINE=99\n", encoding="utf-8")
+        res_dry = run_primitive_adopt_drifts(
+            self.workspace_config, [pkg], AdoptOptions(dry_run=True, no_render=True, no_reverse_sync=True)
+        )
+        self.assertTrue(res_dry.dry_run)
+        dry_text = res_dry.format_text()
+        self.assertIn("🔍 [DRY-RUN] Planned Drift Adoption Operations (install/ -> src/):", dry_text)
+        self.assertIn(f"📦 Package '{pkg}':", dry_text)
+        self.assertIn("~ clean.txt [Static Overwrite of: clean.txt]", dry_text)
+        self.assertIn("~ tmpl.conf [CONFLICTS with template: tmpl.conf.envst]", dry_text)
+        # Ensure `plan` is excluded from JSON serialization
+        dry_dict = res_dry.to_dict()
+        self.assertNotIn("plan", dry_dict["packages"][0])
+
+        # 3. Interactive SKIPPED vs non-interactive CONFLICT -> PARTIAL
+        # In interactive mode, user skips `clean.txt` (option 5) and `tmpl.conf` (option 5)
+        with patch("builtins.input", return_value="5"), patch("sys.stdout", StringIO()):
+            res_skip_all = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_skip_all.status, AdoptStatus.SKIPPED)
+        self.assertEqual(res_skip_all.packages[0].status, AdoptStatus.SKIPPED)
+        self.assertEqual(sorted(res_skip_all.packages[0].skipped_files), ["clean.txt", "tmpl.conf"])
+        self.assertEqual(res_skip_all.packages[0].conflicted_files, [])
+        self.assertIn("[⚠️ SKIPPED]", res_skip_all.format_text())
+        self.assertIn("[S] Skipped:", res_skip_all.format_text())
+
+        # 4. Non-interactive execution: `clean.txt` is adopted, `tmpl.conf` has a template conflict -> PARTIAL
+        res_partial = run_primitive_adopt_drifts(
+            self.workspace_config, [pkg], AdoptOptions(interactive=False, no_render=True, no_reverse_sync=True)
+        )
+        self.assertEqual(res_partial.status, AdoptStatus.PARTIAL)
+        self.assertEqual(res_partial.packages[0].status, AdoptStatus.PARTIAL)
+        self.assertEqual(res_partial.packages[0].adopted_modifications, ["clean.txt"])
+        self.assertEqual(res_partial.packages[0].conflicted_files, ["tmpl.conf"])
+        self.assertEqual(res_partial.packages[0].skipped_files, [])
+        self.assertEqual(res_partial.packages[0].unresolved_files, ["tmpl.conf"])
+        self.assertTrue(res_partial.packages[0].has_unresolved_files)
+        partial_text = res_partial.format_text()
+        self.assertIn("[⚠️ PARTIAL]", partial_text)
+        self.assertIn("[!] Conflicted (requires manual resolution or --accept-conflicts):", partial_text)
+        self.assertIn("! tmpl.conf", partial_text)
+
+        # 5. Now only `tmpl.conf` remains drifted in install/; non-interactive adopt on it alone -> SKIPPED (with conflicted_files)
+        res_conflict_only = run_primitive_adopt_drifts(
+            self.workspace_config, [pkg], AdoptOptions(interactive=False, no_render=True, no_reverse_sync=True)
+        )
+        self.assertEqual(res_conflict_only.status, AdoptStatus.SKIPPED)
+        self.assertEqual(res_conflict_only.packages[0].status, AdoptStatus.SKIPPED)
+        self.assertEqual(res_conflict_only.packages[0].conflicted_files, ["tmpl.conf"])
+        self.assertEqual(res_conflict_only.packages[0].skipped_files, [])
+
+        # 6. Resolve remaining conflicted file via interactive Over-render & Freeze (option "1") -> SUCCESS
+        with patch("builtins.input", return_value="1"), patch("sys.stdout", StringIO()):
+            res_success = run_primitive_adopt_drifts(
+                self.workspace_config,
+                [pkg],
+                AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True),
+            )
+        self.assertEqual(res_success.status, AdoptStatus.SUCCESS)
+        self.assertEqual(res_success.packages[0].status, AdoptStatus.SUCCESS)
+        self.assertEqual(list(res_success), [pkg])
+        self.assertIn("[✨ SUCCESS]", res_success.format_text())
+
+        # 7. Simulated FAILED result formatting
+        res_failed = AdoptResult(
+            command="adopt",
+            status=AdoptStatus.FAILED,
+            packages=[PackageAdoptResult(package=pkg, status=AdoptStatus.FAILED, error="Simulated error")],
+            error_message="Simulated error",
+        )
+        self.assertIn("[❌ FAILED]", res_failed.format_text())
+        self.assertIn("Simulated error", res_failed.format_text())
+
+    def test_adopt_models_reexports_and_non_optional_plan(self) -> None:
+        """Verifies all adopt models reside in drift.core.adopt_models, are re-exported in result_models,
+        have a non-Optional PackageAdoptResult.plan, and cause zero circular imports across import orders.
+        """
+        import drift
+        import drift.core as core_pkg
+        import drift.core.adopt_models as adopt_models
+        import drift.core.result_models as result_models
+        import drift.primitives as primitives_pkg
+        import drift.primitives.adopt_repo as adopt_repo
+
+        model_names = (
+            "AdoptStatus",
+            "ItemAdoptOutcome",
+            "get_rename_patch_key",
+            "AdoptOptions",
+            "PackageDriftFiles",
+            "PackageAdoptPlan",
+            "AdoptPlan",
+            "PackageAdoptResult",
+            "AdoptResult",
+        )
+        for name in model_names:
+            canonical = getattr(adopt_models, name)
+            self.assertIs(getattr(result_models, name), canonical)
+            self.assertIs(getattr(core_pkg, name), canonical)
+            self.assertIs(getattr(adopt_repo, name), canonical)
+            self.assertIs(getattr(drift, name), canonical)
+        for name in ("ItemAdoptOutcome", "AdoptOptions", "PackageDriftFiles", "PackageAdoptPlan", "AdoptPlan"):
+            self.assertIs(getattr(primitives_pkg, name), getattr(adopt_models, name))
+
+        # Verify PackageAdoptResult.plan is non-Optional and syncs package name bidirectionally
+        res_from_pkg = adopt_models.PackageAdoptResult(package="pkg_alpha")
+        self.assertIsInstance(res_from_pkg.plan, adopt_models.PackageAdoptPlan)
+        self.assertEqual(res_from_pkg.plan.package, "pkg_alpha")
+        self.assertIn("📦 Package 'pkg_alpha':", res_from_pkg.format_text(dry_run=True))
+
+        res_from_plan = adopt_models.PackageAdoptResult(plan=adopt_models.PackageAdoptPlan(package="pkg_beta"))
+        self.assertEqual(res_from_plan.package, "pkg_beta")
+        self.assertEqual(res_from_plan.plan.package, "pkg_beta")
+
+        # Verify zero circular imports when importing modules in various orders in fresh Python processes
+        for import_stmt in (
+            "import drift.config; import drift.core.result_models; import drift.primitives.adopt_repo",
+            "import drift.core.result_models; import drift.config; import drift.primitives.adopt_repo",
+            "import drift.core.adopt_models; import drift.config; import drift.core.result_models",
+            "import drift.primitives.adopt_repo; import drift.core.result_models; import drift.config",
+        ):
+            proc = subprocess.run(
+                [sys.executable, "-c", f"import sys; sys.path.insert(0, 'src'); {import_stmt}"],
+                cwd=str(Path(__file__).resolve().parents[1]),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, msg=f"Import failed for '{import_stmt}': {proc.stderr}")
+
 
 if __name__ == "__main__":
     unittest.main()
-
-
-

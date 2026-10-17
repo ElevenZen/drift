@@ -23,7 +23,7 @@ from drift.config.package_config import PackageConfig
 from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 from drift.render.render_package import render_package, run_primitive_2_render_packages
 from drift.primitives.reverse_sync import run_primitive_1_reverse_sync
-from drift.primitives.adopt_repo import resolve_source_file_path, adopt_one_package_drifts
+from drift.primitives.adopt_repo import resolve_source_file_path, adopt_one_package_drifts, AdoptOptions
 from drift.utils.toml_utils import parse_toml
 from drift.core.exceptions import ConfigError
 from drift.utils.file_inspect import check_can_symlink
@@ -399,7 +399,7 @@ class TestPackageRenderEngine(unittest.TestCase):
         pkg_adopt_res = adopt_one_package_drifts(
             workspace_config=workspace_config,
             pkg=pkg_config.name,
-            dry_run=True,
+            options=AdoptOptions(dry_run=True),
         )
         self.assertEqual(pkg_adopt_res.status, "SUCCESS")
     def test_lifecycle_hook_with_package_render_engine_input_chaining(self) -> None:

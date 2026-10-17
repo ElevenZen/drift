@@ -6,15 +6,12 @@ import json
 from dataclasses import dataclass, field, is_dataclass, asdict, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Tuple, TYPE_CHECKING, Iterable
+from typing import Any, Dict, List, Optional, Union, Tuple, Iterable
 from datetime import datetime
 from .constants import InstallMethod
 from .folder_diff import FolderDiff
 from ..utils.git_utils import GitStatusChanges
 from ..utils.config_utils import partition
-
-if TYPE_CHECKING:
-    from ..config.render_engine_config import RenderEngineRegistry
 
 
 class NextActionType(str, Enum):
@@ -687,138 +684,20 @@ class UninstallResult(SerializableModel):
 
 
 # =============================================================================
-# Primitive 8: Adopt Drifts
+# Primitive 8: Adopt Drifts (Re-exported from adopt_models)
 # =============================================================================
 
-@dataclass
-class PackageDriftFiles(SerializableModel):
-    """Categorized drift file paths for a single package."""
-    additions: List[Path] = field(default_factory=list)
-    deletions: List[Path] = field(default_factory=list)
-    modifications: List[Path] = field(default_factory=list)
-    renames: List[Tuple[Path, Path]] = field(default_factory=list)
-    converged_files: List[Path] = field(default_factory=list)
-
-    @property
-    def has_divergent_drifts(self) -> bool:
-        return bool(self.additions or self.deletions or self.modifications or self.renames)
-
-    @property
-    def has_drifts(self) -> bool:
-        return bool(self.has_divergent_drifts or self.converged_files)
-
-    @property
-    def total_drifts(self) -> int:
-        return (
-            len(self.additions)
-            + len(self.deletions)
-            + len(self.modifications)
-            + len(self.renames)
-            + len(self.converged_files)
-        )
-
-
-@dataclass
-class PackageAdoptPlan(SerializableModel):
-    """Structured plan representing detected system drifts for a single package."""
-    package: str
-    src_pkg_dir: Path
-    src_dir_to_render: Path
-    install_pkg_dir: Path
-    render_engines: RenderEngineRegistry
-    drifts: PackageDriftFiles = field(default_factory=PackageDriftFiles)
-    mod_patches: Dict[str, str] = field(default_factory=dict)
-    rename_patches: Dict[str, str] = field(default_factory=dict)
-    status: str = "PENDING"
-    error: Optional[str] = None
-
-    @property
-    def additions(self) -> List[Path]:
-        return self.drifts.additions
-
-    @property
-    def deletions(self) -> List[Path]:
-        return self.drifts.deletions
-
-    @property
-    def modifications(self) -> List[Path]:
-        return self.drifts.modifications
-
-    @property
-    def renames(self) -> List[Tuple[Path, Path]]:
-        return self.drifts.renames
-
-    @property
-    def converged_files(self) -> List[Path]:
-        return self.drifts.converged_files
-
-    @property
-    def has_divergent_drifts(self) -> bool:
-        return self.drifts.has_divergent_drifts
-
-    @property
-    def has_drifts(self) -> bool:
-        return self.drifts.has_drifts
-
-    @property
-    def total_drifts(self) -> int:
-        return self.drifts.total_drifts
-
-
-@dataclass
-class AdoptPlan(SerializableModel):
-    """Structured multi-package drift adoption plan."""
-    plans: List[PackageAdoptPlan] = field(default_factory=list)
-    dry_run: bool = False
-
-    @property
-    def has_drifts(self) -> bool:
-        return any(p.has_drifts for p in self.plans)
-
-    @property
-    def drifted_packages(self) -> List[str]:
-        return [p.package for p in self.plans if p.has_drifts]
-
-    def get_package_plan(self, package: str) -> Optional[PackageAdoptPlan]:
-        return next((p for p in self.plans if p.package == package), None)
-
-
-@dataclass
-class PackageAdoptResult(SerializableModel):
-    package: str
-    adopted_additions: List[str] = field(default_factory=list)
-    adopted_modifications: List[str] = field(default_factory=list)
-    adopted_deletions: List[str] = field(default_factory=list)
-    adopted_renames: List[str] = field(default_factory=list)
-    adopted_converged: List[str] = field(default_factory=list)
-    skipped_files: List[str] = field(default_factory=list)
-    status: str = "SUCCESS"
-    error: Optional[str] = None
-
-    @property
-    def has_adopted_changes(self) -> bool:
-        return bool(
-            self.adopted_additions
-            or self.adopted_modifications
-            or self.adopted_deletions
-            or self.adopted_renames
-            or self.adopted_converged
-        )
-
-
-@dataclass
-class AdoptResult(SerializableModel):
-    command: str = "adopt"
-    status: str = "SUCCESS"  # "SUCCESS", "FAILED"
-    packages: List[PackageAdoptResult] = field(default_factory=list)
-    error_message: Optional[str] = None
-    dry_run: bool = False
-
-    def __iter__(self):
-        return iter([p.package for p in self.packages if p.status == "SUCCESS"])
-
-    def __len__(self):
-        return len([p.package for p in self.packages if p.status == "SUCCESS"])
+from .adopt_models import (
+    AdoptStatus,
+    ItemAdoptOutcome,
+    get_rename_patch_key,
+    AdoptOptions,
+    PackageDriftFiles,
+    PackageAdoptPlan,
+    AdoptPlan,
+    PackageAdoptResult,
+    AdoptResult,
+)
 
 
 # =============================================================================

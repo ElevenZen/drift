@@ -488,27 +488,42 @@ def execute_adopt(
     force: bool = False,
     dry_run: bool = False,
     json_mode: bool = False,
-    no_hooks: bool = False
+    no_hooks: bool = False,
+    no_render: bool = False,
+    no_reverse_sync: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Core function to adopt system drifts back to source templates, shared by both CLI backends."""
-    from ..primitives.adopt_repo import run_primitive_adopt_drifts
+    from ..core.result_models import AdoptStatus
+    from ..primitives.adopt_repo import run_primitive_adopt_drifts, AdoptOptions
     from ..hooks.lifecycle_hooks import HookExecFlags
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="adopt")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
-    res = run_primitive_adopt_drifts(
-        workspace_config=workspace_config,
-        package_names=package_names,
+    options = AdoptOptions(
         interactive=interactive,
         accept_conflicts=accept_conflicts,
         force=force,
         dry_run=dry_run,
+        no_render=no_render,
+        no_reverse_sync=no_reverse_sync,
         flags=flags,
+    )
+    res = run_primitive_adopt_drifts(
+        workspace_config=workspace_config,
+        package_names=package_names,
+        options=options,
     )
     if json_mode:
         print(res.to_json())
+    elif dry_run:
+        text = res.format_text(verbose=verbose)
+        if text:
+            print(text)
+    if res.status == AdoptStatus.FAILED:
+        raise RuntimeError(res.error_message or "Drift adoption failed.")
 
 
 def execute_diff(

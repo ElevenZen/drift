@@ -942,8 +942,66 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         out = stdout.getvalue()
         self.assertIn("SKIP_IDENTICAL", out)
 
+    def test_cli_adopt_no_render_and_no_reverse_sync_flags_across_backends(self) -> None:
+        """Verifies that --no-render, --no-reverse-sync, and --no-sync flags on adopt propagate across Typer and Argparse backends."""
+        from drift.cli import run_argparse_cli
+
+        # 1. Default (neither flag set)
+        for runner in (main, run_argparse_cli):
+            with patch("drift.cli.cli_handlers.execute_adopt") as mock_action:
+                with patch("sys.stdout", StringIO()):
+                    runner(["-C", self.drift_root, "adopt", "pkg_a"])
+                self.assertTrue(mock_action.called)
+                _, kwargs = mock_action.call_args
+                self.assertFalse(kwargs.get("no_render"))
+                self.assertFalse(kwargs.get("no_reverse_sync"))
+
+        # 2. --no-render
+        for runner in (main, run_argparse_cli):
+            with patch("drift.cli.cli_handlers.execute_adopt") as mock_action:
+                with patch("sys.stdout", StringIO()):
+                    runner(["-C", self.drift_root, "adopt", "--no-render", "pkg_a"])
+                self.assertTrue(mock_action.called)
+                _, kwargs = mock_action.call_args
+                self.assertTrue(kwargs.get("no_render"))
+                self.assertFalse(kwargs.get("no_reverse_sync"))
+
+        # 3. --no-reverse-sync and --no-sync
+        for flag in ("--no-reverse-sync", "--no-sync"):
+            for runner in (main, run_argparse_cli):
+                with patch("drift.cli.cli_handlers.execute_adopt") as mock_action:
+                    with patch("sys.stdout", StringIO()):
+                        runner(["-C", self.drift_root, "adopt", flag, "pkg_a"])
+                    self.assertTrue(mock_action.called)
+                    _, kwargs = mock_action.call_args
+                    self.assertFalse(kwargs.get("no_render"))
+                    self.assertTrue(kwargs.get("no_reverse_sync"))
+
+        # 4. Verify actions.execute_adopt constructs AdoptOptions with no_render and no_reverse_sync
+        #    and prints res.format_text(verbose=...) when dry_run=True and not json_mode
+        with patch("drift.primitives.adopt_repo.run_primitive_adopt_drifts") as mock_prim:
+            from drift.core.result_models import AdoptResult, AdoptStatus, PackageAdoptResult
+            mock_prim.return_value = AdoptResult(
+                command="adopt",
+                status=AdoptStatus.UP_TO_DATE,
+                packages=[PackageAdoptResult(package="pkg_a", status=AdoptStatus.UP_TO_DATE)],
+                dry_run=True,
+            )
+            mock_out = StringIO()
+            with patch("sys.stdout", mock_out):
+                main(["-C", self.drift_root, "adopt", "--dry-run", "--no-render", "--no-sync", "pkg_a"])
+            self.assertTrue(mock_prim.called)
+            _, prim_kwargs = mock_prim.call_args
+            opts = prim_kwargs.get("options")
+            self.assertIsNotNone(opts)
+            self.assertTrue(opts.dry_run)
+            self.assertTrue(opts.no_render)
+            self.assertTrue(opts.no_reverse_sync)
+            self.assertIn("[DRY-RUN] No drifted packages found", mock_out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

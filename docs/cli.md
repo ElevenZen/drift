@@ -18,7 +18,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`deploy`** | `drift deploy [packages...] [-f] [-r\|--reinstall] [-c] [-n] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
 | **`plan`** | `drift plan [packages...] [-a] [-f] [-r] [-c] [--with-hooks] [--no-deps] [--json]` | Full-cycle deployment planning across all pipeline phases without modifying system state. |
 | **`rollback`** | `drift rollback [packages...] [-f] [--no-hooks] [--json]` | Rollback failed deployments and restore systems to last clean state. |
-| **`adopt`** | `drift adopt [packages...] [-i] [--accept-conflicts] [-f] [-n] [--json]` | Incorporate active runtime system drifts back into source templates. |
+| **`adopt`** | `drift adopt [packages...] [-i] [--accept-conflicts] [-f] [-n] [--no-render] [--no-reverse-sync\|--no-sync] [--json]` | Incorporate active runtime system drifts back into source templates. |
 | **`uninstall`** | `drift uninstall <packages...> [-f] [--detach] [-n] [--no-deps] [--no-hooks] [--json]` | Uninstall packages or detach management while preserving physical files. |
 | **`gc`** | `drift gc [-n] [--no-hooks] [--json]` | Identify and purge orphan packages and zombie database folders. |
 | **`repair`** | `drift repair [-n] [--json]` | Self-heal damaged or missing workspace components and databases. |
@@ -235,6 +235,8 @@ Incorporate runtime system and GUI changes back into your declarative source tem
     - `--force / -f`: Bypasses the file-level Git cleanliness safeguard on target source files (`src/<package>/...`), allowing adoption even if targeted source files have uncommitted local modifications.
     - `-n / --dry-run`: Previews all pending additions, deletions, renames, and modifications (including conflict dry-run inspection) without writing changes to disk or advancing Git commits.
     - `--no-hooks / --no-hook`: Bypasses execution of `pre_source` package lifecycle hooks.
+    - `--no-render`: Bypasses rendering drifted packages in `src/` to `render/` before evaluating and adopting drifts.
+    - `--no-reverse-sync / --no-sync`: Bypasses pulling live host configuration changes into `install/` before evaluating and adopting drifts.
     - `--json`: Outputs a structured `AdoptResult` in JSON format containing lists of adopted additions, deletions, modifications, renames, and overall execution status.
 
 *   **Diff Previews**:

@@ -168,7 +168,9 @@ def handle_adopt(
     accept_conflicts: bool = False,
     force: bool = False,
     dry_run: bool = False,
-    no_hooks: bool = False
+    no_hooks: bool = False,
+    no_render: bool = False,
+    no_reverse_sync: bool = False,
 ) -> None:
     """Adopt active system drifts and incorporate them back into source templates."""
     cli_ctx = _extract_cli_context(ctx)
@@ -183,7 +185,10 @@ def handle_adopt(
             force=force,
             dry_run=dry_run,
             json_mode=cli_ctx.json_mode,
-            no_hooks=no_hooks
+            no_hooks=no_hooks,
+            no_render=no_render,
+            no_reverse_sync=no_reverse_sync,
+            verbose=cli_ctx.verbose,
         )
 
 

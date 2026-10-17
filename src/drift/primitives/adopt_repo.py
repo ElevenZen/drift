@@ -5,55 +5,56 @@ Architecture & Call Chain Overview
 ===============================================================================
 
 Layer 5: Primitive Entry Point & Orchestration
-    run_primitive_adopt_drifts(workspace_config, package_names, interactive, accept_conflicts, force, dry_run, flags)
-        1. Planning (including converged drift sub-process):
-            plan_adopt_repo [Layer 5] -> get_package_drifts [Layer 1]
-        2. Dry-Run Reporting (if dry_run=True):
-            dry_run_adopt [Layer 3]
+    run_primitive_adopt_drifts(workspace_config, package_names, options)
+        1. Preparation (reverse-sync + scoped render + converged/divergent planning):
+            prepare_adopt [Layer 5]
+                -> _sync_and_render_before_adopt [Layer 5]
+                -> plan_package_adopt [Layer 1]
+        2. Dry-Run Simulation (if options.dry_run=True):
+            _dry_run_package_adopt [Layer 4] (pure simulation; formatted via PackageAdoptPlan.format_text / AdoptResult.format_text)
         3. Execution (stages converged files directly + reconciles divergent drifts):
-            execute_adopt_repo [Layer 5] -> execute_package_adopt [Layer 4]
+            execute_adopt [Layer 5] -> execute_package_adopt [Layer 4]
         4. State Synchronization & Commit:
             commit_staged_repo_changes (commits only staged adopted paths in install/ repo)
 
     resolve_and_commit_converged_drifts(workspace_config, package_names, dry_run) -> Dict[str, List[Path]]
-        Dedicated entry point that runs adoption planning without patch generation
-        (plan_adopt_repo(..., skip_patches=True)) and executes only the converged-files plan
-        (execute_converged_drifts). Used by deploy_repo after reverse-sync.
+        Dedicated entry point that runs adoption planning without patch generation, rendering,
+        or reverse-sync (prepare_adopt(..., options=AdoptOptions(no_render=True, no_reverse_sync=True, skip_patches=True)))
+        and executes only the converged-files plan (execute_converged_drifts). Used by deploy_repo after reverse-sync.
 
     execute_converged_drifts(workspace_config, plan) -> Dict[str, List[Path]]
         Stages and commits only the planned converged_files in install/ repo.
 
-    plan_adopt_repo(workspace_config, package_names, skip_patches) -> AdoptPlan
-        Builds a multi-package AdoptPlan containing PackageAdoptPlans.
+    prepare_adopt(workspace_config, package_names, options) -> AdoptPlan
+        Synchronizes host changes into install/ (unless options.no_reverse_sync), renders drifted
+        packages (unless options.no_render), and builds a multi-package AdoptPlan containing PackageAdoptPlans.
 
-    execute_adopt_repo(workspace_config, plan, interactive, accept_conflicts, force, flags) -> AdoptResult
-        Executes adoption across packages, stages resolved files, and commits staged changes in install/ repo.
+    execute_adopt(workspace_config, plan) -> AdoptResult
+        Executes adoption across packages using plan.options, stages resolved files, and commits staged changes in install/ repo.
 
 Layer 4: Single-Package Drift Adoption & Planning
     stage_converged_package_drifts(workspace_config, plan) -> List[Path]
         Stages planned converged_files for a single package in install/<pkg>/.
 
-    adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, force, dry_run, flags)
+    adopt_one_package_drifts(workspace_config, pkg, options) -> PackageAdoptResult
         Coordinates single-package planning and execution.
         NOTE: adopt_one_package_drifts does NOT commit the install/ repo; it only reconciles source files
         and stages adopted paths in the install/ index. Committing staged changes is performed at Layer 5
-        orchestration (execute_adopt_repo / commit_staged_repo_changes) or by the caller.
+        orchestration (execute_adopt / commit_staged_repo_changes) or by the caller.
 
-    plan_package_adopt(workspace_config, pkg, skip_patches) -> PackageAdoptPlan
-        Convenience alias for get_package_drifts [Layer 1].
-
-    execute_package_adopt(workspace_config, plan, interactive, accept_conflicts, force, flags) -> PackageAdoptResult
-        1. Pre-Source Hook (if divergent drifts exist):
+    execute_package_adopt(workspace_config, plan, options) -> PackageAdoptResult
+        1. Pre-Source Hook (if divergent drifts exist and not plan.pre_source_already_triggered):
             trigger_pre_source_hook
         2. Stage Converged Files Directly:
             plan.converged_files -> resolved_paths
         3. Process Divergent Drift Categories (Additions, Deletions, Renames, Modifications):
-            handle_single_addition [Layer 3]
-            handle_single_deletion [Layer 3]
-            handle_single_rename [Layer 3] (reads pre-computed patch)
-            handle_single_modification [Layer 3] (reads pre-computed patch)
-        4. Staging Resolved Files:
+            handle_single_addition [Layer 3] -> ItemAdoptOutcome
+            handle_single_deletion [Layer 3] -> ItemAdoptOutcome
+            handle_single_rename [Layer 3] (reads pre-computed patch) -> ItemAdoptOutcome
+            handle_single_modification [Layer 3] (reads pre-computed patch) -> ItemAdoptOutcome
+        4. Staging Resolved Files & Deriving AdoptStatus:
             git -C <install_path> add -- <resolved_paths>
+            _derive_package_adopt_status -> AdoptStatus (UP_TO_DATE, SUCCESS, PARTIAL, SKIPPED, FAILED)
             NOTE: Only successfully adopted/converged files are staged. Does NOT commit the install/ repo.
 
 Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
@@ -89,7 +90,7 @@ Layer 2: Single-File Reconciliation Actions
 Layer 1: Inspection & Git Patch Primitives
     get_drifted_packages
         Parses git status porcelain across install/ to discover all packages with local host modifications.
-    get_package_drifts(workspace_config, pkg, skip_patches) -> PackageAdoptPlan
+    plan_package_adopt(workspace_config, pkg, skip_patches, pre_source_already_triggered) -> PackageAdoptPlan
         1. Resolve Package Source Context:
             _resolve_package_source_context -> (src_dir_to_render, render_engines)
         2. Temporary Staging Context Manager (if package has Git changes):
@@ -126,6 +127,7 @@ Layer 1: Inspection & Git Patch Primitives
         Resolves physical source template paths using RenderEngineRegistry suffix mapping.
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
+    Layer 0: Adoption Data Structures & Plans (in core/adopt_models.py)
     Layer 1: Inspection & Git Patch Primitives
     Layer 2: Single-File Reconciliation Actions
     Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
@@ -144,13 +146,19 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..config.render_engine_config import RenderEngineRegistry
 from ..core.constants import DRIFT_IGNORE_FILE_NAME, DRIFT_KEEP_FILE_NAME
-from ..core.result_models import (
-    AdoptPlan,
-    AdoptResult,
-    PackageAdoptPlan,
-    PackageAdoptResult,
+from ..core.adopt_models import (
+    AdoptStatus,
+    ItemAdoptOutcome,
+    get_rename_patch_key,
+    AdoptOptions,
     PackageDriftFiles,
+    PackageAdoptPlan,
+    AdoptPlan,
+    PackageAdoptResult,
+    AdoptResult,
 )
+from ..render.render_package import RenderOptions, run_primitive_2_render_packages
+from .reverse_sync import run_primitive_1_reverse_sync
 from ..utils.config_utils import partition
 from ..utils.git_utils import (
     GitStatusChanges,
@@ -536,15 +544,6 @@ def _partition_converged_package_drifts(
     )
 
 
-def get_rename_patch_key(old_rel: Path, new_rel: Path) -> str:
-    """Generates a collision-free dictionary key for a rename pair (old_rel, new_rel).
-
-    Because normalized Path.as_posix() strings never contain '//', joining with '//->//'
-    guarantees that no two distinct (old_rel, new_rel) pairs can ever produce the same key.
-    """
-    return f"{old_rel.as_posix()}//->//{new_rel.as_posix()}"
-
-
 def _precompute_package_drift_patches(
     install_base: Path,
     pkg: str,
@@ -597,10 +596,11 @@ def _resolve_package_source_context(
         return src_pkg_dir, render_engines
 
 
-def get_package_drifts(
+def plan_package_adopt(
     workspace_config: WorkspaceConfig,
     pkg: str,
     skip_patches: bool = False,
+    pre_source_already_triggered: bool = False,
 ) -> PackageAdoptPlan:
     """Discovers and structures all system drifts for a single package into a PackageAdoptPlan.
 
@@ -627,6 +627,7 @@ def get_package_drifts(
             src_dir_to_render=src_dir_to_render,
             install_pkg_dir=install_pkg_dir,
             render_engines=render_engines,
+            pre_source_already_triggered=pre_source_already_triggered,
             status="PENDING",
         )
 
@@ -657,11 +658,9 @@ def get_package_drifts(
         drifts=drifts,
         mod_patches=mod_patches,
         rename_patches=rename_patches,
+        pre_source_already_triggered=pre_source_already_triggered,
         status="PENDING",
     )
-
-
-plan_package_adopt = get_package_drifts
 
 
 # =====================================================================
@@ -826,61 +825,7 @@ def fallback_side_by_side(src_file: Path, install_file: Path) -> bool:
 # Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
 # =====================================================================
 
-def dry_run_adopt(plan: PackageAdoptPlan) -> None:
-    """Prints a clear preview of all drift changes and potential conflicts."""
-    logger.info(f"\n🔍 [DRY RUN] Previewing drift adoption for package '{plan.package}':")
-
-    install_base = plan.install_pkg_dir.parent
-
-    if plan.converged_files:
-        logger.info("   [=] Converged (already identical to render/, will be staged directly):")
-        for item in plan.converged_files:
-            logger.info(f"       = {item}")
-
-    if plan.additions:
-        logger.info("   [+] Additions (will be copied to source):")
-        for item in plan.additions:
-            tag = " (directory)" if (plan.install_pkg_dir / item).is_dir() else ""
-            logger.info(f"       + {item}{tag}")
-
-    if plan.deletions:
-        logger.info("   [-] Deletions (will be removed from source):")
-        for item in plan.deletions:
-            tag = " (directory)" if (plan.src_dir_to_render / item).is_dir() else ""
-            logger.info(f"       - {item}{tag}")
-
-    if plan.renames:
-        logger.info("   [R] Renames (will rename the template in source):")
-        for old_file, new_file in plan.renames:
-            logger.info(f"       R {old_file} -> {new_file}")
-
-    if plan.modifications:
-        logger.info("   [~] Modifications:")
-        for file in plan.modifications:
-            src_file = resolve_source_file_path(plan.render_engines, plan.src_dir_to_render, file)
-            if not src_file:
-                logger.info(f"       ~ {file} [Static Overwrite]")
-                continue
-
-            # If the resolved source file is templated, check for conflicts
-            is_templated = plan.render_engines.find_engine_for_file(src_file.name) is not None
-            if is_templated:
-                patch_content = plan.mod_patches.get(file.as_posix())
-                if patch_content is None:
-                    install_file = plan.install_pkg_dir / file
-                    pkg_rel_path = Path(plan.package) / file
-                    has_conflict = test_file_conflict(src_file, install_file, install_base, pkg_rel_path)
-                else:
-                    has_conflict = check_patch_conflicts(src_file, patch_content)
-                if has_conflict:
-                    logger.info(f"       ~ {file} [CONFLICTS with template: {src_file.name}]")
-                else:
-                    logger.info(f"       ~ {file} [Patch applies cleanly to: {src_file.name}]")
-            else:
-                logger.info(f"       ~ {file} [Static Overwrite of: {src_file.name}]")
-
-
-def _prompt_addition_collision_interactive(rel_path: Path, incoming_is_dir: bool) -> bool:
+def _prompt_addition_collision_interactive(rel_path: Path, incoming_is_dir: bool) -> ItemAdoptOutcome:
     """Prompts the user when an addition collides with an existing file/directory in source."""
     incoming_type = "directory" if incoming_is_dir else "file"
     existing_type = "file" if incoming_is_dir else "directory"
@@ -889,7 +834,7 @@ def _prompt_addition_collision_interactive(rel_path: Path, incoming_is_dir: bool
     print(f"[1] Discard addition / Restore (removes {incoming_type} on host next deployment)")
     print(f"[2] Skip {incoming_type}")
     choice = input("Select option [1-2]: ").strip()
-    return choice == "1"
+    return ItemAdoptOutcome.ADOPTED if choice == "1" else ItemAdoptOutcome.SKIPPED
 
 
 def _prompt_directory_addition_interactive(
@@ -897,7 +842,7 @@ def _prompt_directory_addition_interactive(
     src_dir_to_render: Path,
     install_pkg_dir: Path,
     rel_path: Path,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Interactive menu for adopting an untracked directory addition."""
     print(f"\nFound untracked directory addition inside Fully-Controlled Directory: {rel_path}")
     print("Reconciliation options:")
@@ -908,14 +853,14 @@ def _prompt_directory_addition_interactive(
     choice = input("Select option [1-4]: ").strip()
     if choice == "1":
         adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
-        return True
+        return ItemAdoptOutcome.ADOPTED
     elif choice == "2":
         ignore_addition(src_pkg_dir, install_pkg_dir, rel_path)
-        return True
+        return ItemAdoptOutcome.ADOPTED
     elif choice == "3":
-        return True
+        return ItemAdoptOutcome.ADOPTED
     else:
-        return False
+        return ItemAdoptOutcome.SKIPPED
 
 
 def _prompt_file_addition_interactive(
@@ -923,7 +868,7 @@ def _prompt_file_addition_interactive(
     src_dir_to_render: Path,
     install_pkg_dir: Path,
     rel_path: Path,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Interactive menu for adopting an untracked file addition."""
     print(f"\nFound untracked file addition inside Fully-Controlled Directory: {rel_path}")
     print("Reconciliation options:")
@@ -934,14 +879,14 @@ def _prompt_file_addition_interactive(
     choice = input("Select option [1-4]: ").strip()
     if choice == "1":
         adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
-        return True
+        return ItemAdoptOutcome.ADOPTED
     elif choice == "2":
         ignore_addition(src_pkg_dir, install_pkg_dir, rel_path)
-        return True
+        return ItemAdoptOutcome.ADOPTED
     elif choice == "3":
-        return True
+        return ItemAdoptOutcome.ADOPTED
     else:
-        return False
+        return ItemAdoptOutcome.SKIPPED
 
 
 def _handle_single_directory_addition(
@@ -952,25 +897,25 @@ def _handle_single_directory_addition(
     rel_path: Path,
     interactive: bool,
     force: bool = False,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Handles adoption of an empty directory addition."""
     # 1. Pre-existing directory in source: already matches desired state, skip cleanly
     if (src_dir_to_render / rel_path).is_dir():
         logger.info(f"Directory '{rel_path}' already exists in source. Skipping addition.")
-        return True
+        return ItemAdoptOutcome.ADOPTED
 
     # 2. File / template collision check
     if (src_dir_to_render / rel_path).is_file() or resolve_source_file_path(render_engines, src_dir_to_render, rel_path) is not None:
         if not interactive:
             logger.error(f"❌ [CONFLICT] Cannot adopt directory '{rel_path}' because a file already exists at that path in source. Skipping.")
-            return False
+            return ItemAdoptOutcome.CONFLICT
         return _prompt_addition_collision_interactive(rel_path, incoming_is_dir=True)
 
     # 3. Clean directory addition
     assert_source_file_clean(src_dir_to_render / rel_path, force=force, pkg=install_pkg_dir.name)
     if not interactive:
         adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
-        return True
+        return ItemAdoptOutcome.ADOPTED
     return _prompt_directory_addition_interactive(src_pkg_dir, src_dir_to_render, install_pkg_dir, rel_path)
 
 
@@ -982,13 +927,13 @@ def _handle_single_file_addition(
     rel_path: Path,
     interactive: bool,
     force: bool = False,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Handles adoption of a regular file addition."""
     # 1. Directory collision check
     if (src_dir_to_render / rel_path).is_dir():
         if not interactive:
             logger.error(f"❌ [CONFLICT] Cannot adopt file '{rel_path}' because a directory already exists at that path in source. Skipping.")
-            return False
+            return ItemAdoptOutcome.CONFLICT
         return _prompt_addition_collision_interactive(rel_path, incoming_is_dir=False)
 
     # 2. Existing file collision check
@@ -996,7 +941,7 @@ def _handle_single_file_addition(
     if target_existing_src is not None:
         if not interactive:
             logger.error(f"❌ [CONFLICT] Cannot adopt addition '{rel_path}' because the target already exists in source. Skipping.")
-            return False
+            return ItemAdoptOutcome.CONFLICT
         return _prompt_addition_collision_interactive(rel_path, incoming_is_dir=False)
 
     # 3. Clean file addition
@@ -1004,7 +949,7 @@ def _handle_single_file_addition(
     assert_source_file_clean(target_src_file, force=force, pkg=install_pkg_dir.name)
     if not interactive:
         adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
-        return True
+        return ItemAdoptOutcome.ADOPTED
     return _prompt_file_addition_interactive(src_pkg_dir, src_dir_to_render, install_pkg_dir, rel_path)
 
 
@@ -1016,7 +961,7 @@ def handle_single_addition(
     rel_path: Path,
     interactive: bool,
     force: bool = False,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Handles drift reconciliation for a single file or directory addition."""
     if (install_pkg_dir / rel_path).is_dir():
         return _handle_single_directory_addition(
@@ -1044,7 +989,7 @@ def _prompt_empty_directory_deletion_interactive(
     pkg: str,
     src_dir_to_render: Path,
     rel_path: Path,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Interactive menu for adopting an empty directory deletion."""
     print(f"\nFound host empty directory deletion: {rel_path}")
     print("Reconciliation options:")
@@ -1054,11 +999,11 @@ def _prompt_empty_directory_deletion_interactive(
     choice = input("Select option [1-3]: ").strip()
     if choice == "1":
         adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
-        return True
+        return ItemAdoptOutcome.ADOPTED
     elif choice == "2":
-        return True
+        return ItemAdoptOutcome.ADOPTED
     else:
-        return False
+        return ItemAdoptOutcome.SKIPPED
 
 
 def _prompt_non_empty_directory_deletion_interactive(
@@ -1066,7 +1011,7 @@ def _prompt_non_empty_directory_deletion_interactive(
     pkg: str,
     src_dir_to_render: Path,
     rel_path: Path,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Interactive menu for handling a non-empty directory deletion."""
     src_dir = src_dir_to_render / rel_path
     print(f"\n⚠️  [NON-EMPTY] Host deleted directory '{rel_path}', but source directory contains files!")
@@ -1091,18 +1036,18 @@ def _prompt_non_empty_directory_deletion_interactive(
     print("[3] Skip folder")
     choice = input("Select option [1-3]: ").strip()
     if choice == "1":
-        return True
+        return ItemAdoptOutcome.ADOPTED
     elif choice == "2":
         confirm = input(
             f"⚠️  DANGER: Are you sure you want to permanently delete source directory '{rel_path}' and all {len(contained_items)} item(s)? [y/N]: "
         ).strip().lower()
         if confirm in ("y", "yes"):
             adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
-            return True
+            return ItemAdoptOutcome.ADOPTED
         print("Aborted deletion adoption.")
-        return False
+        return ItemAdoptOutcome.SKIPPED
     else:
-        return False
+        return ItemAdoptOutcome.SKIPPED
 
 
 def _prompt_file_deletion_interactive(
@@ -1110,7 +1055,7 @@ def _prompt_file_deletion_interactive(
     pkg: str,
     src_dir_to_render: Path,
     rel_path: Path,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Interactive menu for adopting a file deletion."""
     print(f"\nFound host file deletion: {rel_path}")
     print("Reconciliation options:")
@@ -1120,11 +1065,11 @@ def _prompt_file_deletion_interactive(
     choice = input("Select option [1-3]: ").strip()
     if choice == "1":
         adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
-        return True
+        return ItemAdoptOutcome.ADOPTED
     elif choice == "2":
-        return True
+        return ItemAdoptOutcome.ADOPTED
     else:
-        return False
+        return ItemAdoptOutcome.SKIPPED
 
 
 def _handle_single_directory_deletion(
@@ -1134,20 +1079,20 @@ def _handle_single_directory_deletion(
     rel_path: Path,
     interactive: bool,
     force: bool = False,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Handles drift reconciliation for a directory deletion."""
     is_empty = not any((src_dir_to_render / rel_path).iterdir())
     assert_source_file_clean(src_dir_to_render / rel_path, pkg=pkg, force=force)
     if not interactive:
         if is_empty:
             adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
-            return True
+            return ItemAdoptOutcome.ADOPTED
         else:
             logger.warning(
                 f"⚠️  [DISCARD] Cannot adopt directory deletion '{rel_path}' because the source directory is not empty. "
                 f"Discarding deletion (will restore directory on next deploy)."
             )
-            return True
+            return ItemAdoptOutcome.ADOPTED
     else:
         if is_empty:
             return _prompt_empty_directory_deletion_interactive(render_engines, pkg, src_dir_to_render, rel_path)
@@ -1162,7 +1107,7 @@ def _handle_single_file_deletion(
     rel_path: Path,
     interactive: bool,
     force: bool = False,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Handles drift reconciliation for a file deletion."""
     target_existing_src = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if target_existing_src is None:
@@ -1170,12 +1115,12 @@ def _handle_single_file_deletion(
             logger.warning(f"⚠️  [SKIP] Cannot adopt deletion '{rel_path}' because the target does not exist in source. Skipping.")
         else:
             print(f"\n⚠️  [SKIP] Cannot adopt deletion '{rel_path}' because the target does not exist in source. Skipping.")
-        return True
+        return ItemAdoptOutcome.ADOPTED
 
     assert_source_file_clean(target_existing_src, pkg=pkg, force=force)
     if not interactive:
         adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
-        return True
+        return ItemAdoptOutcome.ADOPTED
     return _prompt_file_deletion_interactive(render_engines, pkg, src_dir_to_render, rel_path)
 
 
@@ -1186,7 +1131,7 @@ def handle_single_deletion(
     rel_path: Path,
     interactive: bool,
     force: bool = False,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Handles drift reconciliation for a single file or directory deletion."""
     target_src = src_dir_to_render / rel_path
     if target_src.is_dir() and not target_src.is_symlink():
@@ -1217,7 +1162,7 @@ def handle_rename_non_interactive(
     has_patch_conflict: bool,
     accept_conflicts: bool,
     install_file: Optional[Path] = None
-) -> bool:
+) -> ItemAdoptOutcome:
     """Processes a rename drift non-interactively."""
     if patch_content and patch_content.strip():
         logger.debug(f"Diff for rename '{old_rel_path}' -> '{new_rel_path}':\n{patch_content.strip()}")
@@ -1231,7 +1176,7 @@ def handle_rename_non_interactive(
         install_file=install_file,
         accept_conflicts=accept_conflicts,
     )
-    return new_src_file is not None
+    return ItemAdoptOutcome.ADOPTED if new_src_file is not None else ItemAdoptOutcome.CONFLICT
 
 
 def handle_rename_interactive(
@@ -1244,7 +1189,7 @@ def handle_rename_interactive(
     old_src_file: Path,
     patch_content: str,
     has_patch_conflict: bool
-) -> bool:
+) -> ItemAdoptOutcome:
     """Processes a rename drift interactively."""
     print(f"\nFound host file rename: {old_rel_path} -> {new_rel_path}")
     if patch_content and patch_content.strip():
@@ -1270,20 +1215,24 @@ def handle_rename_interactive(
                 accept_conflicts=False,
             )
             if not new_src_file:
-                return False
+                return ItemAdoptOutcome.CONFLICT
             if choice == "2":
                 try:
                     launch_single_file_editor(new_src_file)
                 except RuntimeError as e:
                     logger.warning(f"⚠️  Failed to open editor: {e}.")
-                    return False
+                    return ItemAdoptOutcome.SKIPPED
             elif choice == "3":
-                return fallback_side_by_side(new_src_file, install_file)
-            return True
+                return (
+                    ItemAdoptOutcome.ADOPTED
+                    if fallback_side_by_side(new_src_file, install_file)
+                    else ItemAdoptOutcome.SKIPPED
+                )
+            return ItemAdoptOutcome.ADOPTED
         elif choice == "4":
-            return True
+            return ItemAdoptOutcome.ADOPTED
         else:
-            return False
+            return ItemAdoptOutcome.SKIPPED
     else:
         print(f"\n⚠️  [PATCH CONFLICT] Could not automatically apply system diff onto renamed template file '{old_src_file.name}'!")
         print("Choose fallback resolution strategy:")
@@ -1306,11 +1255,11 @@ def handle_rename_interactive(
                 accept_conflicts=False,
             )
             if not new_src_file:
-                return False
+                return ItemAdoptOutcome.CONFLICT
 
             if choice == "1":
                 fallback_over_render(new_src_file, install_file)
-                return True
+                return ItemAdoptOutcome.ADOPTED
             elif choice == "2":
                 # Adjust patch to new file name
                 adjusted_patch = generate_adjusted_patch(
@@ -1320,20 +1269,28 @@ def handle_rename_interactive(
                     old_rel_path=old_rel_path,
                     target_src_filename=new_src_file.name
                 )
-                return patch_and_edit(
-                    new_src_file,
-                    adjusted_patch,
-                    install_file=install_file,
-                    accept_conflicts=True,
-                    open_editor=True,
+                return (
+                    ItemAdoptOutcome.ADOPTED
+                    if patch_and_edit(
+                        new_src_file,
+                        adjusted_patch,
+                        install_file=install_file,
+                        accept_conflicts=True,
+                        open_editor=True,
+                    )
+                    else ItemAdoptOutcome.SKIPPED
                 )
             elif choice == "3":
-                return fallback_side_by_side(new_src_file, install_file)
+                return (
+                    ItemAdoptOutcome.ADOPTED
+                    if fallback_side_by_side(new_src_file, install_file)
+                    else ItemAdoptOutcome.SKIPPED
+                )
 
         if choice == "4":
-            return True
+            return ItemAdoptOutcome.ADOPTED
         else:
-            return False
+            return ItemAdoptOutcome.SKIPPED
 
 
 def handle_single_rename(
@@ -1349,22 +1306,20 @@ def handle_single_rename(
     accept_conflicts: bool,
     force: bool = False,
     precomputed_patch: Optional[str] = None,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Handles drift reconciliation for a single file/template rename."""
     # Check if the target already exists in source
     target_existing_src = resolve_source_file_path(render_engines, src_dir_to_render, new_rel_path)
     if target_existing_src is not None:
         if not interactive:
             logger.error(f"❌ [CONFLICT] Cannot rename '{old_rel_path}' to '{new_rel_path}' because the target already exists in source. Skipping.")
-        else:
-            print(f"\n⚠️  [CONFLICT] Target file '{new_rel_path}' already exists in source!")
-            print("Reconciliation options:")
-            print("[1] Discard rename / Restore (restores original on host next deployment)")
-            print("[2] Skip file")
-            choice = input("Select option [1-2]: ").strip()
-            if choice == "1":
-                return True
-        return False
+            return ItemAdoptOutcome.CONFLICT
+        print(f"\n⚠️  [CONFLICT] Target file '{new_rel_path}' already exists in source!")
+        print("Reconciliation options:")
+        print("[1] Discard rename / Restore (restores original on host next deployment)")
+        print("[2] Skip file")
+        choice = input("Select option [1-2]: ").strip()
+        return ItemAdoptOutcome.ADOPTED if choice == "1" else ItemAdoptOutcome.SKIPPED
 
     old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel_path)
     has_patch_conflict = False
@@ -1407,37 +1362,45 @@ def handle_modification_non_interactive(
     is_templated: bool,
     has_conflict: bool,
     accept_conflicts: bool
-) -> bool:
+) -> ItemAdoptOutcome:
     """Processes a modification drift non-interactively."""
     if patch_content and patch_content.strip():
         logger.debug(f"Diff for '{src_file.name}':\n{patch_content.strip()}")
     if not has_conflict:
         if is_templated:
-            return patch_and_edit(
-                src_file,
-                patch_content,
-                install_file=install_file,
-                accept_conflicts=False,
-                open_editor=False,
+            return (
+                ItemAdoptOutcome.ADOPTED
+                if patch_and_edit(
+                    src_file,
+                    patch_content,
+                    install_file=install_file,
+                    accept_conflicts=False,
+                    open_editor=False,
+                )
+                else ItemAdoptOutcome.CONFLICT
             )
         else:
             copy_file(install_file, src_file)
             _sync_file_mode(src_file, install_file)
-            return True
+            return ItemAdoptOutcome.ADOPTED
     else:
         if accept_conflicts:
             logger.warning(f"⚠️  Applying conflicting patch into file: '{src_file.name}'")
-            return patch_and_edit(
-                src_file,
-                patch_content,
-                install_file=install_file,
-                accept_conflicts=True,
-                open_editor=False,
+            return (
+                ItemAdoptOutcome.ADOPTED
+                if patch_and_edit(
+                    src_file,
+                    patch_content,
+                    install_file=install_file,
+                    accept_conflicts=True,
+                    open_editor=False,
+                )
+                else ItemAdoptOutcome.CONFLICT
             )
         else:
             logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto file '{src_file.name}'. Skipping.")
             logger.error("   Run 'drift adopt --interactive' or pass '--accept-conflicts' to resolve.")
-            return False
+            return ItemAdoptOutcome.CONFLICT
 
 
 def handle_modification_interactive(
@@ -1448,7 +1411,7 @@ def handle_modification_interactive(
     patch_content: str,
     is_templated: bool,
     has_conflict: bool
-) -> bool:
+) -> ItemAdoptOutcome:
     """Processes a modification drift interactively."""
     if not has_conflict:
         if is_templated:
@@ -1463,19 +1426,27 @@ def handle_modification_interactive(
             print("[5] Skip file")
             choice = input("Select option [1-5]: ").strip()
             if choice in ["1", "2"]:
-                return patch_and_edit(
-                    src_file,
-                    patch_content,
-                    install_file=install_file,
-                    accept_conflicts=False,
-                    open_editor=(choice == "2"),
+                return (
+                    ItemAdoptOutcome.ADOPTED
+                    if patch_and_edit(
+                        src_file,
+                        patch_content,
+                        install_file=install_file,
+                        accept_conflicts=False,
+                        open_editor=(choice == "2"),
+                    )
+                    else ItemAdoptOutcome.SKIPPED
                 )
             elif choice == "3":
-                return fallback_side_by_side(src_file, install_file)
+                return (
+                    ItemAdoptOutcome.ADOPTED
+                    if fallback_side_by_side(src_file, install_file)
+                    else ItemAdoptOutcome.SKIPPED
+                )
             elif choice == "4":
-                return True
+                return ItemAdoptOutcome.ADOPTED
             else:
-                return False
+                return ItemAdoptOutcome.SKIPPED
         else:
             print(f"\nFound modified static config file (Patch applies cleanly): {rel_path}")
             if patch_content and patch_content.strip():
@@ -1495,14 +1466,18 @@ def handle_modification_interactive(
                         launch_single_file_editor(src_file)
                     except RuntimeError as e:
                         logger.warning(f"⚠️  Failed to open editor: {e}.")
-                        return False
-                return True
+                        return ItemAdoptOutcome.SKIPPED
+                return ItemAdoptOutcome.ADOPTED
             elif choice == "3":
-                return fallback_side_by_side(src_file, install_file)
+                return (
+                    ItemAdoptOutcome.ADOPTED
+                    if fallback_side_by_side(src_file, install_file)
+                    else ItemAdoptOutcome.SKIPPED
+                )
             elif choice == "4":
-                return True
+                return ItemAdoptOutcome.ADOPTED
             else:
-                return False
+                return ItemAdoptOutcome.SKIPPED
     else:
         print(f"\n⚠️  [PATCH CONFLICT] Could not automatically apply system diff onto file '{src_file.name}'!")
         if patch_content and patch_content.strip():
@@ -1516,21 +1491,29 @@ def handle_modification_interactive(
         choice = input("Select option [1-5]: ").strip()
         if choice == "1":
             fallback_over_render(src_file, install_file)
-            return True
+            return ItemAdoptOutcome.ADOPTED
         elif choice == "2":
-            return patch_and_edit(
-                src_file,
-                patch_content,
-                install_file=install_file,
-                accept_conflicts=True,
-                open_editor=True,
+            return (
+                ItemAdoptOutcome.ADOPTED
+                if patch_and_edit(
+                    src_file,
+                    patch_content,
+                    install_file=install_file,
+                    accept_conflicts=True,
+                    open_editor=True,
+                )
+                else ItemAdoptOutcome.SKIPPED
             )
         elif choice == "3":
-            return fallback_side_by_side(src_file, install_file)
+            return (
+                ItemAdoptOutcome.ADOPTED
+                if fallback_side_by_side(src_file, install_file)
+                else ItemAdoptOutcome.SKIPPED
+            )
         elif choice == "4":
-            return True
+            return ItemAdoptOutcome.ADOPTED
         else:
-            return False
+            return ItemAdoptOutcome.SKIPPED
 
 
 def handle_single_modification(
@@ -1545,7 +1528,7 @@ def handle_single_modification(
     accept_conflicts: bool,
     force: bool = False,
     precomputed_patch: Optional[str] = None,
-) -> bool:
+) -> ItemAdoptOutcome:
     """Handles drift reconciliation for a single file/template modification."""
     src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     pkg_rel_path = Path(pkg) / rel_path
@@ -1593,6 +1576,36 @@ def handle_single_modification(
 # Layer 4: Single-Package Drift Adoption
 # =====================================================================
 
+def _derive_package_adopt_status(
+    has_drifts: bool,
+    has_adopted_changes: bool,
+    has_unresolved_files: bool,
+) -> AdoptStatus:
+    """Derives the 5-state AdoptStatus for a single package."""
+    if not has_drifts:
+        return AdoptStatus.UP_TO_DATE
+    if has_adopted_changes and not has_unresolved_files:
+        return AdoptStatus.SUCCESS
+    if has_adopted_changes and has_unresolved_files:
+        return AdoptStatus.PARTIAL
+    return AdoptStatus.SKIPPED
+
+
+def _derive_adopt_result_status(package_results: Sequence[PackageAdoptResult]) -> AdoptStatus:
+    """Derives the aggregate 5-state AdoptStatus across all packages."""
+    if any(p.status == AdoptStatus.FAILED for p in package_results):
+        return AdoptStatus.FAILED
+    if not package_results or all(p.status == AdoptStatus.UP_TO_DATE for p in package_results):
+        return AdoptStatus.UP_TO_DATE
+    any_adopted = any(p.has_adopted_changes for p in package_results)
+    any_unresolved = any(p.has_unresolved_files for p in package_results)
+    if any_adopted and not any_unresolved:
+        return AdoptStatus.SUCCESS
+    if any_adopted and any_unresolved:
+        return AdoptStatus.PARTIAL
+    return AdoptStatus.SKIPPED
+
+
 def stage_converged_package_drifts(
     workspace_config: WorkspaceConfig,
     plan: PackageAdoptPlan,
@@ -1621,13 +1634,30 @@ def stage_converged_package_drifts(
     return list(plan.converged_files)
 
 
+def _dry_run_package_adopt(pkg_plan: PackageAdoptPlan) -> PackageAdoptResult:
+    """Builds a pure simulated PackageAdoptResult for a single package in dry-run mode."""
+    if not pkg_plan.has_drifts:
+        return PackageAdoptResult(
+            package=pkg_plan.package,
+            status=AdoptStatus.UP_TO_DATE,
+            plan=pkg_plan,
+        )
+    return PackageAdoptResult(
+        package=pkg_plan.package,
+        adopted_additions=[p.as_posix() for p in pkg_plan.additions],
+        adopted_deletions=[p.as_posix() for p in pkg_plan.deletions],
+        adopted_modifications=[p.as_posix() for p in pkg_plan.modifications],
+        adopted_renames=[f"{old.as_posix()} -> {new.as_posix()}" for old, new in pkg_plan.renames],
+        adopted_converged=[p.as_posix() for p in pkg_plan.converged_files],
+        status=AdoptStatus.SUCCESS,
+        plan=pkg_plan,
+    )
+
+
 def execute_package_adopt(
     workspace_config: WorkspaceConfig,
     plan: PackageAdoptPlan,
-    interactive: bool = False,
-    accept_conflicts: bool = False,
-    force: bool = False,
-    flags: Optional[HookExecFlags] = None,
+    options: Optional[AdoptOptions] = None,
 ) -> PackageAdoptResult:
     """Executes adoption for a single PackageAdoptPlan, reconciling source files and staging adopted paths.
 
@@ -1637,15 +1667,25 @@ def execute_package_adopt(
     Note:
         This function stages resolved/adopted files ('git add -- <resolved_paths>') in the install/
         repository index, but does NOT commit them. Committing staged changes is performed at
-        Layer 5 orchestration (e.g. execute_adopt_repo) or via commit_staged_repo_changes.
+        Layer 5 orchestration (e.g. execute_adopt) or via commit_staged_repo_changes.
     """
+    opts = options or AdoptOptions()
     if not plan.has_drifts:
         logger.info(f"✨ Package '{plan.package}' has no drifts.")
-        return PackageAdoptResult(package=plan.package, status="SUCCESS")
+        return PackageAdoptResult(
+            package=plan.package,
+            status=AdoptStatus.UP_TO_DATE,
+            plan=plan,
+        )
 
     # Trigger pre_source hook before adopting divergent drifts into source directory
-    if plan.has_divergent_drifts:
-        trigger_pre_source_hook(workspace_config, plan.package, flags=flags)
+    # (unless already triggered during the pre-adoption render step)
+    if plan.has_divergent_drifts and not plan.pre_source_already_triggered:
+        trigger_pre_source_hook(
+            workspace_config,
+            plan.package,
+            flags=opts.get_hook_flags(settings=workspace_config.settings),
+        )
 
     adopted_converged: List[str] = [p.as_posix() for p in plan.converged_files]
     adopted_additions: List[str] = []
@@ -1653,6 +1693,7 @@ def execute_package_adopt(
     adopted_renames: List[str] = []
     adopted_modifications: List[str] = []
     skipped_files: List[str] = []
+    conflicted_files: List[str] = []
     resolved_paths: List[Path] = list(plan.converged_files)
 
     if plan.converged_files:
@@ -1663,40 +1704,47 @@ def execute_package_adopt(
 
     # 1. Process Additions
     for rel_path in plan.additions:
-        resolved = handle_single_addition(
+        outcome = handle_single_addition(
             plan.render_engines, plan.src_pkg_dir, plan.src_dir_to_render, plan.install_pkg_dir,
-            rel_path, interactive, force=force
+            rel_path, opts.interactive, force=opts.force
         )
-        if resolved:
+        if outcome == ItemAdoptOutcome.ADOPTED:
             adopted_additions.append(rel_path.as_posix())
             resolved_paths.append(rel_path)
+        elif outcome == ItemAdoptOutcome.CONFLICT:
+            conflicted_files.append(rel_path.as_posix())
         else:
             skipped_files.append(rel_path.as_posix())
 
     # 2. Process Deletions
     for rel_path in plan.deletions:
-        resolved = handle_single_deletion(
-            plan.render_engines, plan.package, plan.src_dir_to_render, rel_path, interactive, force=force
+        outcome = handle_single_deletion(
+            plan.render_engines, plan.package, plan.src_dir_to_render, rel_path, opts.interactive, force=opts.force
         )
-        if resolved:
+        if outcome == ItemAdoptOutcome.ADOPTED:
             adopted_deletions.append(rel_path.as_posix())
             resolved_paths.append(rel_path)
+        elif outcome == ItemAdoptOutcome.CONFLICT:
+            conflicted_files.append(rel_path.as_posix())
         else:
             skipped_files.append(rel_path.as_posix())
 
     # 3. Process Renames
     for old_rel_path, new_rel_path in plan.renames:
         patch_content = plan.rename_patches.get(get_rename_patch_key(old_rel_path, new_rel_path))
-        resolved = handle_single_rename(
+        outcome = handle_single_rename(
             plan.render_engines, plan.package, plan.src_pkg_dir, plan.src_dir_to_render,
             plan.install_pkg_dir, workspace_config.install_path,
-            old_rel_path, new_rel_path, interactive, accept_conflicts, force=force,
+            old_rel_path, new_rel_path, opts.interactive, opts.accept_conflicts, force=opts.force,
             precomputed_patch=patch_content,
         )
-        if resolved:
+        if outcome == ItemAdoptOutcome.ADOPTED:
             adopted_renames.append(f"{old_rel_path.as_posix()} -> {new_rel_path.as_posix()}")
             resolved_paths.append(old_rel_path)
             resolved_paths.append(new_rel_path)
+        elif outcome == ItemAdoptOutcome.CONFLICT:
+            conflicted_files.append(old_rel_path.as_posix())
+            conflicted_files.append(new_rel_path.as_posix())
         else:
             skipped_files.append(old_rel_path.as_posix())
             skipped_files.append(new_rel_path.as_posix())
@@ -1704,15 +1752,17 @@ def execute_package_adopt(
     # 4. Process Modifications
     for rel_path in plan.modifications:
         patch_content = plan.mod_patches.get(rel_path.as_posix())
-        resolved = handle_single_modification(
+        outcome = handle_single_modification(
             plan.render_engines, plan.package, plan.src_pkg_dir, plan.src_dir_to_render,
             plan.install_pkg_dir, workspace_config.install_path,
-            rel_path, interactive, accept_conflicts, force=force,
+            rel_path, opts.interactive, opts.accept_conflicts, force=opts.force,
             precomputed_patch=patch_content,
         )
-        if resolved:
+        if outcome == ItemAdoptOutcome.ADOPTED:
             adopted_modifications.append(rel_path.as_posix())
             resolved_paths.append(rel_path)
+        elif outcome == ItemAdoptOutcome.CONFLICT:
+            conflicted_files.append(rel_path.as_posix())
         else:
             skipped_files.append(rel_path.as_posix())
 
@@ -1730,6 +1780,13 @@ def execute_package_adopt(
                 f"Staging adopted changes for '{plan.package}' exited with code {res_add.returncode}: {res_add.stderr.strip()}"
             )
 
+    has_adopted = bool(resolved_paths)
+    has_unresolved = bool(skipped_files or conflicted_files)
+    status = _derive_package_adopt_status(
+        has_drifts=plan.has_drifts,
+        has_adopted_changes=has_adopted,
+        has_unresolved_files=has_unresolved,
+    )
     return PackageAdoptResult(
         package=plan.package,
         adopted_additions=adopted_additions,
@@ -1738,57 +1795,85 @@ def execute_package_adopt(
         adopted_renames=adopted_renames,
         adopted_converged=adopted_converged,
         skipped_files=skipped_files,
-        status="FAILED" if skipped_files else "SUCCESS",
+        conflicted_files=conflicted_files,
+        status=status,
+        plan=plan,
     )
 
 
 def adopt_one_package_drifts(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    interactive: bool = False,
-    accept_conflicts: bool = False,
-    force: bool = False,
-    dry_run: bool = False,
-    flags: Optional[HookExecFlags] = None,
+    options: Optional[AdoptOptions] = None,
 ) -> PackageAdoptResult:
     """Adopts drifts for a single package using decoupled plan and execution phases.
 
     Note:
         adopt_one_package_drifts does NOT commit the install/ repo; it only reconciles source files
         and stages adopted paths in the install/ repository index. Committing staged changes is
-        the responsibility of Layer 5 orchestration (execute_adopt_repo / run_primitive_adopt_drifts)
+        the responsibility of Layer 5 orchestration (execute_adopt / run_primitive_adopt_drifts)
         or explicit commit helpers (commit_staged_repo_changes).
     """
-    plan = get_package_drifts(workspace_config, pkg)
-    if dry_run:
-        if plan.has_drifts:
-            dry_run_adopt(plan)
-            return PackageAdoptResult(
-                package=pkg,
-                adopted_additions=[p.as_posix() for p in plan.additions],
-                adopted_deletions=[p.as_posix() for p in plan.deletions],
-                adopted_modifications=[p.as_posix() for p in plan.modifications],
-                adopted_renames=[f"{old.as_posix()} -> {new.as_posix()}" for old, new in plan.renames],
-                adopted_converged=[p.as_posix() for p in plan.converged_files],
-                status="SUCCESS",
-            )
-        else:
-            logger.info(f"✨ Package '{pkg}' has no drifts.")
-            return PackageAdoptResult(package=pkg, status="SUCCESS")
+    opts = options or AdoptOptions()
+    plan = plan_package_adopt(workspace_config, pkg, skip_patches=opts.skip_patches)
+    if opts.dry_run:
+        return _dry_run_package_adopt(plan)
 
     return execute_package_adopt(
         workspace_config=workspace_config,
         plan=plan,
-        interactive=interactive,
-        accept_conflicts=accept_conflicts,
-        force=force,
-        flags=flags,
+        options=opts,
     )
 
 
 # =====================================================================
 # Layer 5: Public Primitive Entry Point
 # =====================================================================
+
+def _sync_and_render_before_adopt(
+    workspace_config: WorkspaceConfig,
+    package_names: Sequence[str],
+    options: AdoptOptions,
+) -> Tuple[List[str], List[str]]:
+    """Synchronizes host changes into install/ and renders drifted source packages before adoption planning.
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        package_names: Available source packages resolved via filter_source_packages_by_target.
+        options: AdoptOptions controlling reverse-sync, render, and hook behavior.
+
+    Returns:
+        Tuple of (drifted_pkgs, rendered_pkgs), both sublists of package_names.
+    """
+    if not options.no_reverse_sync and package_names:
+        run_primitive_1_reverse_sync(
+            workspace_config,
+            package_names=package_names,
+            missing_ok=True,
+        )
+
+    drifted_set = set(get_drifted_packages(workspace_config))
+    drifted_pkgs = list(filter(drifted_set.__contains__, package_names))
+    if options.no_render or not drifted_pkgs:
+        return drifted_pkgs, []
+
+    hook_flags = options.get_hook_flags(settings=workspace_config.settings)
+    render_res = run_primitive_2_render_packages(
+        workspace_config,
+        target_pkgs=drifted_pkgs,
+        options=RenderOptions.resolve(hook_flags),
+    )
+    if hook_flags.no_hooks or hook_flags.dry_run:
+        return drifted_pkgs, []
+
+    rendered_set = {
+        pkg_res.package
+        for pkg_res in render_res.packages
+        if pkg_res.status in ("SUCCESS", "UP_TO_DATE")
+    }
+    rendered_pkgs = list(filter(rendered_set.__contains__, drifted_pkgs))
+    return drifted_pkgs, rendered_pkgs
+
 
 def execute_converged_drifts(
     workspace_config: WorkspaceConfig,
@@ -1819,13 +1904,22 @@ def resolve_and_commit_converged_drifts(
     package_names: Sequence[str] = (),
     dry_run: bool = False,
 ) -> Dict[str, List[Path]]:
-    """Dedicated entry point that plans adoption with skip_patches=True and executes only converged files.
+    """Dedicated entry point that plans adoption without reverse-sync, render, or patch generation, and executes only converged files.
 
     Not called by run_primitive_adopt_drifts (since normal adoption planning and execution
     already handle converged_files directly). Used by deploy_repo after reverse-sync to
     auto-resolve and commit converged files before checking for remaining divergent drift.
     """
-    plan = plan_adopt_repo(workspace_config, package_names=package_names, skip_patches=True)
+    plan = prepare_adopt(
+        workspace_config,
+        package_names=package_names,
+        options=AdoptOptions(
+            dry_run=dry_run,
+            no_render=True,
+            no_reverse_sync=True,
+            skip_patches=True,
+        ),
+    )
     if dry_run:
         return {
             pkg_plan.package: list(pkg_plan.converged_files)
@@ -1835,64 +1929,68 @@ def resolve_and_commit_converged_drifts(
     return execute_converged_drifts(workspace_config, plan)
 
 
-def plan_adopt_repo(
+def prepare_adopt(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
-    skip_patches: bool = False,
+    options: Optional[AdoptOptions] = None,
 ) -> AdoptPlan:
-    """Discovers drifted packages and creates an AdoptPlan containing PackageAdoptPlans."""
-    if not package_names:
-        package_names = get_drifted_packages(workspace_config)
+    """Synchronizes host changes, renders drifted templates, and creates an AdoptPlan."""
+    opts = options or AdoptOptions()
+    available_packages = workspace_config.filter_source_packages_by_target(
+        target_packages=package_names or None
+    )
+    drifted_pkgs, rendered_pkgs = _sync_and_render_before_adopt(
+        workspace_config,
+        package_names=available_packages,
+        options=opts,
+    )
+
+    resolved_packages = available_packages if package_names else drifted_pkgs
+    rendered_pkg_set = set(rendered_pkgs)
 
     plans = [
-        get_package_drifts(workspace_config, pkg, skip_patches=skip_patches)
-        for pkg in package_names
+        plan_package_adopt(
+            workspace_config,
+            pkg,
+            skip_patches=opts.skip_patches,
+            pre_source_already_triggered=(pkg in rendered_pkg_set),
+        )
+        for pkg in resolved_packages
     ]
-    return AdoptPlan(plans=plans)
+    return AdoptPlan(plans=plans, options=opts)
 
 
-def execute_adopt_repo(
+def execute_adopt(
     workspace_config: WorkspaceConfig,
     plan: AdoptPlan,
-    interactive: bool = False,
-    accept_conflicts: bool = False,
-    force: bool = False,
-    flags: Optional[HookExecFlags] = None,
 ) -> AdoptResult:
     """Executes adoption for all plans in AdoptPlan, staging adopted/converged files and committing changes."""
-    package_results: List[PackageAdoptResult] = []
-    has_any_adopted = False
-
-    for pkg_plan in plan.plans:
-        pkg_res = execute_package_adopt(
+    opts = plan.options
+    package_results: List[PackageAdoptResult] = [
+        execute_package_adopt(
             workspace_config=workspace_config,
             plan=pkg_plan,
-            interactive=interactive,
-            accept_conflicts=accept_conflicts,
-            force=force,
-            flags=flags,
+            options=opts,
         )
-        package_results.append(pkg_res)
-        if pkg_res.has_adopted_changes:
-            has_any_adopted = True
+        for pkg_plan in plan.plans
+    ]
+    adopted_pkgs = [
+        p.package for p in package_results
+        if p.has_adopted_changes
+    ]
 
     # Commit staged adopted changes in install base
-    if has_any_adopted:
-        adopted_pkgs = [
-            p.package for p in package_results
-            if p.has_adopted_changes
-        ]
+    if adopted_pkgs:
         pkg_word = "package" if len(adopted_pkgs) == 1 else "packages"
         commit_staged_repo_changes(
             repo_path=workspace_config.install_path,
             commit_message=f"Adopt: Resolved and locked drifts for {pkg_word} {', '.join(adopted_pkgs)}",
-            repo_name="install repo"
+            repo_name="install repo",
         )
 
-    all_success = all(p.status == "SUCCESS" for p in package_results) if package_results else True
     return AdoptResult(
         command="adopt",
-        status="SUCCESS" if all_success else "FAILED",
+        status=_derive_adopt_result_status(package_results),
         packages=package_results,
         dry_run=False,
     )
@@ -1901,78 +1999,53 @@ def execute_adopt_repo(
 def run_primitive_adopt_drifts(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
-    interactive: bool = False,
-    accept_conflicts: bool = False,
-    force: bool = False,
-    dry_run: bool = False,
-    flags: Optional[HookExecFlags] = None,
+    options: Optional[AdoptOptions] = None,
 ) -> AdoptResult:
     """High-level orchestrator for adopting system drifts back to declarative templates (Primitive Adopt).
 
     Args:
         workspace_config: The workspace configuration instance.
         package_names: Specific package name(s) to adopt, or empty/omitted to discover all drifted packages.
-        interactive: If True, interactively prompts for conflict resolution.
-        accept_conflicts: If True, writes Git conflict merge markers directly into source template files.
-        force: If True, bypasses the Git cleanliness safeguard on target source files,
-            allowing adoption to proceed even if uncommitted modifications exist in those files.
-        dry_run: If True, previews drift adoption without writing patches to disk.
-        flags: Optional HookExecFlags controlling hook execution options.
+        options: Optional AdoptOptions controlling interactive mode, conflict markers, force, dry_run,
+            pre-adoption rendering, reverse-sync, and hook execution flags.
 
     Returns:
         AdoptResult containing detailed results for all adopted packages.
     """
-    # 1. Planning (includes converged-files sub-process)
-    plan = plan_adopt_repo(workspace_config, package_names=package_names)
+    opts = options or AdoptOptions()
+
+    # 1. Preparation (reverse-sync + scoped render + converged/divergent planning)
+    plan = prepare_adopt(workspace_config, package_names=package_names, options=opts)
     if not plan.plans or not plan.has_drifts:
-        if not package_names:
-            logger.info("✨ No drifted packages found in local state database.")
-        else:
-            for p in plan.plans:
-                logger.info(f"✨ Package '{p.package}' has no drifts.")
+        if not opts.dry_run:
+            if not package_names:
+                logger.info("✨ No drifted packages found in local state database.")
+            else:
+                for p in plan.plans:
+                    logger.info(f"✨ Package '{p.package}' has no drifts.")
         return AdoptResult(
             command="adopt",
-            status="SUCCESS",
+            status=AdoptStatus.UP_TO_DATE,
             packages=[
-                PackageAdoptResult(package=p.package, status="SUCCESS")
+                PackageAdoptResult(package=p.package, status=AdoptStatus.UP_TO_DATE, plan=p)
                 for p in plan.plans
             ],
-            dry_run=dry_run,
+            dry_run=opts.dry_run,
         )
 
     # 2. Dry-run Mode
-    if dry_run:
-        package_results: List[PackageAdoptResult] = []
-        for pkg_plan in plan.plans:
-            if pkg_plan.has_drifts:
-                dry_run_adopt(pkg_plan)
-                package_results.append(PackageAdoptResult(
-                    package=pkg_plan.package,
-                    adopted_additions=[p.as_posix() for p in pkg_plan.additions],
-                    adopted_deletions=[p.as_posix() for p in pkg_plan.deletions],
-                    adopted_modifications=[p.as_posix() for p in pkg_plan.modifications],
-                    adopted_renames=[f"{old.as_posix()} -> {new.as_posix()}" for old, new in pkg_plan.renames],
-                    adopted_converged=[p.as_posix() for p in pkg_plan.converged_files],
-                    status="SUCCESS",
-                ))
-            else:
-                logger.info(f"✨ Package '{pkg_plan.package}' has no drifts.")
-                package_results.append(PackageAdoptResult(package=pkg_plan.package, status="SUCCESS"))
-
+    if opts.dry_run:
+        dry_run_pkgs = [_dry_run_package_adopt(pkg_plan) for pkg_plan in plan.plans]
         return AdoptResult(
             command="adopt",
-            status="SUCCESS",
-            packages=package_results,
+            status=_derive_adopt_result_status(dry_run_pkgs),
+            packages=dry_run_pkgs,
             dry_run=True,
         )
 
     # 3. Execution (stages converged_files directly and reconciles divergent drifts)
-    return execute_adopt_repo(
+    return execute_adopt(
         workspace_config=workspace_config,
         plan=plan,
-        interactive=interactive,
-        accept_conflicts=accept_conflicts,
-        force=force,
-        flags=flags,
     )
 

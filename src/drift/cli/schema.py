@@ -316,6 +316,16 @@ def build_completion_schema() -> CompletionSchema:
                         description="Bypass and do not execute package lifecycle hooks",
                         dest="no_hooks"
                     ),
+                    OptionSpec(
+                        flags=["--no-render"],
+                        description="Skip rendering source templates before adopting drifts",
+                        dest="no_render"
+                    ),
+                    OptionSpec(
+                        flags=["--no-reverse-sync", "--no-sync"],
+                        description="Skip reverse-syncing host changes into install/ before adopting drifts",
+                        dest="no_reverse_sync"
+                    ),
                 ]
             ),
             "plan": CommandSpec(
