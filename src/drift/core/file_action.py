@@ -440,33 +440,34 @@ def _build_missing_dir_wal_actions(
 def _append_wal_actions(
     wal_dir: Path,
     actions: Sequence[FileAction],
-    sudo: bool = False,
 ) -> None:
-    """Appends executed reversible actions to wal_dir/actions.json."""
+    """Appends executed reversible actions as JSON lines to wal_dir/actions.json."""
     if not actions:
         return
-    ensure_dir(wal_dir, sudo)
+    lines = "".join(f"{json.dumps(a.to_dict())}\n" for a in actions)
+    ensure_dir(wal_dir)
     wal_file = wal_dir / WAL_ACTIONS_FILE_NAME
-    existing_records: List[Any] = []
-    if wal_file.is_file():
-        try:
-            loaded = json.loads(wal_file.read_text(encoding="utf-8"))
-            if isinstance(loaded, list):
-                existing_records = loaded
-        except Exception as exc:
-            logger.warning(f"Failed to read existing WAL file '{wal_file}': {exc}")
+    with wal_file.open("a", encoding="utf-8") as f:
+        f.write(lines)
+        f.flush()
 
-    existing_records.extend(a.to_dict() for a in actions)
-    serialized = json.dumps(existing_records, indent=2)
-    write_file(wal_file, serialized, sudo=sudo)
+
+def _parse_wal_line(line: str, wal_file: Path) -> Optional[FileAction]:
+    """Parses a single non-empty JSON line from a WAL file into a FileAction, or None if malformed."""
+    try:
+        loaded = json.loads(line)
+        if isinstance(loaded, Mapping):
+            return FileAction.from_dict(loaded)
+    except Exception as exc:
+        logger.warning(f"Skipping malformed WAL entry in '{wal_file}': {exc}")
+    return None
 
 
 def load_wal_actions(wal_file: Path) -> List[FileAction]:
-    """Loads serialized NormalFileAction / BackupFileAction entries from a WAL actions.json file."""
-    raw_list = json.loads(wal_file.read_text(encoding="utf-8"))
-    if not isinstance(raw_list, list):
-        return []
-    return [FileAction.from_dict(item) for item in raw_list if isinstance(item, Mapping)]
+    """Loads serialized NormalFileAction / BackupFileAction entries from an append-only WAL actions.json file."""
+    raw_lines = filter(None, map(str.strip, wal_file.read_text(encoding="utf-8").splitlines()))
+    parsed = (_parse_wal_line(line, wal_file) for line in raw_lines)
+    return [action for action in parsed if action is not None]
 
 
 def _undo_single_wal_action(
@@ -667,7 +668,7 @@ def execute_single_action(
             write_file(action.dst_path, b"", sudo=context.sudo)
 
     if context.wal_dir is not None and wal_entries_to_record:
-        _append_wal_actions(context.wal_dir, wal_entries_to_record, sudo=context.sudo)
+        _append_wal_actions(context.wal_dir, wal_entries_to_record)
 
 
 def execute_delivery_actions(

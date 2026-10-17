@@ -1122,8 +1122,11 @@ class TestFileUtils(unittest.TestCase):
         exec_ctx = FileActionExecutionContext(sudo=False, wal_dir=wal_dir)
         execute_delivery_actions(exec_ctx, actions)
 
-        # Verify WAL recorded 6 actions (new_level1, new_level2, BACKUP_OVERWRITE, BACKUP_PRUNE, CREATE_COPY, CREATE_KEEP_FILE)
-        recorded = load_wal_actions(wal_dir / "actions.json")
+        # Verify WAL recorded 6 actions as 6 JSON lines (new_level1, new_level2, BACKUP_OVERWRITE, BACKUP_PRUNE, CREATE_COPY, CREATE_KEEP_FILE)
+        wal_file = wal_dir / "actions.json"
+        raw_lines = [line for line in wal_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        self.assertEqual(len(raw_lines), 6)
+        recorded = load_wal_actions(wal_file)
         self.assertEqual(len(recorded), 6)
         self.assertEqual(recorded[0].action_type, FileActionType.ENSURE_DIR)
         self.assertEqual(recorded[0].dst_path, pre_existing_dir / "new_level1")
@@ -1156,6 +1159,52 @@ class TestFileUtils(unittest.TestCase):
         self.assertEqual(prior_backup.read_text(encoding="utf-8"), "earliest backup before transaction")
         # WAL directory cleaned up
         self.assertFalse(wal_dir.exists())
+
+    def test_append_wal_actions_append_only_and_malformed_line_resilience(self) -> None:
+        """Verifies _append_wal_actions strictly appends without rewriting prior content and load_wal_actions skips malformed lines."""
+        from drift.core.file_action import (
+            BackupFileAction,
+            FileActionType,
+            NormalFileAction,
+            _append_wal_actions,
+            load_wal_actions,
+        )
+
+        wal_dir = self.root / "backup" / "pkg_append" / "wal"
+        wal_file = wal_dir / "actions.json"
+
+        # 1. Empty actions sequence is a no-op
+        _append_wal_actions(wal_dir, [])
+        self.assertFalse(wal_dir.exists())
+
+        # 2. First append creates wal_dir and writes 1 JSON line
+        action1 = NormalFileAction(action_type=FileActionType.ENSURE_DIR, dst_path=self.root / "d1")
+        _append_wal_actions(wal_dir, [action1])
+        self.assertTrue(wal_file.is_file())
+
+        # 3. Simulate a corrupted/malformed line in the middle, then append a second valid action
+        #    If _append_wal_actions tried to parse and rewrite the whole file, action1 would be lost!
+        with wal_file.open("a", encoding="utf-8") as f:
+            f.write("{corrupted_json_line\n\n")
+
+        action2 = BackupFileAction(
+            action_type=FileActionType.BACKUP_OVERWRITE,
+            src_path=self.root / "src_f",
+            dst_path=self.root / "backup" / "pkg_append" / "overwritten" / "src_f",
+            reason="Colliding file",
+            backup_pkg_root=self.root / "backup" / "pkg_append",
+        )
+        _append_wal_actions(wal_dir, [action2])
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+                with self.assertLogs("drift.core.file_action", level="WARNING") as cm:
+                    loaded = load_wal_actions(wal_file)
+            self.assertEqual(loaded, [action1, action2])
+            self.assertTrue(any("Skipping malformed WAL entry" in msg for msg in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
 
     def test_rollback_package_wal_missing_file_logs_warning_and_skips(self) -> None:
         """Verifies rollback_package_wal logs a warning and returns False when wal/actions.json does not exist."""
