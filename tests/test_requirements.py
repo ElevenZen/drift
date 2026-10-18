@@ -544,7 +544,7 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 
         self.workspace_config.render_engine_configs = RenderEngineRegistry({
-            "envst": RenderEngineConfig(name="envst", suffix="envst", render_command="internal")
+            "envst": RenderEngineConfig(name="envst", suffix="envst", render_command=["internal"])
         })
 
         pkg_dir = self.drift_root / "src" / "templated_probe_pkg"

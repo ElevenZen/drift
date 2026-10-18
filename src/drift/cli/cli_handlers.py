@@ -123,7 +123,7 @@ def handle_init(
             cli_ctx.print_message("[bold yellow]📁[/bold yellow] [bold green]Created render/ sandbox Git database.[/bold green]", "📁 Created render/ sandbox Git database.")
             cli_ctx.print_message("[bold yellow]📁[/bold yellow] [bold green]Created install/ local state Git database.[/bold green]", "📁 Created install/ local state Git database.")
             cli_ctx.print_message("[bold yellow]📝[/bold yellow] [bold green]Generated drift_workspace.toml template.[/bold green]", "📝 Generated drift_workspace.toml template.")
-            cli_ctx.print_message("[bold yellow]📝[/bold yellow] [bold green]Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.[/bold green]", "📝 Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.")
+            cli_ctx.print_message("[bold yellow]📝[/bold yellow] [bold green]Generated config/mustache.envst.json and config/jinja2.mustache.json.[/bold green]", "📝 Generated config/mustache.envst.json and config/jinja2.mustache.json.")
 
 
 def handle_new(

@@ -113,7 +113,7 @@ suffix = "envst"
     def test_forbidden_render_engine_suffixes(self) -> None:
         """Verifies defining a render engine with forbidden reserved suffixes raises ConfigError."""
         for suffix in FORBIDDEN_RENDER_ENGINE_SUFFIXES:
-            engine = RenderEngineConfig(name="test", suffix=suffix, render_command="internal")
+            engine = RenderEngineConfig(name="test", suffix=suffix, render_command=["internal"])
             with self.assertRaises(ConfigError) as ctx:
                 engine.validate()
             self.assertIn(f"Render engine suffix '{suffix}' is a forbidden reserved keyword.", str(ctx.exception))

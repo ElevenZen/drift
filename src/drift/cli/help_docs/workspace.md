@@ -23,8 +23,8 @@ workspace/
 │   ├── drift_workspace.local.toml  # Optional machine-specific overrides (gitignored)
 │   ├── drift_workspace.py          # Optional dynamic Python workspace configuration hook
 │   ├── secrets.env                 # Private dotfiles secrets and credentials (gitignored)
-│   ├── envsubst.bash               # envsubst static variables initialization script
-│   └── mustache.envst.json         # Mustache engine input data template
+│   ├── mustache.envst.json         # Mustache engine input data template
+│   └── jinja2.mustache.json        # Jinja2 engine input data template
 ├── src/                            # Declarative source packages (e.g. src/nvim/, src/zsh/)
 ├── render/                         # Sandbox template compilation zone (isolated Git repo)
 ├── install/                        # Local state tracking database (isolated Git repo)

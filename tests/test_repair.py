@@ -186,7 +186,7 @@ class TestCheckRepoModular(unittest.TestCase):
     def test_missing_engine_inputs_is_broken(self) -> None:
         """If drift_workspace.toml declares an engine input file that is missing on disk, reports BROKEN."""
         init_drift_workspace(self.drift_root)
-        (self.drift_root / "config" / "envsubst.bash").unlink()
+        (self.drift_root / "config" / "mustache.envst.json").unlink()
         ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res = check_engine_inputs(self.drift_root, workspace_config=ws_config)
@@ -198,7 +198,6 @@ class TestCheckRepoModular(unittest.TestCase):
     def test_all_engine_inputs_missing_is_not_found(self) -> None:
         """If all declared engine input files are missing on disk, reports NOT_FOUND for that check."""
         init_drift_workspace(self.drift_root)
-        (self.drift_root / "config" / "envsubst.bash").unlink()
         (self.drift_root / "config" / "mustache.envst.json").unlink()
         (self.drift_root / "config" / "jinja2.mustache.json").unlink()
         ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
@@ -367,15 +366,16 @@ class TestWorkspaceRepair(unittest.TestCase):
     def test_repair_recovers_missing_engine_input_templates(self) -> None:
         """Repair creates missing engine input templates."""
         init_drift_workspace(self.drift_root)
-        (self.drift_root / "config" / "envsubst.bash").unlink()
         (self.drift_root / "config" / "mustache.envst.json").unlink()
+        (self.drift_root / "config" / "jinja2.mustache.json").unlink()
 
         actions = repair_drift_workspace(self.drift_root)
-        self.assertTrue(any("envsubst.bash" in a for a in actions))
         self.assertTrue(any("mustache.envst.json" in a for a in actions))
+        self.assertTrue(any("jinja2.mustache.json" in a for a in actions))
 
-        self.assertTrue((self.drift_root / "config" / "envsubst.bash").is_file())
+        self.assertFalse((self.drift_root / "config" / "envsubst.bash").exists())
         self.assertTrue((self.drift_root / "config" / "mustache.envst.json").is_file())
+        self.assertTrue((self.drift_root / "config" / "jinja2.mustache.json").is_file())
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())

@@ -568,10 +568,10 @@ Because inputs can depend on the outputs of other engines, compilation order mus
 *   During AST Merkle DAG expansion (`expand_node_dependencies`), candidate files and their engine input dependencies are resolved recursively.
 *   During tree expansion, Drift tracks visiting engines and active path expansion chains to detect circular dependency loops (e.g., Engine A's input depends on Engine B's output, and Engine B's input depends on Engine A's output). If a cycle is detected, expansion immediately halts with a descriptive `ValueError` detailing the cyclic chain (`A -> B -> A`).
 
-#### 5. Graceful Disabling & Runtime Safety Check
-If a registered engine's `input_file` is not specified or is disabled, the compilation engine handles it gracefully:
-*   **Disabled Status**: If an engine configures an empty or missing input file, it is marked as disabled (`is_disabled = True`).
-*   **Runtime Safeguard**: If any template file in the repository relies on a disabled engine, the core rendering pipeline checks the engine status and halts compilation immediately with a descriptive `RenderError` (e.g., `Render engine '<name>' is disabled or has an invalid/empty input file`), ensuring that no silent partial configurations are deployed.
+#### 5. Input File Validation & Runtime Safety Check
+If a registered engine's `render_command` references `%i` (`requires_input_file = True`), `input_file` must be specified:
+*   **Configuration Validation**: `RenderEngineConfig.validate()` enforces that any external engine using `%i` in `render_command` specifies a valid `input_file`.
+*   **Runtime Safeguard**: If any template file in the repository relies on an engine with an empty command or missing/unresolvable input file, the core rendering pipeline halts compilation immediately with a descriptive `RenderError` or `FileNotFoundError`, ensuring that no silent partial configurations are deployed.
 
 #### 6. Package-Level Render Engines & Workspace Engine Cooperation
 The primary motivation of **Package-Level Render Engine Configuration** (`[render.<name>]` tables in `drift_package.toml`) is to provide a **self-contained configuration space** for each package. Rather than forcing packages to rely on ambient global workspace settings or shared external inputs, packages encapsulate their own render engines, custom template rules, and localized input files (e.g. `src/<pkg>/env.sh` or `src/<pkg>/data.json`) directly within their directory boundary, ensuring complete modularity and portability across diverse workspaces.

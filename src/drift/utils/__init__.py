@@ -56,6 +56,7 @@ from .toml_utils import (
 )
 from .config_utils import (
     partition,
+    branch,
     get_first_from,
     get_nested_from,
     set_nested_val,
@@ -176,6 +177,7 @@ __all__ = [
     "dump_toml",
     "merge_toml",
     "partition",
+    "branch",
     "get_first_from",
     "get_nested_from",
     "set_nested_val",

@@ -13,7 +13,6 @@ from drift.utils.process_utils import (
     assert_can_escalate,
     run_command,
     normalize_windows_drift_env,
-    _patch_windows_render_command,
     _resolve_windows_bash_executable,
 )
 from drift.core.constants import set_test_mode
@@ -54,6 +53,18 @@ class TestProcessUtils(unittest.TestCase):
         res = run_command([sys.executable, "-c", "print('hello stdout')"], text=True)
         self.assertEqual(res.returncode, 0)
         self.assertIn("hello stdout", res.stdout)
+
+    def test_run_command_rejects_string_and_enforces_shell_false(self) -> None:
+        with self.assertRaises(TypeError):
+            run_command("echo hello")  # type: ignore[arg-type]
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=["echo"], returncode=0, stdout="", stderr="")
+            run_command(["echo", "hello"], shell=True, text=True)
+            self.assertFalse(mock_run.call_args.kwargs.get("shell"))
+
+            run_command(["echo", "hello"], streaming=True, shell=True, text=True)
+            self.assertFalse(mock_run.call_args.kwargs.get("shell"))
 
     def test_run_command_non_streaming_debug_logging(self) -> None:
         set_test_mode(True, enable_logging=True)
@@ -223,21 +234,9 @@ class TestProcessUtils(unittest.TestCase):
         self.assertEqual(normalized["PATH"], "C:\\Windows\\System32")
         self.assertEqual(normalized["USER_VAR"], "keep_case")
 
-    def test_patch_windows_render_command(self) -> None:
-        with patch("drift.utils.process_utils._find_windows_bash", return_value="C:/Program Files/Git/bin/bash.exe"):
-            cmd, use_shell = _patch_windows_render_command("source env.sh && envsubst < tpl")
-            self.assertEqual(cmd, ["C:/Program Files/Git/bin/bash.exe", "-c", "source env.sh && envsubst < tpl"])
-            self.assertFalse(use_shell)
-
-        with patch("drift.utils.process_utils._find_windows_bash", return_value=None):
-            cmd, use_shell = _patch_windows_render_command("echo fallback")
-            self.assertEqual(cmd, "echo fallback")
-            self.assertTrue(use_shell)
-
     def test_resolve_windows_bash_executable(self) -> None:
         mock_bash = "C:/Program Files/Git/bin/bash.exe"
         with patch("drift.utils.process_utils._find_windows_bash", return_value=mock_bash):
-            # List commands
             self.assertEqual(
                 _resolve_windows_bash_executable(["bash", "script.sh", "--arg"]),
                 [mock_bash, "script.sh", "--arg"],
@@ -250,19 +249,22 @@ class TestProcessUtils(unittest.TestCase):
                 _resolve_windows_bash_executable(["python", "script.py"]),
                 ["python", "script.py"],
             )
-            # String commands (including leading whitespace / shlex tokenizing)
-            self.assertEqual(
-                _resolve_windows_bash_executable("bash -c 'echo hi'"),
-                f'"{mock_bash}" -c \'echo hi\'',
-            )
-            self.assertEqual(
-                _resolve_windows_bash_executable("  bash.exe   script.sh"),
-                f'"{mock_bash}"   script.sh',
-            )
-            self.assertEqual(
-                _resolve_windows_bash_executable("git status"),
-                "git status",
-            )
+
+    def test_windows_admin_privilege_error(self) -> None:
+        from drift.core.exceptions import AdminPrivilegeError, DriftError
+        with patch.object(sys, "platform", "win32"), patch(
+            "drift.utils.process_utils.has_admin_privileges", return_value=False
+        ):
+            with self.assertRaises(AdminPrivilegeError) as ctx1:
+                run_command(["echo", "hello"], sudo=True)
+            self.assertIsInstance(ctx1.exception, DriftError)
+            self.assertIsInstance(ctx1.exception, PermissionError)
+            self.assertIn("Administrator", str(ctx1.exception))
+
+            with self.assertRaises(AdminPrivilegeError) as ctx2:
+                assert_can_escalate()
+            self.assertIsInstance(ctx2.exception, DriftError)
+            self.assertIsInstance(ctx2.exception, PermissionError)
 
 
 if __name__ == "__main__":

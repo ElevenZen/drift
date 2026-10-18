@@ -53,7 +53,7 @@ class TestAddResource(unittest.TestCase):
                     name="envsubst",
                     input_file=config_dir / "env.sh",
                     suffix="envst",
-                    render_command="bash -c 'source %i && envsubst < %s'"
+                    render_command=["bash", "-c", "source %i && envsubst < %s"]
                 )
             })
         )

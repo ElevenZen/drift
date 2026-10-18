@@ -59,7 +59,7 @@ class TestRenderPhase1AndPhase2(unittest.TestCase):
                 name="envsubst",
                 suffix="envst",
                 input_file=self.env_sh,
-                render_command="bash -c 'source %i && envsubst < %s'",
+                render_command=["bash", "-c", "source %i && envsubst < %s"],
             )
         })
 

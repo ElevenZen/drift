@@ -297,7 +297,13 @@ class TestIntegration(unittest.TestCase):
         py_bin = Path(sys.executable).as_posix()
         for eng in self.workspace_config.render_engine_configs.values():
             if eng.name == "mustache":
-                eng.render_command = f'"{py_bin}" -c "import json, sys, pathlib; data=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding=\'utf-8\')); tmpl=pathlib.Path(sys.argv[2]).read_text(encoding=\'utf-8\'); print(tmpl.replace(\'{{{{user}}}}\', data.get(\'user\', \'\')), end=\'\')" %i %s'
+                eng.render_command = [
+                    py_bin,
+                    "-c",
+                    "import json, sys, pathlib; data=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')); tmpl=pathlib.Path(sys.argv[2]).read_text(encoding='utf-8'); print(tmpl.replace('{{user}}', data.get('user', '')), end='')",
+                    "%i",
+                    "%s",
+                ]
 
         # 1. Setup envsubst template for mustache input
         # Note: drift_root/config/ contains the source templates for engine inputs

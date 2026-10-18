@@ -24,10 +24,11 @@ Layer 1: Individual Engine Model & Data Structures
 """
 
 import logging
+import shlex
 from collections.abc import MutableMapping, Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence, Mapping
+from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence
 
 from ..core.constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from ..core.exceptions import ConfigError
@@ -38,6 +39,28 @@ from ..utils.path_utils import is_relative_to
 logger = logging.getLogger(__name__)
 
 
+def parse_render_command(raw_cmd: Any, engine_name: str = "") -> List[str]:
+    """Parses a raw render_command value (string or sequence of strings) into a List[str]."""
+    ctx = f" for render engine '{engine_name}'" if engine_name else ""
+    if raw_cmd is None:
+        return []
+    if isinstance(raw_cmd, str):
+        stripped = raw_cmd.strip()
+        if not stripped:
+            return []
+        try:
+            return shlex.split(stripped, posix=True)
+        except ValueError as e:
+            raise ConfigError(f"Invalid render_command syntax{ctx}: {e}") from e
+    if isinstance(raw_cmd, (list, tuple)):
+        if not all(isinstance(token, str) and bool(token) for token in raw_cmd):
+            raise ConfigError(f"render_command list{ctx} must contain only non-empty strings.")
+        return list(raw_cmd)
+    raise ConfigError(
+        f"render_command{ctx} must be a string or list of strings, got {type(raw_cmd).__name__}."
+    )
+
+
 @dataclass
 class RenderEngineConfig(AlwaysTruthy):
     """Represents a render engine configuration inside workspace configuration."""
@@ -46,7 +69,7 @@ class RenderEngineConfig(AlwaysTruthy):
     name: str
     input_file: Optional[Path] = None
     suffix: str = ""
-    render_command: str = ""
+    render_command: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Coerces any non-empty input_file string to pathlib.Path object, or None if empty."""
@@ -57,7 +80,14 @@ class RenderEngineConfig(AlwaysTruthy):
     @property
     def is_internal(self) -> bool:
         """Returns True if the engine uses Drift's built-in Python substitution renderer."""
-        return self.render_command == INTERNAL_RENDER_COMMAND
+        return self.render_command == [INTERNAL_RENDER_COMMAND]
+
+    @property
+    def requires_input_file(self) -> bool:
+        """Returns True if the render command references the '%i' input file placeholder."""
+        if self.is_internal:
+            return False
+        return any("%i" in token for token in self.render_command)
 
     def validate(self) -> None:
         """Validates render engine configuration values."""
@@ -69,26 +99,22 @@ class RenderEngineConfig(AlwaysTruthy):
             raise ConfigError(f"Render engine suffix '{self.suffix}' cannot contain dots ('.').")
         if self.suffix.lower() in FORBIDDEN_RENDER_ENGINE_SUFFIXES:
             raise ConfigError(f"Render engine suffix '{self.suffix}' is a forbidden reserved keyword.")
-        if not self.render_command or not isinstance(self.render_command, str):
-            raise ConfigError("render_command must be a non-empty string.")
-        if not self.is_internal:
-            if self.input_file is None:
-                raise ConfigError("input_file must be specified for non-internal render engine.")
+        if (
+            not self.render_command
+            or not isinstance(self.render_command, list)
+            or not all(isinstance(token, str) and bool(token) for token in self.render_command)
+        ):
+            raise ConfigError("render_command must be a non-empty list of strings.")
+        if self.requires_input_file and self.input_file is None:
+            raise ConfigError("input_file must be specified for render engine when '%i' is used in render_command.")
         if self.input_file is not None and self.input_file.anchor and not self.input_file.is_absolute():
             raise ConfigError(
                 f"Render engine '{self.name}' input_file '{self.input_file}' must be a relative or valid absolute path."
             )
 
-    @property
-    def is_disabled(self) -> bool:
-        """Returns True if the render engine is disabled due to missing or empty input file."""
-        if self.is_internal:
-            return False
-        return self.input_file is None
-
     def copy(self) -> "RenderEngineConfig":
         """Returns a copy of the RenderEngineConfig."""
-        return replace(self)
+        return replace(self, render_command=list(self.render_command))
 
     def patch(self, override: Union["RenderEngineConfig", Mapping[str, Any]]) -> "RenderEngineConfig":
         """Creates a new RenderEngineConfig by applying non-empty override fields onto this config."""
@@ -103,7 +129,7 @@ class RenderEngineConfig(AlwaysTruthy):
                 name=self.name,
                 input_file=override_input,
                 suffix=str(override.get("suffix", "")),
-                render_command=str(override.get("render_command", "")),
+                render_command=parse_render_command(override.get("render_command"), self.name),
             )
         elif not isinstance(override, RenderEngineConfig):
             raise ConfigError(f"Cannot patch render engine '{self.name}' with {type(override).__name__}")
@@ -112,7 +138,7 @@ class RenderEngineConfig(AlwaysTruthy):
             self,
             input_file=override.input_file if override.input_file is not None else self.input_file,
             suffix=override.suffix if override.suffix else self.suffix,
-            render_command=override.render_command if override.render_command else self.render_command,
+            render_command=list(override.render_command) if override.render_command else list(self.render_command),
         )
 
     def strip_suffix(self, filename: str) -> str:
@@ -232,7 +258,7 @@ class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]
                         else None
                     ),
                     suffix=str(override.get("suffix", "")),
-                    render_command=str(override.get("render_command", "")),
+                    render_command=parse_render_command(override.get("render_command"), name),
                 )
             )
             for name, override in override_items.items()
@@ -296,7 +322,7 @@ class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]
                 name=name,
                 input_file=resolved_input if raw_input is not None else None,
                 suffix=str(config_dict.get("suffix", "")),
-                render_command=str(config_dict.get("render_command", "")),
+                render_command=parse_render_command(config_dict.get("render_command"), name),
             )
 
         configs = {

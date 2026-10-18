@@ -413,7 +413,7 @@ class TestPackageHook(unittest.TestCase):
                 name="envsubst",
                 suffix="envst",
                 input_file=input_file,
-                render_command="bash -c 'source %i && envsubst < %s'"
+                render_command=["bash", "-c", "source %i && envsubst < %s"]
             )
         })
 
@@ -452,7 +452,7 @@ class TestPackageHook(unittest.TestCase):
             "envst": RenderEngineConfig(
                 name="envst",
                 suffix="envst",
-                render_command="internal"
+                render_command=["internal"]
             )
         })
 

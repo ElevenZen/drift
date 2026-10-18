@@ -212,6 +212,7 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`MidwayTransactionError`](../src/drift/core/exceptions.py): Package in midway transaction state ('staging' or 'installing').
 *   [`PackageInstallDirMissingError`](../src/drift/core/exceptions.py): Package install directory missing from `install/`.
 *   [`TargetPermissionError`](../src/drift/core/exceptions.py): Destination target directory is not writable on host system.
+*   [`AdminPrivilegeError`](../src/drift/core/exceptions.py): Operation requires elevated Administrator/root privileges that are not held.
 
 ---
 

@@ -67,7 +67,6 @@ from ..core.constants import (
     get_default_drift_workspace_toml_content,
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     get_default_secrets_env_content,
-    get_default_envsubst_content,
     get_default_mustache_content,
     get_default_jinja2_content,
     get_default_internal_gitignore_content,
@@ -420,7 +419,9 @@ def repair_engine_inputs(
 
     configured_engines = list(workspace_config.render_engine_configs.values())
     for engine in configured_engines:
-        if engine.is_disabled or engine.input_file is None:
+        if engine.is_internal or (not engine.requires_input_file and engine.input_file is None):
+            continue
+        if engine.input_file is None:
             actions.append(f"⚠️ Warning: Render engine '{engine.name}' has no input file configured. Manual creation required.")
             continue
         input_path = config_dir / engine.input_file
@@ -429,12 +430,7 @@ def repair_engine_inputs(
             continue
 
         filename = input_path.name
-        if filename == "envsubst.bash":
-            actions.append(f"Created default '{CONFIG_DIR_NAME}/envsubst.bash'.")
-            if not dry_run:
-                config_dir.mkdir(parents=True, exist_ok=True)
-                input_path.write_text(get_default_envsubst_content(), encoding="utf-8")
-        elif filename == "mustache.envst.json":
+        if filename == "mustache.envst.json":
             actions.append(f"Created default '{CONFIG_DIR_NAME}/mustache.envst.json'.")
             if not dry_run:
                 config_dir.mkdir(parents=True, exist_ok=True)

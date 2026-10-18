@@ -365,7 +365,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             engine_cfg = RenderEngineConfig(
                 name="test_engine",
                 suffix=".tmpl",
-                render_command="internal",
+                render_command=["internal"],
             )
             tmpl_out = pkg_render_dir / "app.conf"
             tmpl_node = EngineOutputFileNode(
@@ -477,7 +477,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             engine_cfg = RenderEngineConfig(
                 name="test_engine",
                 suffix=".tmpl",
-                render_command="internal",
+                render_command=["internal"],
             )
             tmpl_out = pkg_render_dir / "app.conf"
             tmpl_node = EngineOutputFileNode(

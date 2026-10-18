@@ -141,16 +141,16 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         if not shutil.which("envsubst"):
             self.skipTest("envsubst command is not available on this system")
 
-        # 1. Add envsubst engine with input_file to drift_workspace.toml
+        # 1. Override envsubst engine with input_file in drift_workspace.local.toml
         (self.config_dir / "env.sh").write_text("export APP_ENV=production\n", encoding="utf-8")
-        ws_toml = (self.config_dir / "drift_workspace.toml").read_text(encoding="utf-8")
-        ws_toml += f"""
-        [render.envst]
+        local_toml = (self.config_dir / "drift_workspace.local.toml").read_text(encoding="utf-8")
+        local_toml += f"""
+        [render.envsubst]
         suffix = "envst"
         input_file = "{(self.config_dir / 'env.sh').as_posix()}"
         render_command = "bash -c 'source %i && envsubst < %s'"
         """
-        (self.config_dir / "drift_workspace.toml").write_text(ws_toml, encoding="utf-8")
+        (self.config_dir / "drift_workspace.local.toml").write_text(local_toml, encoding="utf-8")
 
         pkg_name = "pkg_tmpl_eng"
         pkg_dir = self.src_dir / pkg_name

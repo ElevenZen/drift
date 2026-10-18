@@ -64,17 +64,22 @@ DEFAULT = false
 # engine suffixes indicating which engine compiles them, specifying the pre-rendered source name
 # enables Drift to unambiguously detect dependencies (DAG) and compile them in topological order.
 [render.envsubst]
-# Shell script providing env variables for envsubst
-# input_file must reside within the 'config' directory under drift root (e.g. 'envsubst.bash' resolves to 'config/envsubst.bash').
-# Paths outside 'config' are forbidden.
-input_file = "envsubst.bash"
-
-# Files with name "file.envst.suffix" or "file.envst" will be rendered using envsubst.
+# Built-in cross-platform variable substitution engine (recommended for cross-platform configurations).
+# Expands $VAR and ${VAR} using resolved workspace and package [env] tables without external shell dependencies.
+# Files with name "file.envst.suffix" or "file.envst" will be rendered using this engine.
 suffix = "envst"
+render_command = "internal"
 
-# The output of render_command will be written as render result.
-# %i means engine input, %s means source template.
-render_command = "bash -c 'source %i && envsubst < %s'"
+# Alternative 1: External GNU envsubst without an input script (uses workspace [env] directly; requires 'bash' and 'envsubst' in PATH):
+# [render.envsubst]
+# suffix = "envst"
+# render_command = "bash -c 'envsubst < %s'"
+
+# Alternative 2: External GNU envsubst with a bash input script (input_file must reside within 'config/'):
+# [render.envsubst]
+# input_file = "envsubst.bash"
+# suffix = "envst"
+# render_command = "bash -c 'source %i && envsubst < %s'"
 
 [render.mustache]
 # Json file as the input to mustache template render engine.

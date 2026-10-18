@@ -318,7 +318,7 @@ class TestConfigClasses(unittest.TestCase):
             directory = Path(temp_dir).resolve()
             
             # Setup engines
-            engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
+            engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command=["cmd"])
             config = WorkspaceConfig(drift_root=directory, render_engine_configs=RenderEngineRegistry({"envsubst": engine}))
             
             targets = ["config.toml", "settings.json"]
@@ -373,7 +373,7 @@ class TestConfigClasses(unittest.TestCase):
             src_pkg_dir = root / "src" / "pkg"
             src_pkg_dir.mkdir(parents=True)
             
-            engine = RenderEngineConfig(name="envst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
+            engine = RenderEngineConfig(name="envst", input_file=Path("env.sh"), suffix="envst", render_command=["cmd"])
             config = WorkspaceConfig(drift_root=root, render_engine_configs=RenderEngineRegistry({"envst": engine}))
             
             # 1. Exact match (static file)
@@ -1539,17 +1539,74 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         os.environ.update(self.original_environ)
 
     def test_render_engine_config_validation(self) -> None:
-        from drift.config.render_engine_config import RenderEngineConfig
+        from drift.config.render_engine_config import RenderEngineConfig, parse_render_command
+        from drift.utils.config_utils import branch
         config = RenderEngineConfig(
             name="envsubst",
             input_file=Path("envsubst.bash"),
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
+            render_command=["bash", "-c", "source %i && envsubst < %s"]
         )
         config.validate()
+        self.assertTrue(config.requires_input_file)
+
+        # Engine without %i does not require input_file
+        no_input_engine = RenderEngineConfig(
+            name="envsubst_direct",
+            input_file=None,
+            suffix="envst",
+            render_command=["bash", "-c", "envsubst < %s"],
+        )
+        no_input_engine.validate()
+        self.assertFalse(no_input_engine.requires_input_file)
+
+        # Engine with %i requires input_file
+        missing_input_engine = RenderEngineConfig(
+            name="mustache",
+            input_file=None,
+            suffix="mustache",
+            render_command=["mustache", "%i", "%s"],
+        )
+        self.assertTrue(missing_input_engine.requires_input_file)
+        with self.assertRaises(ConfigError):
+            missing_input_engine.validate()
+
+        # branch() utility tests (boolean and callable predicates, lazy evaluation)
+        calls: List[str] = []
+        self.assertEqual(
+            branch(True, lambda: (calls.append("t"), "yes")[1], lambda: (calls.append("f"), "no")[1]),
+            "yes",
+        )
+        self.assertEqual(calls, ["t"])
+        self.assertEqual(
+            branch(False, lambda: (calls.append("t2"), "yes")[1], lambda: (calls.append("f2"), "no")[1]),
+            "no",
+        )
+        self.assertEqual(calls, ["t", "f2"])
+        self.assertEqual(branch(lambda: 1 == 1, lambda: 10, lambda: 20), 10)
+        self.assertEqual(branch(lambda: 1 == 2, lambda: 10, lambda: 20), 20)
+
+        # parse_render_command boundary validation
+        self.assertEqual(
+            parse_render_command("bash -c 'source %i && envsubst < %s'", engine_name="envsubst"),
+            ["bash", "-c", "source %i && envsubst < %s"],
+        )
+        self.assertEqual(
+            parse_render_command(["mustache", "%i", "%s"], engine_name="mustache"),
+            ["mustache", "%i", "%s"],
+        )
+        with self.assertRaises(ConfigError) as quote_ctx:
+            parse_render_command("bash -c 'unclosed quote", engine_name="bad_quote")
+        self.assertIn("Invalid render_command syntax", str(quote_ctx.exception))
 
         with self.assertRaises(ConfigError):
-            RenderEngineConfig(name="", input_file=Path("a"), suffix="b", render_command="c").validate()
+            parse_render_command(123, engine_name="bad_type")
+
+        with self.assertRaises(ConfigError):
+            RenderEngineConfig(name="", input_file=Path("a"), suffix="b", render_command=["c"]).validate()
+
+        with self.assertRaises(ConfigError):
+            RenderEngineConfig(name="bad_cmd", input_file=Path("a"), suffix="b", render_command="not_a_list").validate()  # type: ignore[arg-type]
 
         # Suffix cannot contain dots ('.')
         with self.assertRaises(ConfigError) as ctx:
@@ -1557,7 +1614,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 name="invalid_suffix",
                 input_file=Path("envsubst.bash"),
                 suffix="envst.sh",
-                render_command="bash -c 'source %i && envsubst < %s'"
+                render_command=["bash", "-c", "source %i && envsubst < %s"]
             ).validate()
         self.assertIn("cannot contain dots", str(ctx.exception))
 
@@ -1591,11 +1648,15 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         config = WorkspaceConfig.from_dict(data, drift_root=dummy_root)
         self.assertIn("envsubst", config.render_engine_configs)
         self.assertEqual(config.render_engine_configs["envsubst"].suffix, "envst")
+        self.assertEqual(
+            config.render_engine_configs["envsubst"].render_command,
+            ["bash", "-c", "source %i && envsubst < %s"],
+        )
         self.assertIn("mustache", config.render_engine_configs)
         self.assertEqual(config.render_engine_configs["mustache"].input_file, (dummy_root / "config" / "mustache.envst.json").resolve())
+        self.assertEqual(config.render_engine_configs["mustache"].render_command, ["mustache", "%i", "%s"])
         self.assertIn("var", config.render_engine_configs)
         self.assertTrue(config.render_engine_configs["var"].is_internal)
-        self.assertFalse(config.render_engine_configs["var"].is_disabled)
         self.assertIsNone(config.render_engine_configs["var"].input_file)
 
     def test_render_engine_registry_class(self) -> None:
@@ -1645,7 +1706,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             name="envst",
             input_file=Path("input.env"),
             suffix="envst",
-            render_command="render %i %s"
+            render_command=["render", "%i", "%s"]
         )
         registry = RenderEngineRegistry({"envst": engine})
         registry.validate()
@@ -1676,13 +1737,13 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             name="envst",
             input_file=Path("/pkg/input.env").resolve(),
             suffix="",
-            render_command=""
+            render_command=[]
         )
         pkg_registry = RenderEngineRegistry({"envst": pkg_engine_override})
         merged = registry.overlay(pkg_registry)
         self.assertEqual(merged["envst"].input_file, Path("/pkg/input.env").resolve())
         self.assertEqual(merged["envst"].suffix, "envst")  # Inherited
-        self.assertEqual(merged["envst"].render_command, "render %i %s")  # Inherited
+        self.assertEqual(merged["envst"].render_command, ["render", "%i", "%s"])  # Inherited
 
         # Test __setitem__ type validation
         with self.assertRaises(ConfigError):
@@ -1946,7 +2007,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             name="envsubst",
             input_file=Path("env.sh"),
             suffix="envst",
-            render_command="cmd"
+            render_command=["cmd"]
         )
         # Ends with .envst
         self.assertEqual(engine.strip_suffix("dot-bashrc.envst"), "dot-bashrc")
@@ -3379,7 +3440,7 @@ class TestAnchoredPathValidationEdgeCases(unittest.TestCase):
                             RenderEngineConfig(
                                 name="test",
                                 suffix="t",
-                                render_command="cmd",
+                                render_command=["cmd"],
                                 input_file=Path(bad_input),
                             ).validate()
                         self.assertIn("must be a relative or valid absolute path", str(cm.exception))
@@ -3426,7 +3487,7 @@ class TestAnchoredPathValidationEdgeCases(unittest.TestCase):
                     bad_engine = RenderEngineConfig(
                         name="bad",
                         suffix="t",
-                        render_command="cmd %i %s",
+                        render_command=["cmd", "%i", "%s"],
                         input_file=part_p,
                     )
                     with self.assertRaises(RenderError) as cm:

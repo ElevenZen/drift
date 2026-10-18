@@ -32,6 +32,25 @@ def partition(
     return trues, falses
 
 
+def branch(
+    predicate: Union[bool, Callable[[], Any]],
+    lambda1: Callable[[], T],
+    lambda2: Callable[[], T],
+) -> T:
+    """Evaluates predicate and invokes lambda1() if truthy, otherwise lambda2().
+
+    Args:
+        predicate: A boolean condition or zero-argument callable returning a truthy/falsy value.
+        lambda1: Zero-argument callable invoked and returned when predicate is truthy.
+        lambda2: Zero-argument callable invoked and returned when predicate is falsy.
+
+    Returns:
+        The result of lambda1() if predicate is truthy, otherwise lambda2().
+    """
+    cond = predicate() if callable(predicate) else bool(predicate)
+    return lambda1() if cond else lambda2()
+
+
 
 def get_first_from(
     data: Optional[Mapping[str, Any]],

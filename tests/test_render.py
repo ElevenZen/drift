@@ -82,7 +82,7 @@ class TestRenderEngine(unittest.TestCase):
             name="envsubst",
             input_file=Path("dummy.sh"),
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
+            render_command=["bash", "-c", "source %i && envsubst < %s"]
         )
 
         # Call render_template within effective env scope
@@ -111,7 +111,7 @@ class TestRenderEngine(unittest.TestCase):
             name="bash_env_engine",
             input_file=Path("env.sh"),
             suffix="sh",
-            render_command="bash -c 'source %i && source %s'"
+            render_command=["bash", "-c", "source %i && source %s"]
         )
 
         # Call render_template with explicit input file path and drift_root
@@ -126,10 +126,9 @@ class TestRenderEngine(unittest.TestCase):
     def test_render_template_missing_template_raises_file_not_found(self) -> None:
         engine_config = RenderEngineConfig(
             name="cat_engine",
-            input_file=Path("unused.txt"),
+            input_file=None,
             suffix="txt",
-            # We must include %i and %s to pass validation
-            render_command="cat %s # %i"
+            render_command=["cat", "%s"]
         )
         non_existent_path = self.drift_root / "non_existent.txt"
         with self.assertRaises(FileNotFoundError):
@@ -137,7 +136,6 @@ class TestRenderEngine(unittest.TestCase):
                 engine_config=engine_config,
                 drift_root=self.drift_root,
                 template_file_path=non_existent_path,
-                input_file_path=Path("unused.txt")
             )
 
     def test_render_template_resolved_input_file_missing_raises_file_not_found(self) -> None:
@@ -148,7 +146,7 @@ class TestRenderEngine(unittest.TestCase):
             name="env_engine",
             input_file=Path("non_existent_env.sh"),
             suffix="sh",
-            render_command="bash -c 'source %i && cat %s'"
+            render_command=["bash", "-c", "source %i && cat %s"]
         )
         # Calling without passing explicit input_file_path will try to resolve relative to 'config' under drift_root
         with self.assertRaises(FileNotFoundError):
@@ -166,7 +164,7 @@ class TestRenderEngine(unittest.TestCase):
             name="env_engine",
             input_file=None, # Empty input file
             suffix="sh",
-            render_command="bash -c 'source %i && cat %s'"
+            render_command=["bash", "-c", "source %i && cat %s"]
         )
         with self.assertRaises(RenderError):
             render_template(
@@ -175,41 +173,38 @@ class TestRenderEngine(unittest.TestCase):
                 template_file_path=template_path
             )
 
-    def test_render_template_missing_placeholders_raises_value_error(self) -> None:
+    def test_render_template_without_input_placeholder_or_empty_command(self) -> None:
         template_path = self.drift_root / "template.txt"
         template_path.write_text("Some content", encoding="utf-8")
 
-        # Missing %i placeholder
-        engine_config_missing_i = RenderEngineConfig(
-            name="missing_i",
-            input_file=Path("unused.txt"),
+        # Command without %i placeholder and with input_file=None succeeds cleanly
+        engine_config_no_input = RenderEngineConfig(
+            name="no_input_i",
+            input_file=None,
             suffix="txt",
-            render_command="cat %s"
+            render_command=["cat", "%s"]
         )
-        with self.assertRaises(ValueError) as ctx:
-            render_template(
-                engine_config=engine_config_missing_i,
-                drift_root=self.drift_root,
-                template_file_path=template_path,
-                input_file_path=template_path
-            )
-        self.assertIn("must contain '%i' placeholder", str(ctx.exception))
+        output = render_template(
+            engine_config=engine_config_no_input,
+            drift_root=self.drift_root,
+            template_file_path=template_path,
+        )
+        self.assertEqual(output, "Some content")
 
-        # Missing %s placeholder
-        engine_config_missing_s = RenderEngineConfig(
-            name="missing_s",
-            input_file=Path("unused.txt"),
+        # Empty render_command raises RenderError in render_template
+        engine_config_empty = RenderEngineConfig(
+            name="empty_cmd",
+            input_file=None,
             suffix="txt",
-            render_command="cat %i"
+            render_command=[]
         )
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(RenderError) as ctx:
             render_template(
-                engine_config=engine_config_missing_s,
+                engine_config=engine_config_empty,
                 drift_root=self.drift_root,
                 template_file_path=template_path,
-                input_file_path=template_path
             )
-        self.assertIn("must contain '%s' placeholder", str(ctx.exception))
+        self.assertIn("empty render_command", str(ctx.exception))
 
     def test_render_template_failure_raises_render_error(self) -> None:
         template_path = self.drift_root / "template.txt"
@@ -221,8 +216,7 @@ class TestRenderEngine(unittest.TestCase):
             name="failing_engine",
             input_file=Path("unused.sh"),
             suffix="sh",
-            # We must include both placeholders to pass resolve_render_template_args
-            render_command="false # %i %s"
+            render_command=["false", "%i", "%s"]
         )
         with self.assertRaises(RenderError) as ctx:
             render_template(
@@ -246,7 +240,7 @@ class TestRenderEngine(unittest.TestCase):
             name="env_engine",
             input_file=input_path, # Using absolute path
             suffix="sh",
-            render_command="bash -c 'source %i && source %s'"
+            render_command=["bash", "-c", "source %i && source %s"]
         )
         # Should auto-resolve because input_file is absolute/exists
         output = render_template(
@@ -272,7 +266,7 @@ class TestRenderEngine(unittest.TestCase):
             name="env_engine",
             input_file=Path(config_input_file), # Relative path
             suffix="sh",
-            render_command="bash -c 'source %i && source %s'"
+            render_command=["bash", "-c", "source %i && source %s"]
         )
         output = render_template(
             engine_config=engine_config,
@@ -293,8 +287,7 @@ class TestRenderEngine(unittest.TestCase):
             name="cat_engine",
             input_file=Path("unused.txt"),
             suffix="txt",
-            # Command must contain %i and %s
-            render_command="cat %s # %i"
+            render_command=["cat", "%s"]
         )
 
         output_path = self.drift_root / "nested" / "output.txt"
@@ -321,8 +314,8 @@ class TestDependencyResolver(unittest.TestCase):
 
     def test_find_engine_for_file(self) -> None:
         registry = RenderEngineRegistry({
-            "envsubst": RenderEngineConfig(name="envsubst", input_file=Path("env.bash"), suffix="envst", render_command="cmd"),
-            "mustache": RenderEngineConfig(name="mustache", input_file=Path("mustache.json"), suffix="mustache", render_command="cmd")
+            "envsubst": RenderEngineConfig(name="envsubst", input_file=Path("env.bash"), suffix="envst", render_command=["cmd"]),
+            "mustache": RenderEngineConfig(name="mustache", input_file=Path("mustache.json"), suffix="mustache", render_command=["cmd"])
         })
         # Match by intermediate segment
         engine1 = registry.find_engine_for_file("mustache.envst.json")
@@ -338,8 +331,8 @@ class TestDependencyResolver(unittest.TestCase):
         self.assertIsNone(registry.find_engine_for_file("static.json"))
 
     def test_strip_engine_suffix(self) -> None:
-        envst_engine = RenderEngineConfig(name="envsubst", input_file=None, suffix="envst", render_command="")
-        mustache_engine = RenderEngineConfig(name="mustache", input_file=None, suffix="mustache", render_command="")
+        envst_engine = RenderEngineConfig(name="envsubst", input_file=None, suffix="envst", render_command=[])
+        mustache_engine = RenderEngineConfig(name="mustache", input_file=None, suffix="mustache", render_command=[])
         
         self.assertEqual(envst_engine.strip_suffix("mustache.envst.json"), "mustache.json")
         self.assertEqual(mustache_engine.strip_suffix("settings.mustache.json"), "settings.json")
@@ -384,7 +377,7 @@ class TestRenderPackage(unittest.TestCase):
             name="envsubst",
             input_file=config_dir / "env.sh",
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
+            render_command=["bash", "-c", "source %i && envsubst < %s"]
         )
         workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": envsubst_engine})
 
@@ -435,7 +428,7 @@ class TestRenderPackage(unittest.TestCase):
         workspace_config = WorkspaceConfig(
             drift_root=drift_root,
             render_engine_configs=RenderEngineRegistry({
-                "envst": RenderEngineConfig(name="envst", suffix="envst", render_command="internal")
+                "envst": RenderEngineConfig(name="envst", suffix="envst", render_command=["internal"])
             })
         )
 
@@ -543,7 +536,7 @@ class TestRenderPackage(unittest.TestCase):
             name="envsubst",
             input_file=Path("env.sh"),
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
+            render_command=["bash", "-c", "source %i && envsubst < %s"]
         )
         workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": envsubst_engine})
 
@@ -582,7 +575,7 @@ class TestRenderPackage(unittest.TestCase):
             name="envsubst",
             input_file=config_dir / Path("env.sh"),
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
+            render_command=["bash", "-c", "source %i && envsubst < %s"]
         )
         workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": envsubst_engine})
 
@@ -634,13 +627,13 @@ class TestRenderPackage(unittest.TestCase):
             name="envsubst",
             input_file=env_sh,
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'",
+            render_command=["bash", "-c", "source %i && envsubst < %s"],
         )
         mustache_engine = RenderEngineConfig(
             name="mustache",
             input_file=mustache_input_template,
             suffix="mustache",
-            render_command="bash -c 'cat %i %s'",
+            render_command=["bash", "-c", "cat %i %s"],
         )
 
         workspace_config = WorkspaceConfig(drift_root=drift_root)
@@ -861,7 +854,7 @@ class TestRenderPackage(unittest.TestCase):
             name="envsubst",
             input_file=config_dir / "env.sh",
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
+            render_command=["bash", "-c", "source %i && envsubst < %s"]
         )
         # Mustache engine depends on rendered mustache.json (from mustache.envst.json)
         mustache_engine = RenderEngineConfig(
@@ -871,7 +864,7 @@ class TestRenderPackage(unittest.TestCase):
             # We'll use a simple python command to 'render' mustache-like if mustache is not installed
             # But here we just want to verify the orchestration.
             # Using cat and some markers to simulate mustache.
-            render_command="bash -c 'cat %i %s'"
+            render_command=["bash", "-c", "cat %i %s"]
         )
         workspace_config.render_engine_configs = RenderEngineRegistry({
             "envsubst": envsubst_engine,
@@ -1078,7 +1071,7 @@ class TestRenderPackage(unittest.TestCase):
                 name="envsubst",
                 input_file=config_dir / "envsubst.sh",
                 suffix="envst",
-                render_command="bash -c 'envsubst < %s # %i'"
+                render_command=["bash", "-c", "envsubst < %s # %i"]
             )
         })
 
@@ -1186,7 +1179,7 @@ class TestRenderPackage(unittest.TestCase):
                     name="envsubst",
                     input_file=config_dir / "envsubst.bash",
                     suffix="envst",
-                    render_command="bash -c 'source %i && envsubst < %s'"
+                    render_command=["bash", "-c", "source %i && envsubst < %s"]
                 )
             })
         )
@@ -1237,7 +1230,7 @@ class TestRenderPackage(unittest.TestCase):
             name="jinja2",
             input_file=None, # disabled!
             suffix="jinja2",
-            render_command="jinja2 %i %s"
+            render_command=["jinja2", "%i", "%s"]
         )
         workspace_config.render_engine_configs = RenderEngineRegistry({"jinja2": disabled_engine})
 
@@ -1324,7 +1317,7 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
             name="envsubst",
             input_file=config_dir / "env.sh",
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
+            render_command=["bash", "-c", "source %i && envsubst < %s"]
         )
 
         workspace_config = WorkspaceConfig(
@@ -1408,7 +1401,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
             name="envsubst",
             input_file=Path("envsubst.bash"),
             suffix="envst",
-            render_command="bash -c 'source %i && nonexistent_envsubst_binary_xyz < %s'"
+            render_command=["bash", "-c", "source %i && nonexistent_envsubst_binary_xyz < %s"]
         )
 
         with patch.dict(os.environ, {"FALLBACK_VAR": "internal_rendered"}):
@@ -1432,10 +1425,9 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         engine_config = RenderEngineConfig(
             name="var",
             suffix="var",
-            render_command="internal"
+            render_command=["internal"]
         )
         self.assertTrue(engine_config.is_internal)
-        self.assertFalse(engine_config.is_disabled)
 
         with patch.dict(os.environ, {"APP_THEME": "dracula", "APP_PORT": "9000"}):
             out = render_template(
@@ -1460,7 +1452,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         engine_config = RenderEngineConfig(
             name="var",
             suffix="envst",
-            render_command="internal"
+            render_command=["internal"]
         )
 
         with patch.dict(os.environ, {"GREETING": "hello world"}):
@@ -1597,7 +1589,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
                     suffix="envst",
-                    render_command=INTERNAL_RENDER_COMMAND,
+                    render_command=[INTERNAL_RENDER_COMMAND],
                 )
             })
         )
@@ -1634,7 +1626,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
                     name="envsubst",
                     input_file=Path("env.sh"),
                     suffix="envst",
-                    render_command=INTERNAL_RENDER_COMMAND
+                    render_command=[INTERNAL_RENDER_COMMAND]
                 )
             })
         )
@@ -1688,13 +1680,13 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
                     name="envsubst",
                     input_file=Path("env.sh"),
                     suffix="envst",
-                    render_command=INTERNAL_RENDER_COMMAND,
+                    render_command=[INTERNAL_RENDER_COMMAND],
                 ),
                 "mustache": RenderEngineConfig(
                     name="mustache",
                     input_file=Path("mustache_in.json"),
                     suffix="mustache",
-                    render_command=INTERNAL_RENDER_COMMAND,
+                    render_command=[INTERNAL_RENDER_COMMAND],
                 ),
             }),
         )
@@ -1731,7 +1723,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
                     name="envsubst",
                     input_file=Path("env.sh"),
                     suffix="envst",
-                    render_command=INTERNAL_RENDER_COMMAND,
+                    render_command=[INTERNAL_RENDER_COMMAND],
                 )
             }),
         )
@@ -1767,7 +1759,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
                     name="envsubst",
                     input_file=Path("env.sh"),
                     suffix="envst",
-                    render_command=INTERNAL_RENDER_COMMAND,
+                    render_command=[INTERNAL_RENDER_COMMAND],
                 )
             }),
         )
@@ -1808,7 +1800,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
                     name="envsubst",
                     input_file=Path("env.sh"),
                     suffix="envst",
-                    render_command=INTERNAL_RENDER_COMMAND,
+                    render_command=[INTERNAL_RENDER_COMMAND],
                 )
             }),
         )
@@ -2021,7 +2013,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
             render_engine_configs=RenderEngineRegistry({
-                "envst": RenderEngineConfig(name="envst", suffix="envst", render_command=INTERNAL_RENDER_COMMAND)
+                "envst": RenderEngineConfig(name="envst", suffix="envst", render_command=[INTERNAL_RENDER_COMMAND])
             })
         )
         flags = HookExecFlags(dry_run=True, no_hooks=False, streaming=False)

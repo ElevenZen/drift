@@ -46,6 +46,7 @@ from .render_engine_config import (
     RenderEngineConfig,
     RenderEngineRegistry,
     RenderSourceMatch,
+    parse_render_command,
 )
 
 __all__ = [
@@ -80,4 +81,5 @@ __all__ = [
     "RenderEngineConfig",
     "RenderEngineRegistry",
     "RenderSourceMatch",
+    "parse_render_command",
 ]

@@ -16,7 +16,6 @@ from ..core.constants import (
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     get_default_workspace_hook_content,
     get_default_secrets_env_content,
-    get_default_envsubst_content,
     get_default_mustache_content,
     get_default_jinja2_content,
     get_default_internal_gitignore_content,
@@ -129,13 +128,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     else:
         logger.warning(f"secrets.env already exists at '{secrets_file}', skipping creation.")
 
-    # Create empty envsubst.bash, mustache.envst.json, and jinja2.mustache.json as referenced in default drift_workspace.toml
-    envsubst_input = config_dir / "envsubst.bash"
-    if not envsubst_input.exists():
-        envsubst_input.write_text(get_default_envsubst_content(), encoding="utf-8")
-    else:
-        logger.warning(f"envsubst.bash already exists at '{envsubst_input}', skipping creation.")
-
+    # Create default mustache.envst.json and jinja2.mustache.json as referenced in default drift_workspace.toml
     mustache_input = config_dir / "mustache.envst.json"
     if not mustache_input.exists():
         mustache_input.write_text(get_default_mustache_content(), encoding="utf-8")

@@ -67,7 +67,7 @@ DEFAULT = true
                 "envst": RenderEngineConfig(
                     name="envst",
                     suffix="envst",
-                    render_command="internal"
+                    render_command=["internal"]
                 )
             })
         )

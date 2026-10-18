@@ -41,10 +41,11 @@ import shutil
 import logging
 import subprocess
 from pathlib import Path
-from typing import Optional, Type
+from typing import Optional, Type, cast
 
 from ..config.render_engine_config import RenderEngineConfig
 from ..core.constants import CONFIG_DIR_NAME
+from ..utils.config_utils import branch
 from ..utils.process_utils import run_command
 from ..core.exceptions import DriftError, RenderError
 from ..utils.env_utils import python_envsubst
@@ -60,17 +61,12 @@ def validate_render_template_args(
     engine_config: RenderEngineConfig,
     template_file_path: Path,
 ) -> None:
-    """ Validates that the template file exists and engine command placeholders are present. """
+    """Validates that the template file exists."""
     if engine_config.is_internal:
         return
 
     if not template_file_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_file_path}")
-
-    if "%i" not in engine_config.render_command:
-        raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%i' placeholder for input file.")
-    if "%s" not in engine_config.render_command:
-        raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%s' placeholder for template file.")
 
 
 def resolve_render_input_file(
@@ -84,8 +80,8 @@ def resolve_render_input_file(
             raise FileNotFoundError(f"Input file does not exist: {input_file_path_override}")
         return input_file_path_override
 
-    if engine_config.is_disabled or engine_config.input_file is None:
-        raise RenderError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
+    if not engine_config.render_command or engine_config.input_file is None:
+        raise RenderError(f"Render engine '{engine_config.name}' has an empty render_command or invalid/empty input file.")
 
     input_file = engine_config.input_file
     if input_file.anchor and not input_file.is_absolute():
@@ -126,9 +122,10 @@ def render_template(
 ) -> str:
     """Renders a template file to a string using a specified render engine configuration.
 
-    The engine configuration provides the render command (e.g. "bash -c 'source %i && envsubst < %s'"),
-    where %i is replaced with the path to the input file and %s with the template file.
-    If the engine is internal (render_command="internal"), uses python_envsubst directly.
+    The engine configuration provides the render command as a list of tokens
+    (e.g. ["bash", "-c", "source %i && envsubst < %s"]), where %i is replaced with
+    the path to the input file and %s with the template file.
+    If the engine is internal (render_command=["internal"]), uses python_envsubst directly.
 
     Args:
         engine_config: The RenderEngineConfig instance to use.
@@ -141,27 +138,35 @@ def render_template(
 
     Raises:
         FileNotFoundError: If the template file or input file is missing.
-        ValueError: If placeholders are missing in the render command.
-        RenderError: If the render engine is disabled or subprocess fails.
+        RenderError: If the render engine has an empty command or subprocess fails.
     """
     if engine_config.is_internal:
         logger.debug(f"Using internal python_envsubst engine for '{template_file_path}'")
         return render_template_internal(template_file_path)
 
     validate_render_template_args(engine_config, template_file_path)
-    resolved_input_file = resolve_render_input_file(
-        engine_config=engine_config,
-        engine_config_input_relative_to=drift_root / CONFIG_DIR_NAME,
-        input_file_path_override=input_file_path,
-    )
-    cmd = (
-        engine_config.render_command
-        .replace("%i", resolved_input_file.as_posix())
-        .replace("%s", template_file_path.as_posix())
-    )
+    if not engine_config.render_command:
+        raise RenderError(f"Render engine '{engine_config.name}' has an empty render_command.")
+
+    resolved_input_file: Optional[Path] = None
+    if engine_config.requires_input_file:
+        resolved_input_file = resolve_render_input_file(
+            engine_config=engine_config,
+            engine_config_input_relative_to=drift_root / CONFIG_DIR_NAME,
+            input_file_path_override=input_file_path,
+        )
+
+    cmd = [
+        branch(
+            resolved_input_file is not None,
+            lambda: token.replace("%i", cast(Path, resolved_input_file).as_posix()),
+            lambda: token,
+        ).replace("%s", template_file_path.as_posix())
+        for token in engine_config.render_command
+    ]
 
     try:
-        result = run_command(cmd, render=True, text=True, suppress_output=True)
+        result = run_command(cmd, text=True, suppress_output=True)
         return result.stdout
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         err_msg = (

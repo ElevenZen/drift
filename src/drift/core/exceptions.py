@@ -132,6 +132,19 @@ class TargetPermissionError(DriftError, PermissionError):
         super().__init__(message, packages=packages, **kwargs)
 
 
+class AdminPrivilegeError(DriftError, PermissionError):
+    """Raised when an operation requires elevated Administrator/root privileges that are not held."""
+    exit_code: int = ExitCode.GENERAL_ERROR
+
+    def __init__(
+        self,
+        message: str = "",
+        packages: Optional[Sequence[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, packages=packages, **kwargs)
+
+
 class RenderError(DriftError, RuntimeError):
     """Raised when template compilation or render engine pipelines fail."""
     exit_code: int = ExitCode.RENDER_ERROR

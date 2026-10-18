@@ -414,16 +414,9 @@ DEFAULT_SECRETS_ENV_CONTENT = (
     "# PRIVATE_EMAIL=\"user@example.com\"\n"
 )
 
-DEFAULT_ENVSUBST_BASH_CONTENT = (
-    "#!/bin/bash\n"
-    "# Propagates variables defined in the workspace config [env.default] section\n"
-    "export TEMPLATE_THEME=\"${DRIFT_SAMPLE_ENV_THEME:-UnixDefaultTheme}\"\n"
-    "export TEMPLATE_EDITOR=\"${DRIFT_SAMPLE_ENV_EDITOR:-UnixDefaultEditor}\"\n"
-)
-
 DEFAULT_MUSTACHE_ENVST_JSON_CONTENT = json.dumps({
-    "sample_theme": "${TEMPLATE_THEME}",
-    "sample_editor": "${TEMPLATE_EDITOR}"
+    "sample_theme": "${DRIFT_SAMPLE_ENV_THEME}",
+    "sample_editor": "${DRIFT_SAMPLE_ENV_EDITOR}"
 }, indent=4) + "\n"
 
 DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT = json.dumps({
@@ -551,11 +544,6 @@ def get_default_drift_workspace_local_toml_content() -> str:
 def get_default_secrets_env_content() -> str:
     """Gets default secrets.env template content."""
     return DEFAULT_SECRETS_ENV_CONTENT
-
-
-def get_default_envsubst_content() -> str:
-    """Gets default envsubst.bash template content."""
-    return DEFAULT_ENVSUBST_BASH_CONTENT
 
 
 def get_default_mustache_content() -> str:

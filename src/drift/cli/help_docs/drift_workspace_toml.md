@@ -96,21 +96,20 @@ DRIFT_SAMPLE_ENV_EDITOR = "vim"
 
 # Built-in zero-dependency variable substitution engine (Windows + POSIX)
 # Strictly validates that all referenced variables ($VAR, ${VAR}) exist.
-[render.var]
-suffix = "var"
+[render.envsubst]
+suffix = "envst"
 render_command = "internal"
 
+# Alternative 1: External GNU envsubst without an input script (uses workspace [env] directly)
+# [render.envsubst]
+# suffix = "envst"
+# render_command = "bash -c 'envsubst < %s'"
 
-[render.envsubst]
-# Input environment file relative to workspace 'config' folder (must reside within 'config')
-input_file = "envsubst.bash"
-
-# File suffix to trigger envsubst template compilation
-suffix = "envst"
-
-# Render execution shell command.
-# %i represents the resolved input_file path, %s represents the template path.
-render_command = "bash -c 'source %i && envsubst < %s'"
+# Alternative 2: External GNU envsubst with a bash input script
+# [render.envsubst]
+# input_file = "envsubst.bash"
+# suffix = "envst"
+# render_command = "bash -c 'source %i && envsubst < %s'"
 
 
 [render.mustache]

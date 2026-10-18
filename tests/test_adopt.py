@@ -104,7 +104,7 @@ class TestAdopt(unittest.TestCase):
             name="envsubst",
             input_file=config_dir / "envsubst.bash",
             suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
+            render_command=["bash", "-c", "source %i && envsubst < %s"]
         )
         self.workspace_config = WorkspaceConfig(
             drift_root=self.workspace_path,
@@ -2072,7 +2072,7 @@ render_command = "bash -c 'cat %i %s'"
             name="jinja2",
             input_file=None,
             suffix="j2",
-            render_command="cat %s",
+            render_command=["cat", "%s"],
         )
         self.workspace_config.render_engine_configs["jinja2"] = j2_engine
 

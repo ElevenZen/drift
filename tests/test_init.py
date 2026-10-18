@@ -111,9 +111,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertEqual(res.returncode, 0)
         self.assertIn("config/secrets.env", res.stdout.strip())
 
-        # Check envsubst.bash, mustache.envst.json, and jinja2.mustache.json were created
-        envsubst_bash = os.path.join(self.drift_root, "config", "envsubst.bash")
-        self.assertTrue(os.path.isfile(envsubst_bash))
+        # Check mustache.envst.json and jinja2.mustache.json were created
         mustache_json = os.path.join(self.drift_root, "config", "mustache.envst.json")
         self.assertTrue(os.path.isfile(mustache_json))
         jinja2_json = os.path.join(self.drift_root, "config", "jinja2.mustache.json")
@@ -273,7 +271,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn_stripped("Created render/ sandbox Git database.", stdout.getvalue())
         self.assertIn_stripped("Created install/ local state Git database.", stdout.getvalue())
         self.assertIn_stripped("Generated drift_workspace.toml template.", stdout.getvalue())
-        self.assertIn_stripped("Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.", stdout.getvalue())
+        self.assertIn_stripped("Generated config/mustache.envst.json and config/jinja2.mustache.json.", stdout.getvalue())
 
         # Check drift_workspace.toml exists
         self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
@@ -293,7 +291,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn_stripped("Created render/ sandbox Git database.", stdout.getvalue())
         self.assertIn_stripped("Created install/ local state Git database.", stdout.getvalue())
         self.assertIn_stripped("Generated drift_workspace.toml template.", stdout.getvalue())
-        self.assertIn_stripped("Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.", stdout.getvalue())
+        self.assertIn_stripped("Generated config/mustache.envst.json and config/jinja2.mustache.json.", stdout.getvalue())
 
         # Check drift_workspace.toml exists
         self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))

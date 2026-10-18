@@ -325,7 +325,7 @@ class TestFileUtils(unittest.TestCase):
     def test_ensure_dir_with_sudo(self, mock_run) -> None:
         path = self.root / "sudo_dir"
         ensure_dir(path, sudo=True)
-        mock_run.assert_called_once_with(["sudo", "mkdir", "-p", str(path)], check=True, capture_output=True)
+        mock_run.assert_called_once_with(["sudo", "mkdir", "-p", str(path)], check=True, capture_output=True, shell=False)
 
     @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
@@ -333,7 +333,7 @@ class TestFileUtils(unittest.TestCase):
         path = self.root / "file_to_remove"
         path.touch()
         remove_tree(path, sudo=True)
-        mock_run.assert_called_once_with(["sudo", "rm", "-f", str(path)], check=True, capture_output=True)
+        mock_run.assert_called_once_with(["sudo", "rm", "-f", str(path)], check=True, capture_output=True, shell=False)
 
     @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
@@ -342,7 +342,7 @@ class TestFileUtils(unittest.TestCase):
         dst = self.root / "dst_link"
         create_symlink(src, dst, sudo=True)
         # Verify run was called with sudo ln -s
-        mock_run.assert_any_call(["sudo", "ln", "-s", str(src), str(dst)], check=True, capture_output=True)
+        mock_run.assert_any_call(["sudo", "ln", "-s", str(src), str(dst)], check=True, capture_output=True, shell=False)
 
     @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
@@ -363,15 +363,16 @@ class TestFileUtils(unittest.TestCase):
             text=True,
             encoding="utf-8",
             errors="replace",
+            shell=False,
         )
-        mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(self.root / ".tmp_dst_file_123456")], check=True, capture_output=True)
-        mock_run.assert_any_call(["sudo", "mv", "-f", str(self.root / ".tmp_dst_file_123456"), str(dst)], check=True, capture_output=True)
+        mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(self.root / ".tmp_dst_file_123456")], check=True, capture_output=True, shell=False)
+        mock_run.assert_any_call(["sudo", "mv", "-f", str(self.root / ".tmp_dst_file_123456"), str(dst)], check=True, capture_output=True, shell=False)
 
         # 2. Fallback when mktemp fails
         mock_run.reset_mock()
         mock_run.side_effect = [Exception("mktemp failed"), MagicMock()]
         copy_file(src, dst, sudo=True)
-        mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(dst)], check=True, capture_output=True)
+        mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(dst)], check=True, capture_output=True, shell=False)
 
     @unittest.skipIf(sys.platform == "win32", "External cp/mv commands are POSIX-only")
     @patch("subprocess.run")
@@ -381,17 +382,17 @@ class TestFileUtils(unittest.TestCase):
 
         # 1. Non-sudo copy file (resolve_symlinks=True)
         copy_tree(src, dst, sudo=False, chown=False, resolve_symlinks=True)
-        mock_run.assert_any_call(["cp", "-L", str(src), str(dst)], check=True, capture_output=True)
+        mock_run.assert_any_call(["cp", "-L", str(src), str(dst)], check=True, capture_output=True, shell=False)
 
         # 2. Sudo copy dir (resolve_symlinks=False, chown=True)
         dir_src = self.root / "src_dir"
         dir_src.mkdir()
         copy_tree(dir_src, dst, sudo=True, chown=True, resolve_symlinks=False)
-        mock_run.assert_any_call(["sudo", "cp", "-RP", str(dir_src), str(dst)], check=True, capture_output=True)
+        mock_run.assert_any_call(["sudo", "cp", "-RP", str(dir_src), str(dst)], check=True, capture_output=True, shell=False)
 
         # 3. Move file (sudo=False, resolve_symlinks=False)
         move_tree(src, dst, sudo=False, chown=False, resolve_symlinks=False)
-        mock_run.assert_any_call(["mv", str(src), str(dst)], check=True, capture_output=True)
+        mock_run.assert_any_call(["mv", str(src), str(dst)], check=True, capture_output=True, shell=False)
 
     def test_file_operations_windows_fallback(self) -> None:
         """Verifies that all sudo/external file operations fallback to Python builtins on Windows."""
@@ -564,7 +565,7 @@ class TestFileUtils(unittest.TestCase):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
                 run_command(["echo", "hello"], sudo=True)
-                mock_run.assert_called_with(["sudo", "echo", "hello"], check=True, capture_output=True)
+                mock_run.assert_called_with(["sudo", "echo", "hello"], check=True, capture_output=True, shell=False)
 
         # Linux root
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=0, create=True):
@@ -572,7 +573,7 @@ class TestFileUtils(unittest.TestCase):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
                 run_command(["echo", "hello"], sudo=True)
-                mock_run.assert_called_with(["echo", "hello"], check=True, capture_output=True)
+                mock_run.assert_called_with(["echo", "hello"], check=True, capture_output=True, shell=False)
 
     def test_assert_can_escalate(self) -> None:
         from drift.utils.process_utils import assert_can_escalate
@@ -924,14 +925,14 @@ class TestFileUtils(unittest.TestCase):
         f = self.root / "sudo_file.txt"
         f.touch()
         self.assertTrue(remove_file_or_empty_dir(f, sudo=True))
-        mock_run.assert_called_with(["sudo", "rm", "-f", str(f)], check=True, capture_output=True)
+        mock_run.assert_called_with(["sudo", "rm", "-f", str(f)], check=True, capture_output=True, shell=False)
 
         mock_run.reset_mock()
         # Empty dir under sudo -> sudo rmdir
         d = self.root / "sudo_empty_dir"
         d.mkdir()
         self.assertTrue(remove_file_or_empty_dir(d, sudo=True))
-        mock_run.assert_called_with(["sudo", "rmdir", str(d)], check=True, capture_output=True)
+        mock_run.assert_called_with(["sudo", "rmdir", str(d)], check=True, capture_output=True, shell=False)
 
     def test_remove_tree_recursive(self) -> None:
         # remove_tree recursively removes directory with children
