@@ -1,6 +1,8 @@
-from typing import Optional, Sequence, List, Any, Mapping
+from typing import Optional, Sequence, List, Any, Mapping, TypeVar
 
 from .constants import ExitCode
+
+_ExcT = TypeVar("_ExcT", bound=BaseException)
 
 
 class DriftError(Exception):
@@ -20,7 +22,7 @@ class DriftError(Exception):
         self.logged = logged
 
 
-def mark_logged(exc: BaseException) -> BaseException:
+def mark_logged(exc: _ExcT) -> _ExcT:
     """Marks any exception instance (built-in or domain) as having been logged to console output."""
     setattr(exc, "logged", True)
     return exc

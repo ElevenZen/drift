@@ -3,7 +3,7 @@
 install_method = "{install_method}"  # Options: "symlink" (symlink) or "copy" (physical)
 {target_directory_line}
 # target_directory_windows = "~"  # Windows-specific destination override
-# source_directory = "."          # Package root relative to package directory
+# source_directory = "."          # Subdirectory within this package containing files to render and deploy
 
 # Advanced Flags
 # hook_file = "drift_package.py"  # Dynamic Python hook (configure_package(context))

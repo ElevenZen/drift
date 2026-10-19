@@ -273,7 +273,7 @@ class PackageAdoptResult(SerializableModel):
     adopted_converged: List[str] = field(default_factory=list)
     skipped_files: List[str] = field(default_factory=list)
     conflicted_files: List[str] = field(default_factory=list)
-    status: str = AdoptStatus.SUCCESS
+    status: AdoptStatus = AdoptStatus.SUCCESS
     error: Optional[str] = None
     plan: PackageAdoptPlan = field(default_factory=PackageAdoptPlan, repr=False, compare=False)
 
@@ -363,7 +363,7 @@ class PackageAdoptResult(SerializableModel):
 class AdoptResult(SerializableModel):
     """Aggregate result for workspace-wide or multi-package drift adoption."""
     command: str = "adopt"
-    status: str = AdoptStatus.SUCCESS  # "UP_TO_DATE", "SUCCESS", "PARTIAL", "SKIPPED", "FAILED"
+    status: AdoptStatus = AdoptStatus.SUCCESS  # "UP_TO_DATE", "SUCCESS", "PARTIAL", "SKIPPED", "FAILED"
     packages: List[PackageAdoptResult] = field(default_factory=list)
     error_message: Optional[str] = None
     dry_run: bool = False

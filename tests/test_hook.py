@@ -1108,7 +1108,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
         # 5b. Relative base_dir raises AssertionError
         with self.assertRaises(AssertionError) as ctx_assert:
-            PackageHooks.from_dict({"pre_install": "drift_hooks/pre_install.sh"}, package_name="test_pkg", base_dir="relative/dir")
+            PackageHooks.from_dict({"pre_install": "drift_hooks/pre_install.sh"}, package_name="test_pkg", base_dir=Path("relative/dir"))
         self.assertIn("base_dir must be an absolute path", str(ctx_assert.exception))
 
         # 6. PackageConfig with base_dir resolves relative hooks

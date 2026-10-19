@@ -24,8 +24,8 @@ from ..core.mixins import AlwaysTruthy
 class NodeHashes:
     """Immutable pair containing both node own hash and Merkle hash."""
 
-    own_hash: str
-    merkle_hash: str
+    own_hash: Optional[str] = None
+    merkle_hash: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -89,10 +89,15 @@ class RenderCache(AlwaysTruthy):
     def set(
         self,
         dst_path: Path,
-        hashes: NodeHashes,
+        hashes: Optional[NodeHashes],
         src_path: Optional[Path] = None,
     ) -> None:
-        """Stores NodeHashes for a given destination path, recording source stat fingerprint if available."""
+        """Stores NodeHashes for a given destination path, recording source stat fingerprint if available.
+
+        Ignores entries when hashes is None or when either own_hash or merkle_hash is None.
+        """
+        if hashes is None or hashes.own_hash is None or hashes.merkle_hash is None:
+            return
         mtime_ns: Optional[int] = None
         size: Optional[int] = None
         if src_path is not None and src_path.exists():
@@ -111,8 +116,8 @@ class RenderCache(AlwaysTruthy):
     def register(
         self,
         dst_path: Path,
-        own_hash: str,
-        merkle_hash: str,
+        own_hash: Optional[str],
+        merkle_hash: Optional[str] = None,
         src_path: Optional[Path] = None,
     ) -> None:
         """Convenience method registering own_hash and merkle_hash as NodeHashes."""

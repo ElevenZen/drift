@@ -71,7 +71,10 @@
 * `parse_secrets_env(drift_root: Path) -> Dict[str, str]`, `parse_env_file(file_path: Path) -> Dict[str, str]`, `env_scope(...)`.
 
 ### [`config_utils.py`](config_utils.py) & [`toml_utils.py`](toml_utils.py) — Config Predicates & TOML Engine
-* `partition(pred: Callable[[T], bool], iterable: Iterable[T]) -> Tuple[List[T], List[T]]`: Splits items into `(truthy_list, falsy_list)`.
+* `partition(pred: Callable[[T], bool], items: Iterable[T]) -> Tuple[List[T], List[T]]`: Splits items into `(truthy_list, falsy_list)`.
+* `branch(predicate: Union[bool, Callable[[], Any]], lambda1: Callable[[], T], lambda2: Callable[[], T]) -> T`: Evaluates `predicate` and invokes `lambda1()` if truthy, otherwise `lambda2()`.
+* `when_not_none(a: Optional[S], b: Union[Callable[[S], Optional[T]], Callable[[], Optional[T]], Optional[T]]) -> Optional[T]`: Chooses/invokes `b` when `a is not None`, otherwise returns `None`.
+* `when_none(a: Optional[S], b: Union[Callable[[], T], T]) -> Union[S, T]`: Chooses/invokes fallback `b` when `a is None`, otherwise returns `a`.
 * `get_first_from(data: Mapping, keys: Sequence[str], default=None) -> Any`: Returns value for the first matching key alias.
 * `get_nested_from(data: dict, keys: Union[str, Sequence[str]], default=None, required=False, is_table=False, context="configuration") -> Any`: Traverses nested dict paths with type/presence validation.
 * `parse_bool_value(val: Any, default: bool = False, strict: bool = False, context: str = "") -> bool`: Coerces boolean values.

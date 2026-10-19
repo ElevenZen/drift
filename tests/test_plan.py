@@ -8,6 +8,7 @@ import tempfile
 import subprocess
 import unittest
 from pathlib import Path
+from typing import Optional
 from unittest.mock import patch
 
 from drift.cli import main, run_argparse_cli
@@ -72,7 +73,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def _setup_package(self, pkg_name: str, files: dict, deps: list = None, install_method: str = "copy") -> Path:
+    def _setup_package(self, pkg_name: str, files: dict, deps: Optional[list] = None, install_method: str = "copy") -> Path:
         """Helper to create a source package with drift_package.toml and content files."""
         pkg_dir = self.src_dir / pkg_name
         pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -184,7 +185,9 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
 
         pkg_preview = preview.package_previews.get(pkg_name)
         self.assertIsNotNone(pkg_preview)
+        assert pkg_preview is not None
         self.assertIsNotNone(pkg_preview.render_plan)
+        assert pkg_preview.render_plan is not None
         self.assertEqual(pkg_preview.render_plan.status, "UP_TO_DATE")
 
         for action in pkg_preview.render_plan.actions:
@@ -231,6 +234,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         pkg_preview = preview.package_previews["pkg_drift"]
         self.assertTrue(pkg_preview.has_drift)
         self.assertIsNotNone(pkg_preview.reverse_sync_plan)
+        assert pkg_preview.reverse_sync_plan is not None
         self.assertTrue(pkg_preview.reverse_sync_plan.has_changes)
 
         # Mutating action must be UPDATE_COPY
@@ -413,15 +417,18 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIsNone(pkg_preview.error)
         self.assertIsNotNone(pkg_preview.render_plan)
         render_plan = pkg_preview.render_plan
+        assert render_plan is not None
         self.assertEqual(render_plan.status, "SUCCESS")
 
         # Find RENDER_ITEM and CREATE_COPY actions
         render_action = next((a for a in render_plan.actions if a.action_type == FileActionType.RENDER_ITEM), None)
         self.assertIsNotNone(render_action)
+        assert render_action is not None
         self.assertEqual(render_action.dst_path, self.drift_root / "render" / pkg_name / "file.txt")
 
-        static_action = next((a for a in render_plan.actions if a.action_type == FileActionType.CREATE_COPY and a.dst_path.name == "static.txt"), None)
+        static_action = next((a for a in render_plan.actions if a.action_type == FileActionType.CREATE_COPY and a.dst_path is not None and a.dst_path.name == "static.txt"), None)
         self.assertIsNotNone(static_action)
+        assert static_action is not None
         self.assertEqual(static_action.dst_path, self.drift_root / "render" / pkg_name / "static.txt")
 
         # Canonical render directory must never be created
@@ -453,6 +460,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         self.assertEqual(preview.status, "SUCCESS")
         pkg_preview = preview.package_previews[pkg_name]
         self.assertIsNotNone(pkg_preview.render_plan)
+        assert pkg_preview.render_plan is not None
         actions = pkg_preview.render_plan.actions
         non_skip = [a for a in actions if a.action_type not in (FileActionType.SKIP_IDENTICAL, FileActionType.INFO_MESSAGE)]
         self.assertEqual(non_skip, [], f"Expected only SKIP_IDENTICAL actions, got: {non_skip}")
@@ -470,6 +478,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         self.assertEqual(preview.status, "SUCCESS")
         render_plan = preview.package_previews[pkg_name].render_plan
         self.assertIsNotNone(render_plan)
+        assert render_plan is not None
         self.assertEqual(render_plan.status, "UP_TO_DATE")
         self.assertTrue(all(a.action_type == FileActionType.SKIP_IDENTICAL for a in render_plan.actions))
 
@@ -478,6 +487,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         self.assertEqual(preview_nc.status, "SUCCESS")
         render_plan_nc = preview_nc.package_previews[pkg_name].render_plan
         self.assertIsNotNone(render_plan_nc)
+        assert render_plan_nc is not None
         self.assertEqual(render_plan_nc.status, "SUCCESS")
         self.assertTrue(any(a.action_type != FileActionType.SKIP_IDENTICAL for a in render_plan_nc.actions))
 
@@ -526,6 +536,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         preview_indep = preview.package_previews["pkg_indep"]
         self.assertIsNone(preview_indep.error)
         self.assertIsNotNone(preview_indep.render_plan)
+        assert preview_indep.render_plan is not None
         self.assertEqual(preview_indep.render_plan.status, "SUCCESS")
 
     def test_plan_with_hooks_flag(self) -> None:
@@ -605,11 +616,13 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         pkg_preview = preview.package_previews[pkg_name]
         self.assertIsNotNone(pkg_preview.stage_plan)
         stage_plan = pkg_preview.stage_plan
+        assert stage_plan is not None
         self.assertTrue(stage_plan.has_changes)
 
         # Must have UPDATE_COPY with src pointing to canonical render/ and dst to canonical install/
-        update_action = next((a for a in stage_plan.actions if a.action_type == FileActionType.UPDATE_COPY and a.dst_path.name == "service.conf"), None)
+        update_action = next((a for a in stage_plan.actions if a.action_type == FileActionType.UPDATE_COPY and a.dst_path is not None and a.dst_path.name == "service.conf"), None)
         self.assertIsNotNone(update_action)
+        assert update_action is not None
         self.assertEqual(update_action.src_path, self.drift_root / "render" / pkg_name / "service.conf")
         self.assertEqual(update_action.dst_path, self.drift_root / "install" / pkg_name / "service.conf")
 
@@ -632,10 +645,12 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         pkg_preview = preview.package_previews[pkg_name]
         self.assertIsNotNone(pkg_preview.install_plan)
         install_plan = pkg_preview.install_plan
+        assert install_plan is not None
         self.assertFalse(install_plan.has_changes)
 
-        skip_action = next((a for a in install_plan.actions if a.action_type == FileActionType.SKIP_IDENTICAL and a.dst_path.name == "tool.sh"), None)
+        skip_action = next((a for a in install_plan.actions if a.action_type == FileActionType.SKIP_IDENTICAL and a.dst_path is not None and a.dst_path.name == "tool.sh"), None)
         self.assertIsNotNone(skip_action)
+        assert skip_action is not None
         self.assertEqual(skip_action.src_path, self.drift_root / "install" / pkg_name / "tool.sh")
         self.assertEqual(skip_action.dst_path, self.host_target / pkg_name / "tool.sh")
 
@@ -655,10 +670,12 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         pkg_preview = preview.package_previews[pkg_name]
         self.assertIsNotNone(pkg_preview.install_plan)
         install_plan = pkg_preview.install_plan
+        assert install_plan is not None
         self.assertTrue(install_plan.has_changes)
 
-        update_action = next((a for a in install_plan.actions if a.action_type == FileActionType.UPDATE_COPY and a.dst_path.name == "data.json"), None)
+        update_action = next((a for a in install_plan.actions if a.action_type == FileActionType.UPDATE_COPY and a.dst_path is not None and a.dst_path.name == "data.json"), None)
         self.assertIsNotNone(update_action)
+        assert update_action is not None
         self.assertEqual(update_action.src_path, self.drift_root / "install" / pkg_name / "data.json")
         self.assertEqual(update_action.dst_path, self.host_target / pkg_name / "data.json")
 
@@ -683,14 +700,18 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
 
         # Stage plan must delete from install/
         self.assertIsNotNone(pkg_preview.stage_plan)
-        del_stage = next((a for a in pkg_preview.stage_plan.actions if a.action_type == FileActionType.DELETE_ITEM and a.dst_path.name == "remove.txt"), None)
+        assert pkg_preview.stage_plan is not None
+        del_stage = next((a for a in pkg_preview.stage_plan.actions if a.action_type == FileActionType.DELETE_ITEM and a.dst_path is not None and a.dst_path.name == "remove.txt"), None)
         self.assertIsNotNone(del_stage)
+        assert del_stage is not None
         self.assertEqual(del_stage.dst_path, self.drift_root / "install" / pkg_name / "remove.txt")
 
         # Install plan must prune from host target
         self.assertIsNotNone(pkg_preview.install_plan)
-        del_install = next((a for a in pkg_preview.install_plan.actions if a.action_type in (FileActionType.DELETE_ITEM, FileActionType.BACKUP_PRUNE) and (a.src_path.name == "remove.txt" or a.dst_path.name == "remove.txt")), None)
+        assert pkg_preview.install_plan is not None
+        del_install = next((a for a in pkg_preview.install_plan.actions if a.action_type in (FileActionType.DELETE_ITEM, FileActionType.BACKUP_PRUNE) and ((a.src_path is not None and a.src_path.name == "remove.txt") or (a.dst_path is not None and a.dst_path.name == "remove.txt"))), None)
         self.assertIsNotNone(del_install)
+        assert del_install is not None
         host_target_file = del_install.src_path if del_install.action_type == FileActionType.BACKUP_PRUNE else del_install.dst_path
         self.assertEqual(host_target_file, self.host_target / pkg_name / "remove.txt")
 

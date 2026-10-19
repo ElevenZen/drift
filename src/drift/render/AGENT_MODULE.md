@@ -20,7 +20,7 @@
 ## 3. Module & Public API Catalog
 
 ### [`render_hasher.py`](render_hasher.py), [`render_cache.py`](render_cache.py) & [`render_lock.py`](render_lock.py) — Merkle Hashes, Cache & Lockfile
-* `NodeHashes(own_hash: str, merkle_hash: str)` & `CachedFileEntry(hashes: NodeHashes, source_mtime_ns: Optional[int], source_size: Optional[int])`.
+* `NodeHashes(own_hash: Optional[str] = None, merkle_hash: Optional[str] = None)` & `CachedFileEntry(hashes: NodeHashes, source_mtime_ns: Optional[int], source_size: Optional[int])`.
 * `RenderCache`: Per-workspace in-memory cache (`WorkspaceConfig.render_cache`) mapping destination paths to `CachedFileEntry` with automatic invalidation when `(st_mtime_ns, st_size)` changes on disk.
 * `RenderBucket(str, Enum)`: `CONFIG = "config"`, `HOOKS = "hooks"`, `PAYLOAD = "payload"`.
 * `RenderLockfile`: Manages `render/<pkg>/.drift/render_lock.json` with 3 isolated hash buckets (`config_hashes`, `hook_hashes`, `payload_hashes`).

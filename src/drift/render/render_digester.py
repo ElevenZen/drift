@@ -151,6 +151,10 @@ class DigestionContext:
         if not self.dry_run:
             self.lockfile.save_to_dir(self.absolute_package_render_dir)
 
+    def add_active_hash(self, merkle_hash: Optional[str]) -> None:
+        """Records a resolved Merkle hash in active_hashes if not None."""
+        if merkle_hash is not None:
+            self.active_hashes.add(merkle_hash)
 
 
 def check_and_apply_cache(
@@ -175,8 +179,7 @@ def check_and_apply_cache(
     if cached is not None:
         node.hashes = cached
         context.result.skipped_paths.append(target_path)
-        if cached.merkle_hash:
-            context.active_hashes.add(cached.merkle_hash)
+        context.add_active_hash(cached.merkle_hash)
         src_path = getattr(node, "src_path", None)
         if context.cache is not None:
             context.cache.set(target_path, cached, src_path=src_path)

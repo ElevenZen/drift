@@ -67,6 +67,7 @@ from ..utils.config_utils import (
     get_first_from,
     parse_bool_value,
     validate_known_keys,
+    when_not_none,
 )
 from .package_hooks import PackageHooks
 from .package_requirements import PackageRequirements
@@ -668,7 +669,7 @@ class PackageConfig(AlwaysTruthy):
     def compute_effective_envs(self, workspace_config: Optional[WorkspaceConfig] = None) -> 'PackageConfig':
         self.env_resolve = resolve_env_configs(
             current_layer=self.env_resolve.current,
-            lower_layer=(workspace_config and workspace_config.env_resolve.effective),
+            lower_layer=when_not_none(workspace_config, lambda ws: ws.env_resolve.effective),
             package_facts=self.get_drift_package_facts(workspace_config),
         )
         return self

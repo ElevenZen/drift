@@ -228,6 +228,8 @@ from .utils import (
     merge_toml,
     partition,
     branch,
+    when_not_none,
+    when_none,
     get_first_from,
     get_nested_from,
     validate_known_keys,

@@ -229,6 +229,13 @@ class TestRenderHasher(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
 
+            missing_path = tmp_path / "missing.txt"
+            missing_node = IndependentFileNode(missing_path)
+            self.assertIsNone(compute_merkle_node_hash(missing_node))
+            self.assertIsNotNone(missing_node.hashes)
+            self.assertIsNone(missing_node.own_hash)
+            self.assertIsNone(missing_node.merkle_hash)
+
             src_path = tmp_path / "source.txt"
             src_path.write_text("hello source")
             dest_path = tmp_path / "dest.txt"
@@ -238,8 +245,10 @@ class TestRenderHasher(unittest.TestCase):
             static_node = StaticFileNode(dest_path, src_path)
             static_node.depends_on = [indep_node]
 
-            # If dependency's merkle_hash is not yet computed -> returns None
+            # If dependency's merkle_hash is not yet computed -> returns None, but own_hash is populated
             self.assertIsNone(compute_merkle_node_hash(static_node))
+            self.assertIsNotNone(static_node.own_hash)
+            self.assertIsNone(static_node.merkle_hash)
 
             # Compute dependency's merkle hash first (topological post-order)
             m_indep = compute_merkle_node_hash(indep_node)

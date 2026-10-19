@@ -131,7 +131,7 @@ class RenderLockfile:
             return self.payload_hashes
         raise ValueError(f"Unknown render bucket: {bucket}")
 
-    def update_bucket_hashes(self, bucket: RenderBucket, hashes: Iterable[str]) -> RenderLockfile:
+    def update_bucket_hashes(self, bucket: RenderBucket, hashes: Iterable[Optional[str]]) -> RenderLockfile:
         """Replaces the specified bucket with the provided hashes."""
         if bucket == RenderBucket.CONFIG:
             return self.update_config_hashes(hashes)
@@ -141,19 +141,19 @@ class RenderLockfile:
             return self.update_payload_hashes(hashes)
         raise ValueError(f"Unknown render bucket: {bucket}")
 
-    def update_config_hashes(self, hashes: Iterable[str]) -> RenderLockfile:
+    def update_config_hashes(self, hashes: Iterable[Optional[str]]) -> RenderLockfile:
         """Replaces the config_hashes bucket with the provided hashes."""
-        self.config_hashes = set(hashes)
+        self.config_hashes = {h for h in hashes if h is not None}
         return self
 
-    def update_hook_hashes(self, hashes: Iterable[str]) -> RenderLockfile:
+    def update_hook_hashes(self, hashes: Iterable[Optional[str]]) -> RenderLockfile:
         """Replaces the hook_hashes bucket with the provided hashes."""
-        self.hook_hashes = set(hashes)
+        self.hook_hashes = {h for h in hashes if h is not None}
         return self
 
-    def update_payload_hashes(self, hashes: Iterable[str]) -> RenderLockfile:
+    def update_payload_hashes(self, hashes: Iterable[Optional[str]]) -> RenderLockfile:
         """Replaces the payload_hashes bucket with the provided hashes."""
-        self.payload_hashes = set(hashes)
+        self.payload_hashes = {h for h in hashes if h is not None}
         return self
 
     def check_lockfile_matches(
@@ -246,8 +246,10 @@ class RenderLockfile:
 
         return None
 
-    def contains_hash(self, hash_str: str) -> bool:
+    def contains_hash(self, hash_str: Optional[str]) -> bool:
         """Returns True if the given hash exists in any of the 3 buckets."""
+        if hash_str is None:
+            return False
         return (
             hash_str in self.config_hashes
             or hash_str in self.hook_hashes

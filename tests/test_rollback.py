@@ -916,7 +916,7 @@ class TestRollback(unittest.TestCase):
         )
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg_first, "installed")
-        registry.sync_deployed_files(pkg_first, self.system_target_dir, "copy", ["new.txt"])
+        registry.sync_deployed_files(pkg_first, self.system_target_dir, InstallMethod.COPY, [Path("new.txt")])
         save_state_registry(registry)
         self.workspace_config.packages_enable[pkg_first] = True
 

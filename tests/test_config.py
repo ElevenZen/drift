@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
-from typing import cast, Any, Dict
+from typing import cast, Any, Dict, List, Optional
 from drift.core.constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
@@ -19,6 +19,8 @@ from drift.utils.toml_utils import parse_toml
 from drift.utils.host_facts import get_cached_system_facts
 from drift.utils.config_utils import (
     partition,
+    when_not_none,
+    when_none,
     get_first_from,
     get_nested_from,
     validate_known_keys,
@@ -262,7 +264,7 @@ class TestConfigClasses(unittest.TestCase):
         self.assertIs(cfg_custom.render_cache, custom_cache)
 
         with self.assertRaises(ConfigError):
-            WorkspaceConfig(drift_root=self.drift_root, render_cache="invalid_type")
+            WorkspaceConfig(drift_root=self.drift_root, render_cache="invalid_type")  # type: ignore[arg-type]
 
     def test_workspace_config_from_dict(self) -> None:
         abs_target = (self.drift_root / "etc").resolve()
@@ -453,7 +455,7 @@ class TestConfigClasses(unittest.TestCase):
 
         # base_dir must be an absolute path
         with self.assertRaises(AssertionError):
-            PackageConfig.from_dict(data_no_name, package_name="fallback_name", base_dir="relative/path")
+            PackageConfig.from_dict(data_no_name, package_name="fallback_name", base_dir=Path("relative/path"))
 
     def test_package_config_validation(self) -> None:
         with self.assertRaises(ConfigError):
@@ -1585,6 +1587,43 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(calls, ["t", "f2"])
         self.assertEqual(branch(lambda: 1 == 1, lambda: 10, lambda: 20), 10)
         self.assertEqual(branch(lambda: 1 == 2, lambda: 10, lambda: 20), 20)
+
+        # when_not_none() and when_none() utility tests (values, 0-arg and 1-arg callables, lazy evaluation, falsy non-None)
+        side_effects: List[str] = []
+        opt_none: Optional[str] = None
+        opt_some: Optional[str] = "hello"
+        self.assertIsNone(when_not_none(opt_none, "chosen"))
+        self.assertIsNone(when_not_none(opt_none, lambda: (side_effects.append("0arg"), "chosen")[1]))
+        self.assertIsNone(when_not_none(opt_none, lambda s: (side_effects.append(s), s.upper())[1]))
+        self.assertEqual(side_effects, [])
+
+        self.assertEqual(when_not_none(opt_some, "chosen"), "chosen")
+        self.assertEqual(when_not_none(opt_some, lambda: (side_effects.append("0arg_hit"), 42)[1]), 42)
+        self.assertEqual(when_not_none(opt_some, lambda s: (side_effects.append(f"1arg:{s}"), s.upper())[1]), "HELLO")
+        self.assertEqual(when_not_none(opt_some, len), 5)
+        self.assertEqual(side_effects, ["0arg_hit", "1arg:hello"])
+
+        # Falsy non-None values ("", 0, False, []) are still not None
+        self.assertEqual(when_not_none("", "kept"), "kept")
+        self.assertEqual(when_not_none(0, lambda x: x + 10), 10)
+        self.assertEqual(when_not_none(False, lambda: "from_false"), "from_false")
+        self.assertEqual(when_not_none([], lambda lst: len(lst)), 0)
+
+        # when_none() tests
+        fallback_calls: List[str] = []
+        self.assertEqual(when_none(opt_some, "fallback"), "hello")
+        self.assertEqual(when_none(opt_some, lambda: (fallback_calls.append("called"), "fallback")[1]), "hello")
+        self.assertEqual(fallback_calls, [])
+
+        self.assertEqual(when_none(opt_none, "fallback"), "fallback")
+        self.assertEqual(when_none(opt_none, lambda: (fallback_calls.append("called_on_none"), "lazy_fallback")[1]), "lazy_fallback")
+        self.assertEqual(fallback_calls, ["called_on_none"])
+
+        # Falsy non-None values are preserved by when_none (only None triggers fallback)
+        self.assertEqual(when_none("", "fallback"), "")
+        self.assertEqual(when_none(0, 99), 0)
+        self.assertIs(when_none(False, True), False)
+        self.assertEqual(when_none([], ["fallback"]), [])
 
         # parse_render_command boundary validation
         self.assertEqual(
@@ -3551,7 +3590,7 @@ class TestAnchoredPathValidationEdgeCases(unittest.TestCase):
         for bad_val in ("invalid", "sometimes", 1, 0, ["auto"]):
             with self.subTest(bad_val=bad_val):
                 with self.assertRaises(ValueError):
-                    RollbackPolicy.from_val(bad_val)
+                    RollbackPolicy.from_val(bad_val)  # type: ignore[arg-type]
                 with self.assertRaises(ConfigError):
                     SettingsConfig.from_dict({"rollback": bad_val})
 

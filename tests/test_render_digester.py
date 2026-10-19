@@ -606,6 +606,12 @@ class TestDigestRenderDAG(unittest.TestCase):
             self.assertEqual(result.rendered_count, 1)
             # But file and lockfile NOT created on disk
             self.assertFalse(static_out.exists())
+            # Unrendered node hashes remain None (never empty string) and do not pollute active_hashes or cache
+            self.assertIsNone(static_node.own_hash)
+            self.assertIsNone(static_node.merkle_hash)
+            self.assertIsNone(payload_root.merkle_hash)
+            self.assertEqual(ctx.active_hashes, set())
+            self.assertFalse(self.render_cache.contains(static_out))
 
     def test_package_config_node_digestion(self) -> None:
         """Validates PackageConfigNode digestion, pruning of obsolete config, and lockfile bucket update."""

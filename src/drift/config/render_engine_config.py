@@ -33,7 +33,7 @@ from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence
 from ..core.constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from ..core.exceptions import ConfigError
 from ..core.mixins import AlwaysTruthy
-from ..utils.config_utils import validate_known_keys
+from ..utils.config_utils import validate_known_keys, when_not_none
 from ..utils.path_utils import is_relative_to
 
 logger = logging.getLogger(__name__)
@@ -297,6 +297,7 @@ class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]
             )
             raw_input = config_dict.get("input_file", None)
             input_path: Optional[Path] = None
+            resolved_input: Optional[Path] = None
             if raw_input is not None:
                 raw_input_str = str(raw_input).strip()
                 raw_path = Path(raw_input_str)
@@ -320,7 +321,7 @@ class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]
             # validation is done in RenderEngineConfig.validate() after construction
             return RenderEngineConfig(
                 name=name,
-                input_file=resolved_input if raw_input is not None else None,
+                input_file=when_not_none(raw_input, resolved_input),
                 suffix=str(config_dict.get("suffix", "")),
                 render_command=parse_render_command(config_dict.get("render_command"), name),
             )

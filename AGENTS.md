@@ -2,6 +2,10 @@
 
 ## 1. Programming Paradigm & Code Style
 * **Functional Programming Preference**: Always prefer functional-style constructs (`filter()`, `map()`, comprehensions, generator expressions, and pure function composition) over procedural `for`-loops across all codebase implementations and refactorings.
+* **Functional Control-Flow & Null-Safety Helpers (`branch`, `when_not_none`, `when_none`, `partition`)**:
+  * Prefer [`branch(pred, lambda1, lambda2)`](src/drift/utils/config_utils.py) over Python's inline ternary `X if cond else Y` syntax in newly written or refactored code.
+  * Prefer [`when_not_none(a, b)`](src/drift/utils/config_utils.py) (choose or derive `b` when `a is not None`) and [`when_none(a, b)`](src/drift/utils/config_utils.py) (choose fallback `b` when `a is None`) over inline ternary null checks or untyped boolean short-circuit idioms like `(a and b)`.
+  * Prefer [`partition(pred, items)`](src/drift/utils/config_utils.py) to split iterables into `(true_list, false_list)` in a single functional pass.
 * **Modular Pipeline Extraction**: Extract filtering, transformation, and validation predicates into clean, single-responsibility helper functions to keep data pipelines declarative and readable.
 * **Separation of Gathering & Manipulation**: Decouple data gathering/resolution from state manipulation and execution. When performing operations across objects (e.g. calling functions, transforming states), gather and resolve all necessary target objects or data representations first before operating on them.
 * **Pure & Predictable Flow**: Strive for pure helpers with explicit inputs and outputs, isolating state mutations and file I/O to designated operational handlers.
@@ -15,7 +19,7 @@
   * **Enforcement Rules**:
     * When requiring a **strictly relative** path, always check **`not p.anchor`** (or `check_is_relative_path(p)`), never `not p.is_absolute()`.
     * When requiring a **strictly absolute** path, check **`p.is_absolute()`**.
-    * When accepting a **hybrid (relative-or-absolute)** path resolved against `base_dir`, explicitly reject partially anchored paths (`p.anchor and not p.is_absolute()` / `check_is_partially_anchored_path(p)`) before resolving `p if p.anchor else (base_dir / p)`.
+    * When accepting a **hybrid (relative-or-absolute)** path resolved against `base_dir`, explicitly reject partially anchored paths (`p.anchor and not p.is_absolute()` / `check_is_partially_anchored_path(p)`) before resolving via `branch(bool(p.anchor), lambda: p, lambda: base_dir / p)`.
 * **No Backward Compatibility Burden**: Backward compatibility is not considered at this early development stage. Obsolete arguments, dead functions, legacy aliases, and transitional optional inputs should be removed cleanly and directly rather than retaining compatibility layers or shims.
 * **`ensure_` vs `assert_` vs `check_` Naming Convention**:
   * Use **`ensure_`** for functions that **create or modify** state to guarantee a postcondition (e.g., `ensure_dir` creates a directory if missing, `ensure_rendered_file_hook_permissions` chmods hook files).

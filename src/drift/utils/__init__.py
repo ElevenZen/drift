@@ -57,6 +57,8 @@ from .toml_utils import (
 from .config_utils import (
     partition,
     branch,
+    when_not_none,
+    when_none,
     get_first_from,
     get_nested_from,
     set_nested_val,
@@ -178,6 +180,8 @@ __all__ = [
     "merge_toml",
     "partition",
     "branch",
+    "when_not_none",
+    "when_none",
     "get_first_from",
     "get_nested_from",
     "set_nested_val",

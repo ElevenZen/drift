@@ -148,8 +148,12 @@ def compute_merkle_node_hash(node: Node, package_render_dir: Optional[Path] = No
     if node.merkle_hash is not None:
         return node.merkle_hash
 
-    own_h = node.own_hash if node.own_hash is not None else compute_node_own_hash(node, package_render_dir=package_render_dir)
+    from ..utils.config_utils import branch, when_none
+    from .render_cache import NodeHashes
+
+    own_h = when_none(node.own_hash, lambda: compute_node_own_hash(node, package_render_dir=package_render_dir))
     if own_h is None:
+        node.hashes = NodeHashes(own_hash=None, merkle_hash=None)
         logger.debug(
             f"[Merkle Hash] Failed to resolve own_hash for {node.__class__.__name__} "
             f"(value='{getattr(node, 'dst_path', getattr(node, 'src_path', node.value))}')."
@@ -162,6 +166,7 @@ def compute_merkle_node_hash(node: Node, package_render_dir: Optional[Path] = No
         if d.merkle_hash is None
     ]
     if unresolved:
+        node.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
         logger.debug(
             f"[Merkle Hash] Failed for {node.__class__.__name__} "
             f"('{getattr(node, 'dst_path', node.value)}'): unresolved deps {unresolved}."
@@ -169,12 +174,11 @@ def compute_merkle_node_hash(node: Node, package_render_dir: Optional[Path] = No
         return None
 
     dep_hashes = [dep.merkle_hash for dep in node.depends_on if dep.merkle_hash is not None]
-    if not dep_hashes:
-        m_hash = hash_text(f"{node.__class__.__name__}:{own_h}")
-    else:
-        deps_str = ":".join(dep_hashes)
-        m_hash = hash_text(f"{node.__class__.__name__}:{own_h}:{deps_str}")
+    m_hash = branch(
+        not dep_hashes,
+        lambda: hash_text(f"{node.__class__.__name__}:{own_h}"),
+        lambda: hash_text(f"{node.__class__.__name__}:{own_h}:{':'.join(dep_hashes)}"),
+    )
 
-    from .render_cache import NodeHashes
     node.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_hash)
     return m_hash

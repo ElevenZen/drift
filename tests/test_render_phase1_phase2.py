@@ -519,7 +519,9 @@ def configure_package(context):
             self.assertEqual(preview.status, "SUCCESS")
             pkg_preview = preview.package_previews.get("pkg_templated")
             self.assertIsNotNone(pkg_preview)
+            assert pkg_preview is not None
             self.assertIsNotNone(pkg_preview.render_plan)
+            assert pkg_preview.render_plan is not None
             self.assertEqual(pkg_preview.render_plan.status, "UP_TO_DATE")
 
             for action in pkg_preview.render_plan.actions:
