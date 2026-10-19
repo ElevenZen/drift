@@ -10,13 +10,18 @@ Industrial configuration management is divided into two distinct responsibilitie
 1. **Synchronization (Distribution)**: Transporting configuration data from a central source of truth to target nodes.
 2. **Installation & Activation (Materialization)**: Validating syntax, rendering templates, writing atomically to the filesystem or memory, and signaling services to reload.
 
-| Solution Category | Representative Tools | Primary Functionality | Main Usage Scenarios | How It Checks for Changes | How It Triggers & Activates |
+| Solution Category | Representative Tools | Primary Functionality | Main Usage Scenarios | Change Detection | Trigger & Activation |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Dynamic Config Centers** | **Apollo**, **Nacos**, **Consul KV**, **Etcd** | Centralized parameter storage, multi-tenant namespaces, fine-grained canary/gray releases. | Large-scale microservice architectures, runtime feature toggles, dynamic rate limiting. | HTTP/2 long-polling, persistent gRPC bi-directional push streams. | Emits in-memory update events to SDK listeners or local sidecars. |
-| **GitOps Controllers** | **ArgoCD**, **FluxCD**, **Kubernetes Kubelet** | Declarative state reconciliation, full Git auditability, disaster recovery from commits. | Kubernetes clusters, multi-region application deployments, cloud infrastructure. | Continuous reconciliation loops (polling Git commits / OCI tags + Webhook triggers). | Kubelet atomic symlink farm swap (`..data`), pod rolling restart, or volume notify. |
-| **Node Agents & Sidecars** | **Consul-Template**, **ConfD**, **Vault Agent** | Decouples native apps from central KV/Vault; sandbox template rendering; pre-flight validation. | Critical network daemons (**Nginx**, **HAProxy**, **Envoy**, **Prometheus**), zero-trust ephemeral secret rotation. | Long-polling or event streaming from remote KV / Vault leases. | **Pre-flight syntax check** (`nginx -t`) $\rightarrow$ Atomic file rename $\rightarrow$ Process signal (`SIGHUP` / `systemctl reload`). |
-| **In-Memory SDKs** | **Spring Cloud** (`@RefreshScope`), **Viper** | In-process dynamic property binding, zero-disk I/O. | Pure Java/Go/Node backend microservices. | In-process background polling or client event bus. | Dynamic hot-reloading of in-memory configuration beans and connection pools. |
-| **Host Package Managers** | **Drift**, **GNU Stow**, **Chezmoi** | Declarative dotfile and host configuration management; multi-engine template compilation. | Developer workstations, Linux/Windows host configuration, fleet system administration. | Local/remote Git synchronization, drift detection via reverse sync. | Pre-render sandbox $\rightarrow$ Pre-flight validation $\rightarrow$ Atomic symlink/copy $\rightarrow$ Lifecycle hooks (`pre_source`, `post_render`, `post_deploy`). |
+| **Dynamic Config Centers** | Apollo, Nacos, Consul KV, Etcd | Centralized KV store, RBAC, canary releases | Microservices, feature flags, rate limits | HTTP long-poll / gRPC stream | In-memory SDK event or sidecar callback |
+| **GitOps Controllers** | ArgoCD, FluxCD, Kubelet | Declarative Git state reconciliation | K8s clusters, multi-region infra | Git polling + push webhooks | `..data` symlink swap or rolling restart |
+| **Node Agents & Sidecars** | Consul-Template, ConfD, Vault Agent | Local template rendering & validation | Nginx, HAProxy, Envoy, Prometheus | KV long-poll / lease stream | `check_cmd` $\rightarrow$ atomic rename $\rightarrow$ `SIGHUP` |
+| **In-Memory SDKs** | Spring Cloud, Viper | In-process property binding (zero disk I/O) | Java, Go, Node.js microservices | Background poll / event bus | Hot-reload of in-memory beans & pools |
+| **Host Package Managers** | Drift, GNU Stow, Chezmoi | Host dotfile & daemon config management | Workstations, Linux/Windows servers | Git sync + reverse-sync audit | Sandbox render $\rightarrow$ symlink/copy $\rightarrow$ hooks |
+
+* **Auxiliary Mechanism Notes**:
+  * **Dynamic Config Centers**: Apollo uses HTTP long-polling (`60s` hold), whereas Nacos 2.x and Etcd v3 use persistent gRPC bi-directional push streams.
+  * **Node Agents & Sidecars**: Decouple native system daemons from remote KV stores and secret vaults (e.g., HashiCorp Vault ephemeral secret rotation), gating file replacement behind a mandatory pre-flight syntax check (`nginx -t`).
+  * **Host Package Managers (Drift)**: Compile multi-engine templates inside an isolated `render/` sandbox before staging to `install/`, deploying to the host, and executing phased lifecycle hooks (`pre_source`, `post_render`, `post_install`/`post_update`).
 
 ---
 
@@ -52,7 +57,7 @@ Dynamic configuration centers serve as real-time distributed key-value/document 
 * **Dynamic Database & Circuit Breaker Tuning**: Adjusting connection pool sizes or timeout thresholds during traffic surges.
 
 #### 3. How It Checks & Triggers
-1. **Persistent Connection**: Application / Node establishes a persistent gRPC stream or HTTP/2 long-poll connection with Config Center (Apollo / Nacos).
+1. **Persistent Connection**: Application / Node establishes a persistent gRPC stream (Nacos 2.x, Etcd v3) or HTTP long-poll connection (Apollo) with the Config Center.
 2. **Publish Change**: Admin / CI/CD publishes updated configuration (v2) to the Config Center.
 3. **Push Notification**: Config Center sends an instant push notification containing `DataID`, `Namespace`, and `Hash` to the Application.
 4. **Fetch Payload**: Application queries Config Center for the incremental config payload.
@@ -131,26 +136,26 @@ reload_cmd = "/usr/sbin/systemctl reload nginx"
 
 Every enterprise configuration agent implements this sequential safety pattern:
 
-| Step | Phase Name | Technical Action | Why It Is Critical |
+| Step | Phase Name | Technical Action | Critical Purpose |
 | :---: | :--- | :--- | :--- |
-| **1** | **Ingestion & Resolution** | Reads source templates, environment variables, and remote KV/Vault state. | Consolidates network calls, manages auth tokens, and handles retries. |
-| **2** | **Sandbox Compilation** | Compiles template engines into an **isolated temporary sandbox file** (e.g. `/tmp/app.conf.next`). | Prevents template syntax errors from touching or corrupting live files. |
-| **3** | **Pre-Flight Validation** | Runs application syntax checker (e.g. `nginx -t`, `haproxy -c`, `promtool check config`). | **Circuit breaker**: Blocks broken configurations before they reach production services. |
-| **4** | **Atomic Materialization** | Moves the sandboxed file into place via `rename(2)` or atomic symlink pointer rotation. | Guarantees that target processes never read half-written files. |
-| **5** | **Lifecycle Signaling** | Dispatches `SIGHUP`, calls `/v1/reload`, or executes post-deployment hooks. | Applies new configuration with zero dropped TCP connections. |
-| **6** | **State Auditing & Rollback** | Records state commits, checksums, and previous backups. | Enables instant rollback if unexpected runtime bugs occur. |
+| **1** | **Ingestion & Resolution** | Read templates, env vars, and remote KV/Vault | Consolidates network auth and retries |
+| **2** | **Sandbox Compilation** | Render templates into isolated temp file | Prevents syntax errors from corrupting live files |
+| **3** | **Pre-Flight Validation** | Run syntax checker (`nginx -t`, `haproxy -c`) | **Circuit breaker** blocking invalid configs |
+| **4** | **Atomic Materialization** | Atomic `rename(2)` or symlink pointer swap | Prevents processes from reading half-written files |
+| **5** | **Lifecycle Signaling** | Send `SIGHUP`, `/v1/reload`, or post-hooks | Zero-downtime reload without dropping connections |
+| **6** | **State Auditing & Rollback** | Record state commits, hashes, and WAL backups | Enables instant rollback on runtime failure |
 
 ---
 
 ## 5. Architectural Comparison: SDK vs. GitOps vs. Agent Proxy
 
-| Comparison Criteria | In-App SDK | GitOps Controller | Node Agent / Sidecar Proxy | Host Dotfile Manager (Drift) |
+| Comparison Criteria | In-App SDK | GitOps Controller | Node Agent / Sidecar | Host Manager (Drift) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Application Coupling** | High (SDK embedded in code) | Zero (reads plain files/manifests) | Zero (reads plain local files) | Zero (manages native files/symlinks) |
-| **Language Support** | Limited to supported SDKs | Universal (any container/OS) | **Universal** (Nginx, C++, Go, Python, Bash) | **Universal** (POSIX, Windows, macOS) |
-| **Blast Radius Protection** | Relies on app exception handling | Gated by Git CI/CD tests | **Built-in Pre-Flight Gatekeeper** (`check_cmd`) | **Sandbox Render + Pre-Flight Deploy** |
-| **Ephemeral Secret Rotation** | App must manage token lifecycle | Not designed for hourly secret leases | **Native lease manager** (auto-renews tokens) | Secrets scope injection & isolation |
-| **Drift Detection & Reverse Sync** | ❌ No | ⚠️ Reconciles by overwriting | ❌ Overwrites local edits | ✅ **Full Bidirectional Drift Adoption** |
+| **App Coupling** | High (in-code SDK) | Zero (plain files) | Zero (plain files) | Zero (native files/symlinks) |
+| **Language Support** | SDK-specific only | Universal | Universal | Universal (POSIX/Win/macOS) |
+| **Blast Radius Gate** | App exception handler | Git CI/CD pipeline | Pre-flight `check_cmd` | `render/` sandbox + hooks |
+| **Secret Rotation** | App manages leases | Static / external | Native lease renewal | Scoped `[env.secrets]` |
+| **Drift Adoption** | ❌ No | ⚠️ Overwrites live state | ❌ Overwrites local edits | ✅ Bidirectional (`drift adopt`) |
 
 ---
 
@@ -158,7 +163,7 @@ Every enterprise configuration agent implements this sequential safety pattern:
 
 **Drift** adapts these cloud-grade patterns for host systems, dotfiles, and fleet configuration management:
 
-1. **Decoupled 3-Tier Compilation**: Drift divides deployment into `src/` (declarative templates) $\rightarrow$ `render/` (isolated sandbox compilation) $\rightarrow$ `install/` (atomic staging database) $\rightarrow$ `host` (active filesystem).
-2. **Lifecycle Hooks**: Provides `pre_source`, `post_render`, and `post_deploy` hooks equivalent to industrial agent `check_cmd` and `reload_cmd`.
+1. **Decoupled 4-Tier Storage Topology**: Drift divides deployment into `src/` (declarative templates) $\rightarrow$ `render/` (isolated sandbox compilation) $\rightarrow$ `install/` (atomic staging database) $\rightarrow$ `Target` (active host filesystem).
+2. **Lifecycle Hooks**: Provides `pre_source`, `post_render`, `pre_install`/`post_install`, `pre_update`/`post_update`, and `health` hooks equivalent to industrial agent `check_cmd` and `reload_cmd`.
 3. **Encoding & Permission Protection**: Implements `LineEnding` normalization (LF $\leftrightarrow$ CRLF) and Windows Read-Only unlocking (`unlock_file_or_dir_if_windows()`) to guarantee safe cross-platform operations.
 4. **Bidirectional Drift Adoption**: Unlike standard cloud agents that blindly overwrite manual host edits, Drift detects uncommitted local changes and provides an interactive reconciliation engine (`drift adopt`) to safely merge host modifications back into the declarative source.

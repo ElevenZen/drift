@@ -1,6 +1,6 @@
 # Full-Cycle Dry-Run Engine: Architectural Modeling & Transactional Planning
 
-This document provides a comprehensive design specification, mathematical modeling rationale, and implementation architecture for Drift's **Full-Cycle Dry-Run & Planning Engine** ([`src/drift/primitives/plan_repo.py`](../src/drift/primitives/plan_repo.py)), powering `drift plan` and `drift deploy --dry-run`.
+This document provides a comprehensive design specification, mathematical modeling rationale, and implementation architecture for Drift's **Full-Cycle Dry-Run & Planning Engine** ([`src/drift/primitives/plan_repo.py`](../../src/drift/primitives/plan_repo.py)), powering `drift plan` and `drift deploy --dry-run`.
 
 ---
 
@@ -63,7 +63,7 @@ $$\operatorname{readlink}(h) \neq \text{candidate_file}$$
 Without path masking, the delivery engine would classify every existing, perfectly synchronized symlink on the host as a **Conflict**, generating false `BACKUP_OVERWRITE` and `CREATE_SYMLINK` actions instead of `SKIP_IDENTICAL`.
 
 #### The Path Mask Solution
-Drift introduces the `source_dir_mask` primitive in [`src/drift/core/folder_delivery.py`](../src/drift/core/folder_delivery.py). When inspecting a symlink on the host, the inspection algebra evaluates:
+Drift introduces the `source_dir_mask` primitive in [`src/drift/core/folder_delivery.py`](../../src/drift/core/folder_delivery.py). When inspecting a symlink on the host, the inspection algebra evaluates:
 $$\operatorname{effective_source} = \mathcal{I}_{\text{mask}} / \text{rel_path} \quad \text{if } \mathcal{I}_{\text{mask}} \neq \text{None} \quad \text{else } \text{candidate_file}$$
 
 $$\text{is_identical} \iff \operatorname{readlink}(h) = \operatorname{effective_source}$$
@@ -77,7 +77,7 @@ This guarantees:
 
 ## 3. Four-Phase Architecture & Call Chain
 
-The planning pipeline is decomposed into four discrete, testable phases coordinated by [`preview_deploy`](../src/drift/primitives/plan_repo.py) (and exposed via [`run_primitive_plan`](../src/drift/primitives/plan_repo.py)):
+The planning pipeline is decomposed into four discrete, testable phases coordinated by [`preview_deploy`](../../src/drift/primitives/plan_repo.py) (and exposed via [`run_primitive_plan`](../../src/drift/primitives/plan_repo.py)):
 
 ```text
 preview_deploy(workspace_config, target_pkgs, options: DeployOptions)
@@ -116,39 +116,39 @@ preview_deploy(workspace_config, target_pkgs, options: DeployOptions)
 ---
 
 ### 3.1 Phase 0: Non-Destructive Host Drift Audit
-Before compiling templates, Drift inspects active host files using [`prepare_reverse_sync`](../src/drift/primitives/reverse_sync.py).
+Before compiling templates, Drift inspects active host files using [`prepare_reverse_sync`](../../src/drift/primitives/reverse_sync.py).
 * Evaluates differences between `install/` state and live host files.
 * Does **not** mutate `install/` or write to `state.toml`.
 * Detects runtime modifications (GUI changes, emergency hot-fixes).
 * If drift is found on any targeted package, records a `drift_warning` and flags the preview status as `DRIFT_DETECTED` (unless bypassed via `--force`).
 
 ### 3.2 Phase 1: Ephemeral Sandbox Template Compilation
-Managed within [`enter_plan_sandbox`](../src/drift/primitives/plan_repo.py):
+Managed within [`enter_plan_sandbox`](../../src/drift/primitives/plan_repo.py):
 * Creates a temporary scratch directory via `tempfile.TemporaryDirectory(prefix="drift_plan_sandbox_")`.
 * Pre-copies existing `render/<pkg>` trees to preserve Merkle lockfile state for fast cache hits.
-* Injects a sandboxed [`WorkspaceConfig`](../src/drift/config/workspace_config.py) configured with:
+* Injects a sandboxed [`WorkspaceConfig`](../../src/drift/config/workspace_config.py) configured with:
   - `render_directory = tmp_sandbox / render`
   - `render_path_mask = real_workspace.render_path`
   - `install_path_mask = real_workspace.install_path`
   - Isolated `RenderCache()` instance
-* Calls [`render_package`](../src/drift/render/render_package.py) in topological DAG order.
+* Calls [`render_package`](../../src/drift/render/render_package.py) in topological DAG order.
 * Rebases all generated `FileAction` paths so that planned actions point to canonical `render/` rather than the temporary directory.
 * If a package fails compilation, records `render_errors[pkg]` and blocks downstream packages that depend on it.
 
 ### 3.3 Phase 2: Sandbox Staging Planning
-Executed in [`execute_sandbox_stage_phase`](../src/drift/primitives/plan_repo.py):
+Executed in [`execute_sandbox_stage_phase`](../../src/drift/primitives/plan_repo.py):
 * Diffs `sandbox_render/<pkg>` directly against canonical `install/<pkg>`.
-* Compiles [`PackageStagePlan`](../src/drift/models/stage_models.py) using the declarative delivery engine without touching the filesystem.
+* Compiles [`PackageStagePlan`](../../src/drift/models/stage_models.py) using the declarative delivery engine without touching the filesystem.
 * Rebases action paths so source paths reference canonical `render/` and destination paths reference canonical `install/`.
 * Isolates per-package staging exceptions into `stage_errors[pkg]`.
 
 ### 3.4 Phase 3: Physical Delivery Planning
-Executed in [`execute_sandbox_install_phase`](../src/drift/primitives/plan_repo.py):
+Executed in [`execute_sandbox_install_phase`](../../src/drift/primitives/plan_repo.py):
 * Discovers candidate deployable files from `sandbox_render/<pkg>`.
-* **Batch Pre-Flight Guard**: Calls [`assert_no_cross_package_conflicts`](../src/drift/primitives/package_assertions.py) across all eligible packages to audit against intra-batch destination collisions (two packages claiming the same file) and inter-package collisions (conflicting with previously installed packages in `state.toml`).
+* **Batch Pre-Flight Guard**: Calls [`assert_no_cross_package_conflicts`](../../src/drift/primitives/package_assertions.py) across all eligible packages to audit against intra-batch destination collisions (two packages claiming the same file) and inter-package collisions (conflicting with previously installed packages in `state.toml`).
 * **Decoupled Package-by-Package Loop**: Iterates through packages in topological order with **dependency checks explicitly turned off** (`full_universe_deps=None` / `no_deps=True`), as dependency ordering was already validated upfront.
-* Calls [`assert_packages_install_ready`](../src/drift/primitives/install_repo.py) to verify target directory permissions and hook readiness per package.
-* Invokes [`plan_package_install`](../src/drift/primitives/install_repo.py), compiling concrete `FileAction`s (`CREATE_SYMLINK`, `UPDATE_COPY`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `SKIP_IDENTICAL`).
+* Calls [`assert_packages_install_ready`](../../src/drift/primitives/install_repo.py) to verify target directory permissions and hook readiness per package.
+* Invokes [`plan_package_install`](../../src/drift/primitives/install_repo.py), compiling concrete `FileAction`s (`CREATE_SYMLINK`, `UPDATE_COPY`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `SKIP_IDENTICAL`).
 
 ---
 
@@ -193,7 +193,7 @@ When errors occur during planning, Drift guarantees that the user is explicitly 
 
 ## 5. Presentation & Formatting Engine
 
-[`WorkspaceDeployPreview`](../src/drift/models/deploy_models.py) formats simulation results for terminal viewing and automation consumption:
+[`WorkspaceDeployPreview`](../../src/drift/models/deploy_models.py) formats simulation results for terminal viewing and automation consumption:
 
 ### 5.1 Terminal Output Conventions
 * **Summary Banner**:
@@ -204,7 +204,7 @@ When errors occur during planning, Drift guarantees that the user is explicitly 
   `💡 Host changes detected. Run 'drift adopt' to absorb changes into src/ or pass '--force' to overwrite.`
 
 ### 5.2 Single Source of Truth CLI Routing
-Drift supports dual CLI backends (Typer and Argparse). Flag handling is unified through `CommandSpec` and [`handle_plan`](../src/drift/cli/cli_handlers.py):
+Drift supports dual CLI backends (Typer and Argparse). Flag handling is unified through `CommandSpec` and [`handle_plan`](../../src/drift/cli/cli_handlers.py):
 * `drift deploy --dry-run` and `drift deploy -n` are transparent aliases to `drift plan`.
 * Flags supported across both backends:
   - `-a, --all, --show-all`: Expands all package sections.

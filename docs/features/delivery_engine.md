@@ -1,6 +1,6 @@
 # Core Folder Delivery Engine: Architectural Modeling & Action Planning
 
-This document provides a comprehensive design specification, algorithmic formulation, and call graph analysis for Drift's **Core Folder Delivery Planning Engine** ([`src/drift/core/folder_delivery.py`](../src/drift/core/folder_delivery.py)).
+This document provides a comprehensive design specification, algorithmic formulation, and call graph analysis for Drift's **Core Folder Delivery Planning Engine** ([`src/drift/core/folder_delivery.py`](../../src/drift/core/folder_delivery.py)).
 
 ---
 
@@ -16,7 +16,7 @@ In dotfile management and system configuration orchestration, moving files from 
 
 ### 1.2 The Delivery Engine Mission
 The folder delivery engine solves these challenges by acting as a **pure, declarative simulation and planning core**:
-1. **Side-Effect Free Planning**: Separates inspection and planning from execution. It returns a deterministic, ordered list of [`FileAction`](../src/drift/core/file_action.py) objects (`NormalFileAction` and `BackupFileAction`).
+1. **Side-Effect Free Planning**: Separates inspection and planning from execution. It returns a deterministic, ordered list of [`FileAction`](../../src/drift/core/file_action.py) objects (`NormalFileAction` and `BackupFileAction`).
 2. **Exhaustive Collision Matrix**: Handles every permutation of source node type (file, symlink, directory) and target node state (missing, concrete file, symlink to source, foreign symlink, broken symlink, directory).
 3. **Ancestor-First Reification**: Inspects and resolves parent directory collisions strictly from shallowest to deepest before evaluating leaf nodes.
 4. **Manifest-Driven Orphan Pruning**: Compares candidate deployable files against historical `deployed_files` manifests to safely prune orphaned files without touching unrelated user data.
@@ -40,7 +40,7 @@ Folder Delivery Planning Pipeline
 Sequence[FileAction] (Deterministic, Inspectable Execution Queue)
 ```
 
-### 2.1 `DeliveryInspectionContext` ([`src/drift/core/folder_delivery.py`](../src/drift/core/folder_delivery.py))
+### 2.1 `DeliveryInspectionContext` ([`src/drift/core/folder_delivery.py`](../../src/drift/core/folder_delivery.py))
 
 An immutable, frozen dataclass encapsulating all runtime parameters required for action planning:
 
@@ -169,7 +169,7 @@ Drift Primitive Callers
 ```
 
 ### 4.1 Staging Diff Compiler (`plan_actions_from_folder_diff`)
-Compiles a [`FolderDiff`](../src/drift/core/folder_diff.py) (comparing `render/<pkg>/` against `install/<pkg>/`) into an atomic list of actions:
+Compiles a [`FolderDiff`](../../src/drift/core/folder_diff.py) (comparing `render/<pkg>/` against `install/<pkg>/`) into an atomic list of actions:
 1. **Deletions First (`reverse=True`)**: Deletes orphaned files from deepest to shallowest to cleanly clear obsolete paths before additions.
 2. **Additions**: Plans `ENSURE_DIR` for directories, `CREATE_COPY` for files.
 3. **Modifications**: Differentiates between content modifications (`UPDATE_COPY`) and permission-only adjustments (`UPDATE_PERMISSION`).
@@ -248,15 +248,15 @@ The planning engine enforces four strict ordering invariants across all generate
 ### 6.2 Zero-Mutation Safety Invariant
 The delivery planning function $\Phi$ is strictly pure and inspectable:
 $$\Phi(\text{context}, \text{deployable}, \text{deployed}) \to \text{actions}$$
-Execution of $\Phi$ performs **zero filesystem mutations**. No files are created, copied, modified, or deleted until the returned `actions` are explicitly dispatched to [`execute_delivery_actions()`](../src/drift/core/file_action.py#L321).
+Execution of $\Phi$ performs **zero filesystem mutations**. No files are created, copied, modified, or deleted until the returned `actions` are explicitly dispatched to [`execute_delivery_actions()`](../../src/drift/core/file_action.py#L321).
 
 ### 6.3 Self-Referential Deployment Guard
 To prevent catastrophic circular symlinks or recursive workspace overwrites, `assert_target_dir_outside_drift_root` verifies:
 $$\operatorname{resolve}(\text{target_dir}) \not\subseteq \operatorname{resolve}(\text{drift_root})$$
-If a user misconfigures `target_directory = "."` or points a symlink inside `.drift/` or `install/`, the engine halts immediately with [`InstallCollisionError`](../src/drift/core/exceptions.py), protecting repository integrity.
+If a user misconfigures `target_directory = "."` or points a symlink inside `.drift/` or `install/`, the engine halts immediately with [`InstallCollisionError`](../../src/drift/core/exceptions.py), protecting repository integrity.
 
 ### 6.4 Forward Pruning Safety Boundary
-When pruning orphaned files in forward delivery mode, the engine strictly uses `DELETE_ITEM` (or `BACKUP_PRUNE`), which executes via [`remove_file_or_empty_dir`](../src/drift/utils/file_ops.py). 
+When pruning orphaned files in forward delivery mode, the engine strictly uses `DELETE_ITEM` (or `BACKUP_PRUNE`), which executes via [`remove_file_or_empty_dir`](../../src/drift/utils/file_ops.py). 
 * `DELETE_TREE` is strictly prohibited during forward deployment.
 * If an orphaned file's parent directory contains unmanaged user files, the directory is preserved on the host.
 * `DELETE_TREE` is permitted only in `reverse_mode=True`, where the target is Drift's private internal state database (`install/<pkg>/`).

@@ -12,13 +12,17 @@ When tools process filenames passed via command-line arguments (`ARGV`), their d
 * **`awk` (POSIX / `gawk`)**: Treats unreadable input files as fatal errors by default; halts immediately and **exits with `2`** (unless intercepted via `BEGINFILE`).
 * **`grep`**: Fails with **exit code `2`** on missing files (reserving `1` for "no match found" and `0` for "match found").
 
-| Tool | Invocation Pattern | Missing File Default Behavior | Default Exit Code | How to Enforce Fatal Failure (Non-zero Exit) | How to Gracefully Skip / Ignore Missing Files |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Perl** | `perl -pe '...' file` | Emits non-fatal warning, skips file | **`0`** | `perl -Mwarnings=FATAL,all -pe '...'` | *(Default behavior)* |
-| **GNU `sed`** | `sed '...' file` | Prints error to stderr, processes remaining files | **`2`** | *(Default behavior)* | `[ -f "$f" ] && sed ...` or `2>/dev/null \|\| true` |
-| **GNU `awk`** | `awk '...' file` | Fatal error, aborts pipeline immediately | **`2`** | *(Default behavior)* | `BEGINFILE { if (ERRNO) nextfile }` |
-| **`grep`** | `grep 'pat' file` | Prints error, continues remaining files | **`2`** | *(Default behavior)* | `grep -s 'pat' file` (suppresses message, still exits `2` if no match) |
-| **Python** | `python3 -m fileinput` | Raises `FileNotFoundError` exception | **`1`** | *(Default behavior)* | `try: ... except FileNotFoundError:` |
+| Tool | Invocation Pattern | Missing File Behavior | Default Exit | Enforce Fatal Exit | Skip / Ignore Missing Files |
+| :--- | :--- | :--- | :---: | :--- | :--- |
+| **Perl** | `perl -pe '...' file` | Emits warning, skips file | **`0`** | `-Mwarnings=FATAL,all` | *(Default behavior)* |
+| **GNU `sed`** | `sed '...' file` | Prints error, continues | **`2`** | *(Default behavior)* | `[ -f "$f" ] && sed ...` |
+| **GNU `awk`** | `awk '...' file` | Fatal error, aborts immediately | **`2`** | *(Default behavior)* | `BEGINFILE { if (ERRNO) nextfile }` |
+| **`grep`** | `grep 'pat' file` | Prints error, continues | **`2`** | *(Default behavior)* | `grep -s` (quiet stderr; see note) |
+| **Python** | `python3 -m fileinput` | Raises `FileNotFoundError` | **`1`** | *(Default behavior)* | `try ... except FileNotFoundError` |
+
+* **Important Behavioral Notes**:
+  * **GNU `sed` Fallback**: Can also suppress missing-file failures via `sed '...' "$f" 2>/dev/null || true`, though pre-checking `[ -f "$f" ]` avoids masking syntax errors.
+  * **`grep -s` vs. `grep -qs` Exit Status**: `grep -s` (`--no-messages`) suppresses `stderr` output for missing or unreadable files, but **still exits with code `2`** if any input file is missing—even if matches were found in other files. Only when `-q` (`--quiet`) is also passed (`grep -qs`) does a match in another file short-circuit and return exit code `0`.
 
 ---
 
@@ -162,15 +166,15 @@ grep "pattern" missing.txt
 # Suppressing error messages with -s / --no-messages
 grep -s "pattern" missing.txt
 # Stderr: (silent)
-# Exit Code: 2 (if file missing and no matches found)
+# Exit Code: 2 (always exits 2 if any file is missing, unless -q is also passed and another file matches)
 ```
 
 ### B. `ripgrep` (`rg`)
-`ripgrep` outputs warnings to `stderr` on missing files but continues searching other targets:
+`ripgrep` outputs warnings to `stderr` on missing files while continuing to search remaining targets, and exits with `2` if any file was missing or unreadable (unless `-q` / `--quiet` is passed and a match is found in another file):
 ```bash
 rg "pattern" missing.txt
 # Stderr: missing.txt: No such file or directory (os error 2)
-# Exit Code: 2 (if unreadable files encountered and no match found)
+# Exit Code: 2 (always exits 2 if any file is unreadable, unless -q is passed and another file matches)
 
 # Suppressing error messages
 rg --no-messages "pattern" missing.txt

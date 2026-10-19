@@ -18,32 +18,36 @@ This document specifies the technical design, command taxonomy, declarative sche
 
 Drift commands are categorized into **8 distinct positional argument patterns**:
 
-| Category | Positional Pattern | Drift Commands | Expected `<TAB>` Behavior |
+| Category | Positional Pattern | Drift Commands | `<TAB>` Completion Source |
 | :--- | :--- | :--- | :--- |
-| **A. None** | `None` | `init`, `gc`, `repair` | Complete command flags only; no positional completions. |
-| **B. Zero or More Packages** | `[packages...]` | `deploy`, `status`, `diff`, `adopt`, `rollback`, `health`, `render`, `stage`, `apply`, `reverse-sync`, `render-commit`, `install-commit` | Complete package names from `src/`. Multiple package names allowed sequentially. |
-| **C. One or More Packages** | `<packages...>` | `uninstall` | At least one package required; complete package names repeatedly. |
-| **D. Package + Hook Name** | `<package> <hook>` | `hook` | **Arg 1**: Existing package name from `src/`.<br>**Arg 2**: Lifecycle hook name with full descriptions. |
-| **E. Package + File Paths** | `<package> <paths...>` | `add` | **Arg 1**: Existing package name from `src/`.<br>**Arg 2+**: Host system file or directory paths. |
-| **F. New or Existing Package** | `<package_name>` | `new` | **Arg 1**: Free-text string (brand-new package) **or** an existing folder name in `src/` (to scaffold missing configuration in an existing folder).<br>Flags: `-m/--method` (`symlink` / `copy`), `-t/--target` (directories). |
-| **G. Fixed Topic / Shell Choices** | `[topic]` / `[shell]` | `help`, `complete` | **`help`**: Complete built-in manual topics with descriptions.<br>**`complete`**: Complete supported shell targets (`bash`, `zsh`, `fish`). |
-| **H. Git URL + Destination** | `<git_url> [destination]` | `clone` | **Arg 1**: URL/path (free-text).<br>**Arg 2**: Destination directory path. |
+| **A. None** | `None` | `init`, `gc`, `repair` | Command flags only |
+| **B. Optional Pkgs** | `[packages...]` | `deploy`, `status`, `diff`, `adopt`, `rollback`, `health`, `plan`, etc. | Dynamic package names from `src/` |
+| **C. Required Pkgs** | `<packages...>` | `uninstall` | Dynamic package names from `src/` (1+) |
+| **D. Pkg + Hook** | `<package> <hook>` | `hook` | Arg 1: `src/` pkg; Arg 2: lifecycle hook |
+| **E. Pkg + Paths** | `<package> <paths...>` | `add` | Arg 1: `src/` pkg; Arg 2+: host paths |
+| **F. New / Existing** | `<package_name>` | `new` | Free-text or existing `src/` folder |
+| **G. Fixed Choices** | `[topic]` / `[shell]` | `help`, `complete` | Static manual topics or shell targets |
+| **H. URL + Dest** | `<git_url> [dest]` | `clone` | Arg 1: free-text URL; Arg 2: directory |
+
+* **Positional Pattern Notes**:
+  * **Category B (`[packages...]`)**: Includes `deploy`, `status`, `diff`, `adopt`, `rollback`, `health`, `plan`, `render`, `stage`, `apply`, `reverse-sync`, `render-commit`, and `install-commit`.
+  * **Category F (`new`)**: Accepts either a brand-new package name (free-text) or an existing folder in `src/` to scaffold a missing `drift_package.toml`, alongside `-m/--method` (`symlink`/`copy`) and `-t/--target` (directory).
 
 ---
 
 ## 3. End-to-End System Architecture
 
-* **Single Source of Truth**: [`src/drift/cli/schema.py`](src/drift/cli/schema.py) (`CommandSpec`, `OptionSpec`, `CompletionSchema`)
+* **Single Source of Truth**: [`src/drift/cli/schema.py`](../../src/drift/cli/schema.py) (`CommandSpec`, `OptionSpec`, `CompletionSchema`)
   * **CLI Parser Layer**:
-    * [`src/drift/cli/argparse_backend.py`](src/drift/cli/argparse_backend.py) (`generate_argparse_parser`)
-    * [`src/drift/cli/typer_backend.py`](src/drift/cli/typer_backend.py) (`generate_typer_app`)
-    * $\rightarrow$ **Router / Dispatcher**: [`src/drift/cli/cli_handlers.py`](src/drift/cli/cli_handlers.py) (`DriftCLIContext & handle_*`)
-    * $\rightarrow$ **Action Execution**: [`src/drift/cli/actions.py`](src/drift/cli/actions.py) (`execute_*`)
+    * [`src/drift/cli/argparse_backend.py`](../../src/drift/cli/argparse_backend.py) (`generate_argparse_parser`)
+    * [`src/drift/cli/typer_backend.py`](../../src/drift/cli/typer_backend.py) (`generate_typer_app`)
+    * $\rightarrow$ **Router / Dispatcher**: [`src/drift/cli/cli_handlers.py`](../../src/drift/cli/cli_handlers.py) (`DriftCLIContext & handle_*`)
+    * $\rightarrow$ **Action Execution**: [`src/drift/cli/actions.py`](../../src/drift/cli/actions.py) (`execute_*`)
   * **Shell Completion Generators**:
-    * [`src/drift/cli/completion/bash.py`](src/drift/cli/completion/bash.py) (`BashGenerator`)
-    * [`src/drift/cli/completion/zsh.py`](src/drift/cli/completion/zsh.py) (`ZshGenerator`)
-    * [`src/drift/cli/completion/fish.py`](src/drift/cli/completion/fish.py) (`FishGenerator`)
-    * $\rightarrow$ **Facade**: [`src/drift/cli/completion/__init__.py`](src/drift/cli/completion/__init__.py) (`generate_completion_script`)
+    * [`src/drift/cli/completion/bash.py`](../../src/drift/cli/completion/bash.py) (`BashGenerator`)
+    * [`src/drift/cli/completion/zsh.py`](../../src/drift/cli/completion/zsh.py) (`ZshGenerator`)
+    * [`src/drift/cli/completion/fish.py`](../../src/drift/cli/completion/fish.py) (`FishGenerator`)
+    * $\rightarrow$ **Facade**: [`src/drift/cli/completion/__init__.py`](../../src/drift/cli/completion/__init__.py) (`generate_completion_script`)
 
 ---
 

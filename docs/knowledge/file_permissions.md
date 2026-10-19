@@ -8,15 +8,20 @@ This document provides a comprehensive technical reference for the file permissi
 
 Operating systems use different security abstractions to control file access. While traditional Unix relies on discrete 9-bit permission masks (`rwxrwxrwx`), modern enterprise filesystems use **Access Control Lists (ACLs)** with fine-grained access rights, explicit negative rules (`DENY`), and dynamic inheritance.
 
-| Security Dimension | Traditional POSIX Mode | Linux POSIX.1e ACLs (`getfacl`) | Windows NTFS Security Descriptors | Modern RichACL / NFSv4 / OpenZFS | macOS APFS / HFS+ |
+| Security Dimension | Traditional POSIX | Linux POSIX.1e ACLs | Windows NTFS | RichACL / NFSv4 / ZFS | macOS APFS / HFS+ |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Standard / Origin** | POSIX.1 (IEEE 1003.1) | POSIX 1003.1e Draft 17 (Withdrawn 1997) | Windows NT 3.1 (1993, VMS Heritage) | RFC 3530 / RFC 7530 / OpenZFS | Apple Mac OS X 10.4+ / APFS |
-| **Identity System** | Integer `uid` & `gid` | Integer `uid` & `gid` | Domain-aware **SIDs** (`S-1-5-...`) | Principal strings (`user@realm`) or UIDs | Apple Generated UIDs (GUIDs/UUIDs) |
-| **Permission Bits** | 3 bits (`r`, `w`, `x`) | 3 bits (`r`, `w`, `x`) + `mask` | **14 granular rights** + Generic masks | **14 granular rights** (NTFS parity) | **14 granular rights** (NTFS parity) |
-| **Explicit Deny** | ❌ No | ❌ No (Additive only) | ✅ Yes (`DENY` ACEs evaluate first) | ✅ Yes (`DENY` ACEs evaluate first) | ✅ Yes (`DENY` ACEs evaluate first) |
-| **Inheritance Model** | None | **Static Default ACLs** (Created once; no cascade) | **Dynamic Automatic Inheritance** (Parent updates cascade to children) | **Dynamic Automatic Inheritance** | **Dynamic Automatic Inheritance** |
-| **Executability Check** | `+x` permission bit | `+x` permission bit | File extension (`.exe`, `.bat`, etc.) + ACL rights | `+x` bit or `EXECUTE` right | `+x` bit + `EXECUTE` right |
-| **Security Auditing** | External (`auditd`) | External (`auditd`) | **Native SACL** (Success/Failure audits) | Native Audit / Alarm ACEs | Native Audit ACEs |
+| **Standard / Origin** | IEEE 1003.1 | POSIX 1003.1e D17 | Windows NT 3.1 | RFC 7530 / OpenZFS | Mac OS X 10.4+ |
+| **Identity System** | Integer `uid`/`gid` | Integer `uid`/`gid` | Domain SIDs (`S-1-5-...`) | `user@realm` or UID | Generated UUIDs |
+| **Permission Bits** | 3 bits (`rwx`) | 3 bits (`rwx`) + `mask` | 14 rights + generic masks | 14 granular rights | 14 granular rights |
+| **Explicit Deny** | ❌ No | ❌ No (additive only) | ✅ Yes (`DENY` first) | ✅ Yes (`DENY` first) | ✅ Yes (`DENY` first) |
+| **Inheritance** | None | Static default ACL | Dynamic auto-inheritance | Dynamic auto-inheritance | Dynamic auto-inheritance |
+| **Executability** | `+x` mode bit | `+x` mode bit | File ext + ACL right | `+x` bit / `EXECUTE` | `+x` bit + `EXECUTE` |
+| **Security Auditing** | External (`auditd`) | External (`auditd`) | Native SACL | Native Audit ACEs | Native Audit ACEs |
+
+* **Key Matrix Distinctions**:
+  * **Standard Status**: POSIX 1003.1e Draft 17 was formally withdrawn in 1997, whereas NFSv4 ACLs (RFC 3530 / RFC 7530), OpenZFS, and Apple APFS converged on the 14-right Windows NTFS model.
+  * **Static vs. Dynamic Inheritance**: Linux POSIX.1e default ACLs (`default:`) only copy rules to newly created children at creation time; NTFS, NFSv4, and APFS support dynamic automatic inheritance where parent ACL updates cascade down the tree.
+  * **Executability**: Windows determines script/binary launch behavior by file extension (`.exe`, `.bat`, `.ps1`) combined with `FILE_EXECUTE` ACL permissions rather than POSIX `+x` mode bits.
 
 ---
 
@@ -95,20 +100,24 @@ Windows NTFS uses a layered security model combining **legacy DOS/FAT file attri
 ### A. The 14 Granular NTFS Rights
 Unlike POSIX `rwx`, NTFS divides permissions into 14 distinct rights:
 
-| NTFS Access Right | Target | Description |
+| NTFS Access Right | Target | Summary |
 | :--- | :--- | :--- |
-| `FILE_READ_DATA` / `FILE_LIST_DIRECTORY` | File / Dir | Read file contents or list directory contents. |
-| `FILE_WRITE_DATA` / `FILE_ADD_FILE` | File / Dir | Overwrite or modify existing file data, or create a file in a directory. |
-| `FILE_APPEND_DATA` / `FILE_ADD_SUBDIRECTORY` | File / Dir | Append data to the end of a file (log-only!) without modifying existing content, or create subdirectories. |
-| `FILE_READ_EA` / `FILE_WRITE_EA` | File / Dir | Read or write extended file attributes. |
-| `FILE_EXECUTE` / `FILE_TRAVERSE` | File / Dir | Execute a program file or traverse through a directory folder path. |
-| `FILE_DELETE_CHILD` | Directory | Delete files or subdirectories inside this folder even if the child file itself has a read-only attribute! |
-| `FILE_READ_ATTRIBUTES` / `FILE_WRITE_ATTRIBUTES` | File / Dir | Read or update basic filesystem attribute flags. |
-| `DELETE` | File / Dir | Permission to delete this specific file or directory. |
-| `READ_CONTROL` | File / Dir | Read the security descriptor and DACL. |
-| `WRITE_DAC` | File / Dir | Modify the DACL permissions. |
-| `WRITE_OWNER` | File / Dir | Take or assign object ownership. |
-| `SYNCHRONIZE` | File / Dir | Wait on the object handle for thread/process synchronization. |
+| `FILE_READ_DATA` / `FILE_LIST_DIRECTORY` | File / Dir | Read file bytes or list directory entries |
+| `FILE_WRITE_DATA` / `FILE_ADD_FILE` | File / Dir | Overwrite file data or create files in folder |
+| `FILE_APPEND_DATA` / `FILE_ADD_SUBDIRECTORY` | File / Dir | Append to file end or create subdirectories |
+| `FILE_READ_EA` / `FILE_WRITE_EA` | File / Dir | Read or write extended attributes (EAs) |
+| `FILE_EXECUTE` / `FILE_TRAVERSE` | File / Dir | Execute binary or traverse directory path |
+| `FILE_DELETE_CHILD` | Directory | Delete immediate child files or subfolders |
+| `FILE_READ_ATTRIBUTES` / `FILE_WRITE_ATTRIBUTES` | File / Dir | Read or modify basic DOS/NTFS attribute flags |
+| `DELETE` | File / Dir | Delete this specific object |
+| `READ_CONTROL` | File / Dir | Read security descriptor and DACL |
+| `WRITE_DAC` | File / Dir | Modify DACL access entries |
+| `WRITE_OWNER` | File / Dir | Take or assign object ownership |
+| `SYNCHRONIZE` | File / Dir | Wait on object handle for thread sync |
+
+* **Notable NTFS Right Semantics**:
+  * **Strict Append-Only (`FILE_APPEND_DATA` without `FILE_WRITE_DATA`)**: Allows a process to append log entries to the end of a file while strictly forbidding modification or truncation of existing file content.
+  * **Parent Deletion Override (`FILE_DELETE_CHILD`)**: Mirrors POSIX directory write semantics in the ACL layer—granting `FILE_DELETE_CHILD` on a parent directory permits deleting child files even if the child's own DACL does not grant `DELETE` (though Win32 `DeleteFileW` still checks the legacy `FILE_ATTRIBUTE_READONLY` bit first).
 
 ### B. Canonical Evaluation Order
 When an access request occurs, the Windows Security Reference Monitor evaluates the DACL in strict canonical order:
@@ -188,8 +197,8 @@ other::---             # Everyone else
 * Calling `os.chmod(path, 0o444)` on Windows enables `FILE_ATTRIBUTE_READONLY`.
 
 ### C. Executability in Lifecycle Hooks & Deployments
-* **POSIX**: Drift inspects executable permission bits (`0o111`) and automatically adds `chmod +x` (`0o755`) if missing.
-* **Windows**: Executability is driven by file extensions. Drift dispatches hooks using interpreter wrappers based on extension (`.ps1` $\rightarrow$ `powershell.exe`, `.bat`/`.cmd` $\rightarrow$ `cmd.exe`, `.py` $\rightarrow$ `python.exe`, `.exe` $\rightarrow$ native execution).
+* **POSIX**: During rendering, Drift adds executable permission bits (`mode | 0o111`) to compiled hook scripts inside `.drift/hooks/` (and in `src/` when `ensure_hooks_executable_in_src = true`). At hook execution time, if the executable bit (`0o111`) is missing on disk, Drift avoids mutating permissions at runtime and falls back to an explicit interpreter (`/bin/bash` for `.sh`/`.bash`, `sys.executable` for `.py`, or the parsed `#!` shebang).
+* **Windows**: Executability is driven by file extensions. Drift dispatches hooks using interpreter wrappers based on extension (`.ps1` $\rightarrow$ `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`, `.bat`/`.cmd` $\rightarrow$ `cmd.exe /c`, `.py` $\rightarrow$ `sys.executable`, `.sh`/`.bash` $\rightarrow$ `bash.exe` with POSIX forward slashes, `.exe` $\rightarrow$ native execution).
 
 ### D. Line Endings & Byte-Level Normalization
 * Drift uses the `LineEnding` enum (`LF`, `CRLF`, `PRESERVE`) to perform encoding-safe byte-level line-ending translations:

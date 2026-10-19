@@ -113,24 +113,24 @@ Because digestion traverses the graph in topological order, every dependency's `
 
 ## 3. AST Node Taxonomy & Polymorphic Model
 
-The AST is implemented in [`src/drift/render/render_dag.py`](../src/drift/render/render_dag.py). It cleanly separates virtual data nodes from filesystem path nodes.
+The AST is implemented in [`src/drift/render/render_dag.py`](../../src/drift/render/render_dag.py). It cleanly separates virtual data nodes from filesystem path nodes.
 
 ### 3.1 Class Hierarchy Overview
 
-* [`Node`](../src/drift/render/render_dag.py): Universal base AST class holding `value: str`, `depends_on: List[Node]`, and `hashes: Optional[NodeHashes]`.
-  * [`TextNode`](../src/drift/render/render_dag.py): Represents immutable text data; hashes content on initialization.
-    * [`JsonNode`](../src/drift/render/render_dag.py): Represents structured data serialized to deterministic JSON (sorted keys, compact separators). Retains `data: Any` for engine consumption.
-  * [`PackageHooksNode`](../src/drift/render/render_dag.py): Root Merkle container for Phase 2 (Hooks).
-  * [`PackagePayloadNode`](../src/drift/render/render_dag.py): Root Merkle container for Phase 3 (Payload).
-  * [`PathNode[Generic[_DstT, _SrcT]]`](../src/drift/render/render_dag.py): Base class for filesystem entities encapsulating target `dst_path` and source `src_path`.
-    * [`DirectoryNode`](../src/drift/render/render_dag.py): Represents empty directory targets synchronized via `.drift_keep`.
-    * [`UnknownPathNode`](../src/drift/render/render_dag.py): Transient placeholder for candidate paths awaiting AST expansion.
-    * [`FileNode[Generic[_SrcT]]`](../src/drift/render/render_dag.py): Base class for file-specific operations.
-      * [`IndependentFileNode`](../src/drift/render/render_dag.py): Unmanaged external asset or template source leaf (`depends_on=[]`).
-      * [`StaticFileNode`](../src/drift/render/render_dag.py): Static asset copied 1:1 from `src_path` to `dst_path`.
-      * [`CachedNode`](../src/drift/render/render_dag.py): In-memory hit from an earlier phase or run, bypassing re-expansion.
-      * [`EngineOutputFileNode`](../src/drift/render/render_dag.py): Compiled template artifact depending on `[I, T, V, E]`.
-      * [`PackageConfigNode`](../src/drift/render/render_dag.py): Phase 1 compilation root for package configuration and variable stitching.
+* [`Node`](../../src/drift/render/render_dag.py): Universal base AST class holding `value: str`, `depends_on: List[Node]`, and `hashes: Optional[NodeHashes]`.
+  * [`TextNode`](../../src/drift/render/render_dag.py): Represents immutable text data; hashes content on initialization.
+    * [`JsonNode`](../../src/drift/render/render_dag.py): Represents structured data serialized to deterministic JSON (sorted keys, compact separators). Retains `data: Any` for engine consumption.
+  * [`PackageHooksNode`](../../src/drift/render/render_dag.py): Root Merkle container for Phase 2 (Hooks).
+  * [`PackagePayloadNode`](../../src/drift/render/render_dag.py): Root Merkle container for Phase 3 (Payload).
+  * [`PathNode[Generic[_DstT, _SrcT]]`](../../src/drift/render/render_dag.py): Base class for filesystem entities encapsulating target `dst_path` and source `src_path`.
+    * [`DirectoryNode`](../../src/drift/render/render_dag.py): Represents empty directory targets synchronized via `.drift_keep`.
+    * [`UnknownPathNode`](../../src/drift/render/render_dag.py): Transient placeholder for candidate paths awaiting AST expansion.
+    * [`FileNode[Generic[_SrcT]]`](../../src/drift/render/render_dag.py): Base class for file-specific operations.
+      * [`IndependentFileNode`](../../src/drift/render/render_dag.py): Unmanaged external asset or template source leaf (`depends_on=[]`).
+      * [`StaticFileNode`](../../src/drift/render/render_dag.py): Static asset copied 1:1 from `src_path` to `dst_path`.
+      * [`CachedNode`](../../src/drift/render/render_dag.py): In-memory hit from an earlier phase or run, bypassing re-expansion.
+      * [`EngineOutputFileNode`](../../src/drift/render/render_dag.py): Compiled template artifact depending on `[I, T, V, E]`.
+      * [`PackageConfigNode`](../../src/drift/render/render_dag.py): Phase 1 compilation root for package configuration and variable stitching.
 
 ### 3.2 Concrete Node Responsibilities
 
@@ -186,7 +186,7 @@ The AST is implemented in [`src/drift/render/render_dag.py`](../src/drift/render
 
 ## 4. Graph Expansion & Collision Detection
 
-AST expansion is implemented in [`src/drift/render/render_expansion.py`](../src/drift/render/render_expansion.py). It transforms candidate files and unresolved `UnknownPathNode` instances into a fully resolved DAG.
+AST expansion is implemented in [`src/drift/render/render_expansion.py`](../../src/drift/render/render_expansion.py). It transforms candidate files and unresolved `UnknownPathNode` instances into a fully resolved DAG.
 
 ### 4.1 State Container: `ExpansionContext`
 The expansion pipeline relies on `ExpansionContext` to manage traversal state:
@@ -297,7 +297,7 @@ A single monolithic compilation pass cannot render a package because of strict c
 ### 5.3 Phase 2: Lifecycle Hooks (`PackageHooksNode`)
 * **Scope**: Scoped strictly under `with pkg_config.package_envs():`.
 * **Compilation**: Translates scripts from `src/<pkg>/drift_hooks/` to `render/<pkg>/.drift/hooks/`.
-* **Permission Enforcement**: Configured lifecycle hooks are guaranteed POSIX `0o755` permissions across both `src/` and `render/` via [`ensure_configured_hook_permissions()`](../src/drift/render/render_hooks.py).
+* **Permission Enforcement**: Configured lifecycle hooks are guaranteed POSIX `0o755` permissions across both `src/` and `render/` via [`ensure_configured_hook_permissions()`](../../src/drift/render/render_hooks.py).
 * **Pruning**: Obsolete hook scripts in `render/<pkg>/.drift/hooks/` are pruned.
 * **Lockfile**: Updates `hook_hashes` bucket in `.drift/render.lock`.
 * **Execution Gates**:
@@ -315,7 +315,7 @@ A single monolithic compilation pass cannot render a package because of strict c
 
 ## 6. Digestion Subsystem & Topological Evaluation
 
-Graph digestion is implemented in [`src/drift/render/render_digester.py`](../src/drift/render/render_digester.py).
+Graph digestion is implemented in [`src/drift/render/render_digester.py`](../../src/drift/render/render_digester.py).
 
 ### 6.1 Topological Sorting
 The DAG is evaluated using depth-first post-order traversal with 3-state cycle detection:
@@ -359,12 +359,12 @@ During `node.digest(context)`:
 Drift uses a two-tier caching hierarchy to deliver fast incremental compilation:
 
 ### 7.1 Tier 1: In-Memory Session Cache (`RenderCache`)
-Defined in [`src/drift/render/render_cache.py`](../src/drift/render/render_cache.py) and attached per-workspace to `WorkspaceConfig.render_cache`.
+Defined in [`src/drift/render/render_cache.py`](../../src/drift/render/render_cache.py) and attached per-workspace to `WorkspaceConfig.render_cache`.
 * **Scope**: Persists across all package renders during a single Drift command invocation.
 * **Microsecond Stat Invalidation**: Stores nanosecond source file fingerprints (`source_mtime_ns`, `source_size`). If a source file is touched between multi-package render steps, the cache invalidates the entry in sub-microsecond time without requiring graph re-expansion.
 
 ### 7.2 Tier 2: Persistent 3-Bucket Lockfile (`render_lock.json`)
-Defined in [`src/drift/render/render_lock.py`](../src/drift/render/render_lock.py) and persisted to `render/<pkg>/.drift/render_lock.json`.
+Defined in [`src/drift/render/render_lock.py`](../../src/drift/render/render_lock.py) and persisted to `render/<pkg>/.drift/render_lock.json`.
 
 ```json
 {
@@ -399,7 +399,7 @@ This guarantees self-pruning of stale hashes without cross-phase clobbering.
 
 ## 8. Declarative FileActions & Dry-Run Planning
 
-The Render DAG is completely decoupled from direct host output through [`FileAction`](../src/drift/core/file_action.py).
+The Render DAG is completely decoupled from direct host output through [`FileAction`](../../src/drift/core/file_action.py).
 
 ### 8.1 Action Types & Visual Representation
 
@@ -479,15 +479,15 @@ copied_files = [
 
 ## 10. Source Code Index Matrix
 
-| Subsystem / Responsibility | Module Path | Primary Types & Functions |
-|---|---|---|
-| **AST Node Definitions** | [`src/drift/render/render_dag.py`](../src/drift/render/render_dag.py) | `Node`, `PathNode`, `FileNode`, `DirectoryNode`, `StaticFileNode`, `EngineOutputFileNode`, `PackageConfigNode`, `PackageHooksNode`, `PackagePayloadNode` |
-| **AST Expansion & Paths** | [`src/drift/render/render_expansion.py`](../src/drift/render/render_expansion.py) | `ExpansionContext`, `expand_node_dependencies`, `translate_path`, `assert_no_render_collisions` |
-| **Digestion & Pruning** | [`src/drift/render/render_digester.py`](../src/drift/render/render_digester.py) | `topological_sort_nodes`, `digest_render_dag`, `check_and_apply_cache`, `prune_obsolete_payload_files` |
-| **Cryptographic Hashes** | [`src/drift/render/render_hasher.py`](../src/drift/render/render_hasher.py) | `compute_node_own_hash`, `compute_merkle_node_hash`, `hash_file_disk`, `hash_directory_disk` |
-| **Persistent Lockfile** | [`src/drift/render/render_lock.py`](../src/drift/render/render_lock.py) | `RenderLockfile`, `RenderBucket` |
-| **Process Cache** | [`src/drift/render/render_cache.py`](../src/drift/render/render_cache.py) | `RenderCache`, `NodeHashes`, `CachedFileEntry` |
-| **Pipeline Orchestrator** | [`src/drift/render/render_package.py`](../src/drift/render/render_package.py) | `run_primitive_2_render_packages`, `render_package`, `render_package_files`, `build_phase3_payload_dag` |
-| **Phase 2 Hooks Engine** | [`src/drift/render/render_hooks.py`](../src/drift/render/render_hooks.py) | `render_hooks`, `build_phase2_hooks_dag`, `ensure_configured_hook_permissions` |
-| **Phase 1 Config Loader** | [`src/drift/config/package_loader.py`](../src/drift/config/package_loader.py) | `load_package_config_from_source_dir`, `_execute_load_package_config_dag` |
-| **Action Primitives** | [`src/drift/core/file_action.py`](../src/drift/core/file_action.py) | `FileAction`, `FileActionType`, `format_action_line`, `format_action_summary` |
+| Subsystem | Module Path | Primary Types & Functions |
+| :--- | :--- | :--- |
+| **AST Nodes** | [`render_dag.py`](../../src/drift/render/render_dag.py) | `Node`, `PathNode`, `FileNode`, `EngineOutputFileNode`, `Package*Node` |
+| **AST Expansion** | [`render_expansion.py`](../../src/drift/render/render_expansion.py) | `ExpansionContext`, `expand_node_dependencies`, `translate_path` |
+| **Digestion & Pruning** | [`render_digester.py`](../../src/drift/render/render_digester.py) | `topological_sort_nodes`, `digest_render_dag`, `prune_obsolete_payload_files` |
+| **Merkle Hashes** | [`render_hasher.py`](../../src/drift/render/render_hasher.py) | `compute_node_own_hash`, `compute_merkle_node_hash`, `hash_file_disk` |
+| **Persistent Lockfile** | [`render_lock.py`](../../src/drift/render/render_lock.py) | `RenderLockfile`, `RenderBucket` |
+| **Process Cache** | [`render_cache.py`](../../src/drift/render/render_cache.py) | `RenderCache`, `NodeHashes`, `CachedFileEntry` |
+| **Pipeline Orchestrator** | [`render_package.py`](../../src/drift/render/render_package.py) | `run_primitive_2_render_packages`, `render_package`, `build_phase3_payload_dag` |
+| **Phase 2 Hooks** | [`render_hooks.py`](../../src/drift/render/render_hooks.py) | `render_hooks`, `build_phase2_hooks_dag`, `ensure_configured_hook_permissions` |
+| **Phase 1 Config** | [`package_loader.py`](../../src/drift/config/package_loader.py) | `load_package_config_from_source_dir`, `_execute_load_package_config_dag` |
+| **Action Primitives** | [`file_action.py`](../../src/drift/core/file_action.py) | `FileAction`, `FileActionType`, `format_action_line`, `format_action_summary` |

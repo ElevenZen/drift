@@ -11,26 +11,20 @@ Companion References:
 
 ## 1. The Core Paradigm Inversion
 
-Over three decades, the central engineering bottleneck of software distribution completely inverted:
+Over three decades, the central engineering bottleneck of software distribution completely inverted across three distinct eras:
 
-```text
-[ 1990s: Extreme Physical Scarcity ]
-  Bottleneck: 56k Modems, 32 MB RAM, 500 MB Disks
-  Strategy:   Aggressive Global Resource Sharing (Shared DLLs in System32, global Registry)
-  Failure:    "DLL Hell", global registry rot, uninstaller catastrophes
-        |
-        v
-[ 2000s–2010s: Relational & Dependency Graph Era ]
-  Bottleneck: Rapidly exploding software dependencies & multi-user server complexity
-  Strategy:   Centralized Relational Databases, Reference-Counted Graphs (MSI, DEB, RPM)
-  Failure:    Single-process locks (MSI 1618), scriptlet failures, dependency hell
-        |
-        v
-[ 2020s: Cognitive Complexity & Blast-Radius Control ]
-  Bottleneck: Supply-chain attacks, ambient state corruption, deployment non-determinism
-  Strategy:   Hermetic Isolation, Declarative State, Virtualized Filesystems (MSIX, Containers, Nix)
-  Success:    100% clean teardown, reproducible builds, zero host state pollution
-```
+1. **1990s — Extreme Physical Scarcity**:
+   * **Bottleneck**: 56k Modems, 32 MB RAM, 500 MB Disks.
+   * **Strategy**: Aggressive Global Resource Sharing (Shared DLLs in `System32`, global Registry).
+   * **Failure Mode**: "DLL Hell", global registry rot, uninstaller catastrophes.
+2. **2000s–2010s — Relational & Dependency Graph Era**:
+   * **Bottleneck**: Rapidly exploding software dependencies & multi-user server complexity.
+   * **Strategy**: Centralized Relational Databases, Reference-Counted Graphs (MSI, DEB, RPM).
+   * **Failure Mode**: Single-process locks (MSI Error 1618), scriptlet failures, dependency hell.
+3. **2020s — Cognitive Complexity & Blast-Radius Control**:
+   * **Bottleneck**: Supply-chain attacks, ambient state corruption, deployment non-determinism.
+   * **Strategy**: Hermetic Isolation, Declarative State, Virtualized Filesystems (MSIX, Containers, Nix, Drift).
+   * **Outcome**: 100% clean teardown, reproducible builds, zero host state pollution.
 
 ---
 
@@ -158,9 +152,7 @@ Today, hardware capacity is plentiful. The scarce resources are **human engineer
 
 #### 4. Modern Configuration & State Convergence (Drift)
 * **The Mechanism**: Drift models package configuration through a **strictly declarative, functional topology**:
-  ```text
-  src/<pkg>/ (Base Source) ---> render/<pkg>/ (Engine & Context) ---> install/<pkg>/ (Stage) ---> Host (Symlink/Copy)
-  ```
+  `src/<pkg>/` (Base Source) $\rightarrow$ `render/<pkg>/` (Engine & Context) $\rightarrow$ `install/<pkg>/` (Stage) $\rightarrow$ `Host` (Symlink/Copy)
 * **The Invariants**:
   * **1:1 Stage Structural Fidelity**: Eliminates procedural drift between rendered templates and deployed files.
   * **Transactional Adoption**: Reverse-synchronizes modified host state directly back into declarative package sources without arbitrary host mutation.
@@ -178,7 +170,7 @@ Today, hardware capacity is plentiful. The scarce resources are **human engineer
 | **Dependency Model** | Global Shared Libraries (Aggressive reuse) | Graph-resolved shared packages (DAG / SAT) | Private runtime bundling or isolated runtimes |
 | **Scripting Model** | Stack Bytecode (NSIS) / Pascal Script (Inno) | Imperative Bash/C++ Scriptlets (`%post`, DLL) | Declarative XML/JSON manifests, event triggers |
 | **Execution Privilege** | Full Administrator / Root access | Elevated Service (`msiserver`, root `sudo`) | User-space sandboxes, capabilities, seccomp |
-| **Rollback Safety** | None (Manual file deletion) | Partial (MSI `.rbf` rollback scripts / DNF) | Atomic (Symlink swap, CoW snapshot, VFS discard) |
+| **Rollback Safety** | None (Manual file deletion) | Partial (MSI `.rbs`/`.rbf` rollback / DNF) | Atomic (Symlink swap, CoW snapshot, VFS discard) |
 | **Uninstallation Guarantee** | Fragile (Leaves orphaned DLLs & keys) | Moderate (Reference count tracking) | **100% Residue-Free** (Container deletion) |
 | **Failure Mode** | "DLL Hell", registry corruption, hard crash | Package manager lockups, broken scriptlets | Isolated container crash (Zero host pollution) |
 

@@ -18,26 +18,20 @@ Unlike **Windows Installer (MSI)** (which relies on the elevated `msiserver` ser
 
 ## 2. Binary Architecture of Compiled PE Installers
 
-A compiled NSIS or Inno Setup installer consists of three primary layers arranged in sequence:
+A compiled NSIS or Inno Setup installer consists of three primary layers arranged sequentially within the binary:
 
-```text
-+-------------------------------------------------------------+
-| 1. Win32 PE Executable Header & Stub                        |
-|    - Standard MZ/PE header and code sections                |
-|    - Embedded UAC XML Manifest (<requestedExecutionLevel>)  |
-|    - Win32 UI dialog manager (C/C++ in NSIS, Delphi in Inno)|
-|    - Integrated decompression engine (LZMA, Deflate, etc.)  |
-+-------------------------------------------------------------+
-| 2. Execution Metadata & Instruction Block                   |
-|    - Deduplicated string tables (paths, UI text, messages)  |
-|    - File catalog, target layout, and permission tables     |
-|    - Compiled bytecode / instruction opcode stream          |
-+-------------------------------------------------------------+
-| 3. Compressed Data Stream (PE Overlay / Sliced Volume)      |
-|    - Continuous or chunked compressed payload archives      |
-|    - Cryptographic checksums (CRC32, SHA-256)               |
-+-------------------------------------------------------------+
-```
+1. **Layer 1 — Win32 PE Executable Header & Stub**:
+   * Standard MZ/PE header and code sections.
+   * Embedded UAC XML Manifest (`<requestedExecutionLevel>`).
+   * Win32 UI dialog manager (C/C++ in NSIS, Delphi in Inno Setup).
+   * Integrated decompression engine (LZMA, Deflate, Bzip2).
+2. **Layer 2 — Execution Metadata & Instruction Block**:
+   * Deduplicated string tables (paths, UI text, messages).
+   * File catalog, target layout, and permission tables.
+   * Compiled bytecode / instruction opcode stream.
+3. **Layer 3 — Compressed Data Stream (PE Overlay / Sliced Volume)**:
+   * Continuous or chunked compressed payload archives.
+   * Cryptographic checksums (CRC32, SHA-256).
 
 ### The In-Memory Streaming & Overlay Model
 1. **OS PE Loader Execution**:
@@ -91,35 +85,18 @@ During the build phase, developer scripts are parsed, validated, and merged with
 
 ## 4. The Installation (Run-Time) Process
 
-When the user launches `Setup.exe`, the installer executes an in-memory streaming workflow:
+When the user launches `Setup.exe`, the installer executes an 8-stage in-memory streaming workflow:
 
-```text
-[ Target System Installation Workflow ]
-1. OS Launch & UAC Elevation (Manifest check -> Token elevation)
-        |
-        v
-2. Stub Self-Inspection (GetModuleFileName -> Seek past PE header)
-        |
-        v
-3. Unpack Metadata & Plugins (Decompress string tables, GUI scripts, DLL plugins)
-        |
-        v
-4. Wizard UI & Pre-flight Hooks (.onInit / InitializeSetup() -> OS & Prereq checks)
-        |
-        v
-5. Streaming Decompression & Target File Extraction (Ring buffer decompress -> WriteFileW)
-        |
-        v
-6. State Journaling / Uninstaller Writing:
-   - NSIS:       Writes compiled uninstaller stub to "$INSTDIR\uninstall.exe"
-   - Inno Setup: Writes unins000.exe and journals every change into "unins000.dat"
-        |
-        v
-7. Registry & Shortcut Creation (COM IShellLink -> Start Menu / Desktop .lnk)
-        |
-        v
-8. Post-Install Triggers & Cleanup (.onInstSuccess / [Run] -> Flush temp folders)
-```
+1. **OS Launch & UAC Elevation**: Manifest check $\rightarrow$ token elevation.
+2. **Stub Self-Inspection**: `GetModuleFileName` $\rightarrow$ seek past PE header.
+3. **Unpack Metadata & Plugins**: Decompress string tables, GUI scripts, and DLL plugins.
+4. **Wizard UI & Pre-Flight Hooks**: `.onInit` / `InitializeSetup()` $\rightarrow$ OS and prerequisite checks.
+5. **Streaming Decompression & Target File Extraction**: Ring-buffer decompress $\rightarrow$ `WriteFileW`.
+6. **State Journaling / Uninstaller Writing**:
+   * **NSIS**: Writes compiled uninstaller stub to `$INSTDIR\uninstall.exe`.
+   * **Inno Setup**: Writes `unins000.exe` and journals every change into `unins000.dat`.
+7. **Registry & Shortcut Creation**: COM `IShellLink` $\rightarrow$ Start Menu / Desktop `.lnk`.
+8. **Post-Install Triggers & Cleanup**: `.onInstSuccess` / `[Run]` $\rightarrow$ flush temporary folders.
 
 ### Detailed Runtime Mechanisms
 
@@ -167,32 +144,18 @@ When the user launches `Setup.exe`, the installer executes an in-memory streamin
 
 Uninstallation requires resolving a fundamental Windows operating system rule: **an active running executable cannot delete itself from disk** (`ERROR_ACCESS_DENIED`).
 
-```text
-[ Uninstallation Workflow ]
-1. User triggers Uninstall (Control Panel / Settings / uninstall.exe)
-        |
-        v
-2. Self-Cloning Trampoline:
-   - Copies uninstall.exe -> %TEMP%\~uninst.exe (or %TEMP%\is-XXXXX.tmp\unins000.exe)
-   - Launches Temp clone with target directory argument
-   - Original uninstaller process terminates immediately (unlocking $INSTDIR)
-        |
-        v
-3. Teardown Execution:
-   - NSIS:       Executes procedural Section "Uninstall" opcodes
-   - Inno Setup: Replays unins000.dat in REVERSE order (restoring old registry values)
-        |
-        v
-4. File & Registry Removal:
-   - Deletes installed files (DeleteFileW)
-   - Prunes empty parent directories (RemoveDirectoryW)
-   - Deletes Add/Remove Programs registry key
-        |
-        v
-5. Delayed Self-Cleanup:
-   - Temp uninstaller schedules itself for deletion on reboot (MoveFileExW)
-     OR spawns a detached cmd.exe process loop to delete the temp folder
-```
+1. **User Triggers Uninstall**: Invoked via Control Panel, Windows Settings, or `$INSTDIR\uninstall.exe`.
+2. **Self-Cloning Trampoline**:
+   * Copies `uninstall.exe` $\rightarrow$ `%TEMP%\~uninst.exe` (or `%TEMP%\is-XXXXX.tmp\unins000.exe`).
+   * Launches the temporary clone with the target directory argument.
+   * Original uninstaller process terminates immediately (unlocking `$INSTDIR`).
+3. **Teardown Execution**:
+   * **NSIS**: Executes procedural `Section "Uninstall"` opcodes.
+   * **Inno Setup**: Replays `unins000.dat` in **reverse** chronological order (restoring old registry values).
+4. **File & Registry Removal**:
+   * Deletes installed files (`DeleteFileW`), prunes empty parent directories (`RemoveDirectoryW`), and deletes the Add/Remove Programs registry key.
+5. **Delayed Self-Cleanup**:
+   * Temporary uninstaller schedules itself for deletion on reboot (`MoveFileExW`) or spawns a detached `cmd.exe` process loop to delete the temporary folder.
 
 ### Detailed Teardown Mechanisms
 
@@ -543,4 +506,4 @@ The decision to create custom domain-specific languages (DSLs) and embedded byte
 | **State Tracking** | Scripted procedural removal | Automatic Binary Log (`unins000.dat`) | Host MSI Database + Component GUIDs | Native OS Container Teardown |
 | **Disk Spanning** | Plugin-dependent | Native multi-volume slicing | Native multi-CAB spanning | HTTP Byte-Range Streaming |
 | **Process Concurrency** | Independent processes | Independent processes | Single global install mutex (1618) | Concurrent container deployment |
-| **Atomic Rollback** | Manual error handling | Reverses `unins000.dat` records | Two-Phase Transaction (`.rbf` files) | Atomic directory cleanup |
+| **Atomic Rollback** | Manual error handling | Reverses `unins000.dat` records | Two-Phase Transaction (`.rbs`/`.rbf` files) | Atomic directory cleanup |

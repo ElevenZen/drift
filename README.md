@@ -541,7 +541,7 @@ Drift eliminates blind deployments through an end-to-end, multi-stage dry-run en
 *   **Safe Hook Execution (`--with-hooks`)**: In pure dry-run, lifecycle hooks are bypassed by default for zero-mutation safety. Pass `--with-hooks` (`drift plan --with-hooks`) to execute pre-flight requirement probes (`probe`) and dynamic source generators (`pre_source`) in isolated scratch directories for 100% accurate dynamic template planning.
 *   **Automated Tooling (`--json`)**: Serializes typed `WorkspaceDeployPreview` models containing global errors, per-package plans, and drift flags for CI/CD pipelines.
 
-For full mathematical proofs, path mask algebra, and call chain specifications, consult the [Dry-Run Architecture Specification](docs/plan_engine.md).
+For full mathematical proofs, path mask algebra, and call chain specifications, consult the [Dry-Run Architecture Specification](docs/features/plan_engine.md).
 
 ---
 
@@ -844,7 +844,7 @@ Drift executes all lifecycle hooks with **unified working directories** (`cwd = 
 ## 📚 Further Reading & In-Depth Documentation
 
 *   **Interactive Built-in Manual (`drift help`)**: After reading this README, explore Drift's built-in manual pages directly from your terminal by running `drift help` or `drift help <topic>` (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift_workspace.toml`, `workspace`, `health`, `clone`, `faq`).
-*   **Deep Architectural Design (`docs/design.md`)**: If you want to understand the complete architectural design, atomic execution primitives, transaction state machines, safety guarantees, and low-level engine internals, read [docs/design.md](docs/design.md).
+*   **Architecture Model & Feature Specifications ([`docs/architecture.md`](docs/architecture.md))**: To understand the 4-tier Git-backed mental model, the 17 atomic primitives, domain invariants, and subsystem deep-dives (`docs/features/`), read [docs/architecture.md](docs/architecture.md).
 
 ---
 

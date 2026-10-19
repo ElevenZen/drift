@@ -19,14 +19,20 @@ Each packaging ecosystem developed a distinct paradigm to address these needs:
 
 | Dimension | DEB (`dpkg` / `apt`) | RPM (`rpm` / `dnf`) | ALPM (`pacman` / `zst`) | Drift (`src/<pkg>/`) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Primary Hook Paradigm** | **Defensive Imperative Scriptlets** + Sequential Triggers | **Multi-Layered Triggers** (Scriptlets, Package-to-Package, File Triggers, Lua) | **Passive Event Triggers** (Declarative `[Trigger]` / `[Action]` `.hook` files) | **Phased Pipeline Lifecycle** (Templated hooks, Capability Probes, Health Checks) |
-| **Trigger Mechanism** | Maintainer scripts per package + explicit `activate` triggers | Scriptlets + `%triggerin` package hooks + `%transfiletriggerin` path globs | Declarative path / package pattern matching in central `.hook` files | Explicit phased lifecycle events (`pre_source`, `post_render`, `pre/post_install`, etc.) |
-| **Batch Aggregation** | Partial (`dpkg` trigger cycles; multiple sub-phases) | **Native Transaction Batching** (`%transfiletriggerin` with priority `-P`) | **Native Transaction Batching** (`PostTransaction` + `NeedsTargets` stdin) | **Package-Scoped Pipelines** (Isolated inside `.drift/hooks/`) |
-| **Runtime Environment** | External `/bin/sh` or `/bin/dash` subshells | `/bin/sh`, alternative shells, or **embedded in-process Lua** (`-p <lua>`) | External binaries / shell scripts | Executable scripts / binaries or Python-native callables |
-| **Hook Templating** | ❌ None (Static scriptlets) | ❌ None (Static spec macros) | ❌ None (Static text files) |  **Dynamic Multi-Engine Templating** (`.jinja2`, `.envst`, custom engines) |
-| **Context & Fact Binding** | Positional args (`$1` action, `$2` version) | Positional arg (`$1` instance count) | Target paths streamed via `stdin` | Automatically injected `$drift_*` host facts & scoped `[env.override]` overrides |
-| **Execution Safety** | No timeouts; heavy transactional `fsync` barriers | No timeouts; priority ordering (`-P`) | No timeouts; lexicographical hook ordering | Strict per-hook timeouts, fail-fast return codes, `--dry-run` inspection |
-| **Core Sweet Spot** | Unbreakable LTS server upgrades, Debconf automation | Enterprise multi-package orchestration, daemon plugin integration | Ultra-fast desktop & rolling-release batch updates | Machine-adaptive user environments, server configs, self-healing dotfiles |
+| **Primary Paradigm** | Imperative scriptlets + sequential triggers | Multi-layered scriptlets & triggers | Passive `.hook` event triggers | Phased pipeline lifecycle |
+| **Trigger Mechanism** | Maintainer scripts + `activate` triggers | Scriptlets, `%triggerin`, `%transfiletriggerin` | Path / package glob matching | Phased lifecycle events (`[hooks]`) |
+| **Batch Aggregation** | Partial (multi-phase trigger cycles) | Native (`%transfiletriggerin -P`) | Native (`PostTransaction` + `stdin`) | Package-scoped (`.drift/hooks/`) |
+| **Runtime Environment** | `/bin/sh` or `/bin/dash` subshells | Shell or in-process Lua (`-p <lua>`) | External binaries / scripts | Scripts, binaries, Python (`drift_*.py`) |
+| **Hook Templating** | ❌ Static scriptlets | ❌ Static spec macros | ❌ Static text files | ✅ Multi-engine (`.envst`, `.j2`, `.mustache`) |
+| **Context Binding** | Positional args (`$1` action, `$2` ver) | Positional arg (`$1` instance count) | Target paths via `stdin` (`NeedsTargets`) | `$drift_*` facts & 6-tier `[env.*]` |
+| **Execution Safety** | No timeouts; `fsync` barriers | No timeouts; priority order (`-P`) | No timeouts; lexicographical order | Per-hook timeouts, fail-fast, `--dry-run` |
+| **Core Sweet Spot** | LTS server upgrades & `debconf` | Enterprise multi-pkg & plugin orchestration | Fast rolling-release batch updates | Host-adaptive configs & dotfiles |
+
+* **Trigger & Batching Notes**:
+  * **DEB**: Combines per-package maintainer scripts with explicit `interest`/`activate` triggers processed across intermediate `dpkg` cycles.
+  * **RPM**: Supports package-to-package reactive hooks (`%triggerin`), path-glob triggers (`%transfiletriggerin` ordered by `-P` priority), and zero-fork embedded Lua (`-p <lua>`).
+  * **ALPM**: Consolidates matched path/package targets across the entire transaction and streams them once via `stdin` (`NeedsTargets`) at `PostTransaction`.
+  * **Drift**: Compiles hook templates inside `drift_hooks/` into `.drift/hooks/`, injecting host/package facts and enforcing per-hook timeouts across phased lifecycle gates (`probe`, `pre_source`, `post_render`, `pre/post_install`, `health`).
 
 ---
 
@@ -293,14 +299,14 @@ To allow scriptlets to distinguish between initial installations, upgrades, and 
 
 | Phase | Scriptlet | `$1` Value | Lifecycle Meaning & Action Context |
 | :--- | :--- | :--- | :--- |
-| **Initial Install** | `%pre` | `1` | First instance of this package being installed. |
-| | `%post` | `1` | Package files unpacked; initial configuration / service enablement. |
-| **Upgrade (New Pkg)** | `%pre` | `2` (or `>1`) | New version unpacking alongside the old version. |
-| | `%post` | `2` (or `>1`) | New version unpacked; service reload or schema migration. |
-| **Upgrade (Old Pkg)** | `%preun` | `1` | Old version preparing for removal; **do NOT stop service or delete users!** |
-| | `%postun` | `1` | Old version files removed; restart service if needed. |
-| **Complete Erase** | `%preun` | `0` | Package being completely removed; stop and disable services, unregister components. |
-| | `%postun` | `0` | Package files erased; clean up runtime caches, remove user state. |
+| **Initial Install** | `%pre` | `1` | First instance being installed |
+| **Initial Install** | `%post` | `1` | Files unpacked; initial config / service enablement |
+| **Upgrade (New Pkg)** | `%pre` | `2` (or `>1`) | New version unpacking alongside old version |
+| **Upgrade (New Pkg)** | `%post` | `2` (or `>1`) | New version unpacked; reload service / migrate schema |
+| **Upgrade (Old Pkg)** | `%preun` | `1` | Old version removal prep (**do NOT stop service**) |
+| **Upgrade (Old Pkg)** | `%postun` | `1` | Old files removed; `try-restart` service if needed |
+| **Complete Erase** | `%preun` | `0` | Complete removal; stop & disable services |
+| **Complete Erase** | `%postun` | `0` | Files erased; purge runtime caches & user state |
 
 #### 2. The Overlapping Upgrade Execution Timeline
 
@@ -396,10 +402,10 @@ File triggers allow packages to subscribe to filesystem path modifications cause
 
 #### 1. File Triggers vs. Transaction File Triggers
 
-| Directive | Execution Scope | Stdin Input Stream | Primary Use Case |
+| Directive | Execution Scope | `stdin` Stream | Primary Use Case |
 | :--- | :--- | :--- | :--- |
-| **`%filetriggerin`** | Executes **per package** modifying matching files. | List of matched file paths from that package. | Per-package security labeling or immediate file compilation. |
-| **`%transfiletriggerin`** | Executes **once per transaction** after all packages unpack. | Deduplicated list of all matched paths across all packages. | Global cache rebuilds (`fc-cache`, `ldconfig`, `glib-compile-schemas`). |
+| **`%filetriggerin`** | Per package | Matched paths from that package | Security labeling / immediate compile |
+| **`%transfiletriggerin`** | Once per transaction | Deduplicated paths across all packages | Global cache rebuilds (`fc-cache`, `ldconfig`) |
 
 #### 2. Priority Ordering (`-P <priority>`)
 Transaction file triggers accept a priority flag `-P <integer>` (default is `1000000`). Triggers with **higher priority values execute before triggers with lower priority values**.
@@ -519,17 +525,17 @@ ALPM hooks are simple INI-formatted text files placed in hook directories. Each 
 
 #### 1. ALPM Directive Reference
 
-| Section | Directive | Valid Values | Description |
+| Section | Directive | Valid Values | Purpose |
 | :--- | :--- | :--- | :--- |
-| **`[Trigger]`** | `Type` | `Path` \| `Package` | Whether `Target` matches filesystem paths or package names. |
-| | `Operation` | `Install` \| `Upgrade` \| `Remove` | Package operations that activate this trigger (can be repeated). |
-| | `Target` | Relative path glob or package name | Path pattern (e.g. `usr/share/fonts/*`) or package name (can be repeated). |
-| **`[Action]`** | `Description` | String | User-facing progress message printed to console during execution. |
-| | `When` | `PreTransaction` \| `PostTransaction` | Execution timing boundary relative to archive file extraction. |
-| | `Exec` | Absolute binary path + arguments | Command to run. Must be an executable binary (not a shell built-in). |
-| | `NeedsTargets` | *(Flag)* | Pipes all matching trigger targets line-by-line to `Exec` via `stdin`. |
-| | `AbortOnFail` | *(Flag)* | If set on `PreTransaction`, non-zero exit code aborts the transaction. |
-| | `Depends` | Package name | Hook will only run if specified dependency is installed and valid. |
+| **`[Trigger]`** | `Type` | `Path` \| `Package` | Match filesystem paths or package names |
+| **`[Trigger]`** | `Operation` | `Install` \| `Upgrade` \| `Remove` | Package operations activating trigger (repeatable) |
+| **`[Trigger]`** | `Target` | Path glob or package name | Pattern (e.g. `usr/share/fonts/*`) or pkg name (repeatable) |
+| **`[Action]`** | `Description` | String | Console progress message during execution |
+| **`[Action]`** | `When` | `PreTransaction` \| `PostTransaction` | Timing boundary relative to archive extraction |
+| **`[Action]`** | `Exec` | Absolute binary path + args | Executable binary command (no shell built-ins) |
+| **`[Action]`** | `NeedsTargets` | *(Flag)* | Pipes matched targets line-by-line to `stdin` |
+| **`[Action]`** | `AbortOnFail` | *(Flag)* | Aborts transaction if `PreTransaction` hook fails |
+| **`[Action]`** | `Depends` | Package name | Requires dependency package to be installed |
 
 ---
 
@@ -697,7 +703,7 @@ Hooks across both directories are executed in **alphanumeric sorting order** bas
 
 While distribution package managers operate on binary archives and system root directories, **Drift** operates on a **declarative, host-adaptive configuration lifecycle**.
 
-Hooks in Drift reside strictly within [`drift_hooks/`](docs/ai_reference.md) and participate across the entire compilation, staging, and deployment pipeline.
+Hooks in Drift reside strictly within [`drift_hooks/`](../features/configuration_and_hooks.md) and participate across the entire compilation, staging, and deployment pipeline.
 
 ### A. Taxonomy & Hook Classification
 
@@ -717,43 +723,44 @@ Hooks in Drift reside strictly within [`drift_hooks/`](docs/ai_reference.md) and
 ### B. Configuration & Dynamic Hook Example
 
 ```toml
-# drift_package.toml
+# src/my_service/drift_package.toml
 [package]
-name = "my_service"
 install_method = "copy"
 
-[requirements]
+[package.requirements]
 os = ["linux", "darwin"]
-bins = ["curl", "systemctl"]
+binaries = ["curl", "systemctl"]
 
 [hooks]
 probe        = "drift_hooks/check_gpu.sh"
 pre_source   = "drift_hooks/build_binary.sh"
 post_render  = "drift_hooks/validate_syntax.sh"
-post_install = "drift_hooks/start_service.sh.jinja2"
+# Configure the post-render target path; Drift automatically compiles start_service.envst.sh -> .drift/hooks/start_service.sh
+post_install = "drift_hooks/start_service.sh"
 health       = "drift_hooks/health_check.sh"
 timeout      = 30
 ```
 
 ```bash
-# src/my_service/drift_hooks/start_service.sh.jinja2
+# src/my_service/drift_hooks/start_service.envst.sh
 #!/usr/bin/env bash
-echo "Deploying {{ drift_package_name }} to target {{ drift_package_target_dir }}"
-systemctl --user restart {{ service_name | default("my_service") }}
+echo "Deploying ${drift_package_name} to target ${drift_package_target_dir}"
+systemctl --user restart "${SERVICE_NAME}"
 ```
 
 ### C. Context & Fact Injection
-Every Drift hook executes with typed domain facts and scoped environment variables:
+Every Drift hook executes with typed domain facts and 6-tier scoped environment variables:
 * `$drift_package_name`: The active package name.
-* `$drift_package_target_dir`: The destination root path.
+* `$drift_package_source_dir` / `$drift_package_src_dir`, `$drift_package_render_dir`, `$drift_package_install_dir`: Stage directory paths for the package.
+* `$drift_package_target_dir`: The destination host root path.
 * `$drift_package_install_method`: `symlink` or `copy`.
-* `$drift_os`, `$drift_arch`, `$drift_hostname`, `$drift_username`: Standardized host facts.
-* `[env.override]` and `[env.fallback]`: Scoped package environment dictionaries.
+* `$drift_os`, `$drift_arch`, `$drift_distro`, `$drift_hostname`, `$drift_user`, `$drift_ip_addresses`: Standardized host facts.
+* `[env.override]`, `[env.secrets]`, `[env.default]`, and `[env.fallback]`: Scoped package environment tables.
 
 ### D. Advantages
-1. **Dynamic Multi-Engine Hook Templating**: Hook scripts (`drift_hooks/*.jinja2`) are first-class compilation targets, rendered dynamically with host facts (`$drift_os`, `$drift_arch`) and local secrets.
+1. **Dynamic Multi-Engine Hook Templating**: Hook scripts (`drift_hooks/*.[suffix].sh`) are first-class compilation targets, rendered dynamically into `.drift/hooks/` with host facts (`$drift_os`, `$drift_arch`, `$drift_user`) and local secrets.
 2. **Rich Lifecycle Phasing (`pre_source`, `post_render`, `probe`, `health`)**: Supports compilation before source read, syntax validation before deployment, and continuous runtime health diagnostics.
-3. **Structured Safety & Isolation**: Strict `drift_hooks/` containment, per-hook timeouts, fail-fast return codes, and non-destructive `--dry-run` inspection.
+3. **Structured Safety & Isolation**: Strict `drift_hooks/` containment, per-hook timeouts, configurable `failure_is_fatal` guards, and non-destructive `--dry-run` inspection.
 
 ### E. Limitations & Disadvantages
 1. **No Cross-Package Reactive Batching**: Operates on package-isolated pipelines rather than global event queues; updating shared caches across multiple packages requires explicit orchestrator steps or symlinks.
@@ -777,7 +784,7 @@ Every Drift hook executes with typed domain facts and scoped environment variabl
 
 ### Scenario 3: Machine-Adaptive Configuration & Secret Injection
 * **DEB / RPM / ALPM**: Static package content built once by the distribution packager. Cannot adapt templates or inject local secrets at install time without secondary tools (Ansible, Puppet).
-* **Drift**: Built specifically for host adaptation. Compiles multi-engine templates (`.jinja2`, `.envst`, `.mustache`) on the local host with local secrets, host facts, and user overrides before staging to disk.
+* **Drift**: Built specifically for host adaptation. Compiles multi-engine templates (`.envst`, `.mustache`, `.j2`) on the local host with local secrets, host facts, and user overrides before staging to disk.
 
 ---
 

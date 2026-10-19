@@ -19,7 +19,7 @@ Package management on Microsoft Windows evolved under fundamentally different ma
 
 1. **Windows MSI (Relational Database in OLE Container)**:
    * `app.msi` (OLE DB container) $\rightarrow$ `msiserver` / `msiexec` engine invocation.
-   * **Immediate Phase**: Costing calculation & `.rbs` (execution) / `.rbf` (rollback) plan generation.
+   * **Immediate Phase**: Costing calculation, execution script generation, and `.rbs` (rollback script) / `.rbf` (rollback backup file) preparation.
    * **Deferred Phase**: Elevated `SYSTEM` execution, file extraction, and component registry reference counting.
    * **Resilience**: Automatic rollback on failure & self-healing via advertised shortcuts.
 
@@ -45,17 +45,17 @@ Introduced in Windows 2000 (originally with Office 2000), **Windows Installer (`
 
 An `.msi` file is not a simple archive or a shell script; it is an **OLE Compound Document (COM Structured Storage)** containing a fully normalized **relational database** with approximately 80 standardized tables, accompanied by compressed binary streams:
 
-| Database Table | Architectural Responsibility |
-| :--- | :--- |
-| **`Feature`** | High-level, user-selectable components visible in installation UI trees (e.g. "Core Application", "CLI Tools", "Documentation"). |
-| **`Component`** | The atomic unit of installation, bound to a globally unique GUID (`ComponentId`), attributes, and directory targets. |
-| **`File`** | Complete catalog of files, versions, language IDs, file sizes, and cabinet sequence positions. |
-| **`Registry`** | Registry hives (`HKLM`, `HKCU`), keys, value names, and data types to be created or modified. |
-| **`Directory`** | Abstract directory tree mapping layout identifiers to standard target paths (e.g. `ProgramFilesFolder`, `CommonFilesFolder`, `SystemFolder`). |
-| **`InstallExecuteSequence`** | Ordered sequence of standard and custom actions executed during elevated deferred installation. |
-| **`CustomAction`** | Dynamic extensions (C/C++ DLLs, VBScript, JScript, or executables) for actions beyond standard table capabilities. |
-| **`Property`** | Global key-value state variables (e.g. `INSTALLDIR`, `ALLUSERS`, `ProductVersion`, `UpgradeCode`). |
-| **`Media` / Embedded Streams** | References to internal or external **Cabinet (`.cab`)** streams containing compressed file payloads. |
+| Database Table | Primary Scope | Core Contents |
+| :--- | :--- | :--- |
+| **`Feature`** | UI feature tree | User-selectable feature nodes (e.g. Core App, CLI, Docs) |
+| **`Component`** | Atomic install unit | 128-bit `ComponentId` GUID, attributes, and target directory |
+| **`File`** | File catalog | Versions, language IDs, sizes, and cabinet sequence numbers |
+| **`Registry`** | Registry mutations | Hives (`HKLM`, `HKCU`), keys, value names, and data types |
+| **`Directory`** | Layout mapping | Abstract identifiers to target paths (`ProgramFilesFolder`) |
+| **`InstallExecuteSequence`** | Execution order | Sequenced standard and custom actions for deferred execution |
+| **`CustomAction`** | Dynamic extensions | C/C++ DLLs, VBScript, JScript, or external executables |
+| **`Property`** | Global state | Key-value variables (`INSTALLDIR`, `ALLUSERS`, `UpgradeCode`) |
+| **`Media`** | Payload streams | References to internal or external Cabinet (`.cab`) archives |
 
 ---
 
@@ -74,29 +74,24 @@ The core foundational primitive of Windows Installer is the **Component**:
 
 ### C. Two-Phase Execution Model & Transactional Rollback
 
-To guarantee system stability, `msiexec.exe` divides installation into two distinct phases:
+To guarantee system stability, `msiexec.exe` divides installation into two distinct phases upon user/administrator invocation (`msiexec /i app.msi`):
 
-```text
-User / Administrator Invocation (msiexec /i app.msi)
-   │
-   ├── Phase 1: Immediate Execution (User Context, Non-Elevated)
-   │     ├─ 1. Evaluate Launch Conditions & System Requirements
-   │     ├─ 2. Run Costing (Calculate exact cluster disk space requirements)
-   │     ├─ 3. Collect UI / Command-Line Properties
-   │     └─ 4. Compile Action Sequence -> Generate Execution Script (.rbs) & Rollback Script (.rbf)
-   │
-   └── Phase 2: Deferred Execution (Elevated SYSTEM Context via msiserver)
-         ├─ 1. Acquire Global System Install Mutex
-         ├─ 2. Backup existing files/registry keys to Rollback Storage
-         ├─ 3. Execute standard actions (InstallFiles, WriteRegistryValues, StartServices)
-         ├─ 4. Execute deferred Custom Actions
-         │
-         ├── [SUCCESS] ──> Commit Phase: Erase rollback backup files (.rbf)
-         └── [FAILURE] ──> Rollback Phase: Replay .rbf script, restoring machine to pre-install state
-```
+* **Phase 1: Immediate Execution (User Context, Non-Elevated)**:
+  1. Evaluate Launch Conditions & System Requirements.
+  2. Run Costing (calculate exact cluster disk space requirements).
+  3. Collect UI / Command-Line Properties.
+  4. Compile Action Sequence $\rightarrow$ Generate the installation execution script and the **Rollback Script (`.rbs`)**.
+* **Phase 2: Deferred Execution (Elevated `SYSTEM` Context via `msiserver`)**:
+  1. Acquire Global System Install Mutex.
+  2. Back up existing files to **Rollback Backup Files (`.rbf`)** inside `C:\Config.Msi\` and record reversible registry states in `.rbs`.
+  3. Execute standard actions (`InstallFiles`, `WriteRegistryValues`, `StartServices`).
+  4. Execute deferred Custom Actions.
+  5. **Outcome Resolution**:
+     * **On Success (Commit Phase)**: Erase rollback script (`.rbs`) and backup files (`.rbf`) in `C:\Config.Msi\`.
+     * **On Failure (Rollback Phase)**: Replay the `.rbs` rollback script and restore `.rbf` backup files, returning the machine to its pre-install state.
 
 #### Why MSI Rollback is Powerful:
-If disk space runs out halfway through copying files, or if a deferred Custom Action returns an error code, `msiserver` halts execution, replays the rollback script (`.rbf`), restores modified registry values, puts old file versions back into place, and cleans up temporary directories. The machine is left in its exact pre-installation state with zero corrupted files.
+If disk space runs out halfway through copying files, or if a deferred Custom Action returns an error code, `msiserver` halts execution, replays the rollback script (`.rbs`), restores modified registry values, puts old file versions (`.rbf`) back into place, and cleans up temporary directories. The machine is left in its exact pre-installation state with zero corrupted files.
 
 ---
 
@@ -126,7 +121,7 @@ Despite its pioneering relational database design and transactional rollback gua
 * **The Impact**: Only **one** MSI transaction can execute on the entire operating system at any given moment. If a complex software suite consists of 50 modular components, MSI must unpack them sequentially. Multithreaded I/O and multi-core CPU parallelism are completely blocked, leaving modern NVMe drives and multi-core processors drastically underutilized.
 
 #### 2. The "Costing" & Sequence Generation Avalanche at Scale
-* **The Constraint**: Before writing a single byte, MSI performs **Costing**—querying dozens of relational tables, evaluating conditional expressions, resolving directory trees, calculating cluster disk space, and generating the physical execution script (`.rbs`) and rollback script (`.rbf`).
+* **The Constraint**: Before writing a single byte, MSI performs **Costing**—querying dozens of relational tables, evaluating conditional expressions, resolving directory trees, calculating cluster disk space, and generating the physical execution script, rollback script (`.rbs`), and backup plans (`.rbf`).
 * **The Impact**: For large modular suites with tens of thousands of components, evaluating relational schemas across dozens of chained MSIs can take 30–60 minutes *just to compute the execution plan* before file extraction even begins.
 
 #### 3. Unbounded Cache Bloat in `C:\Windows\Installer`
@@ -184,12 +179,18 @@ Starting with Visual Studio 2017, Microsoft completely abandoned MSI for the IDE
 
 Across the broader Windows software landscape, developers and system architects have adopted distinct patterns to overcome MSI's limitations:
 
-| Strategy / Tool | How It Solves MSI's Bottlenecks | Primary Use Cases |
-| :--- | :--- | :--- |
-| **MSIX / AppX Containerization** | Replaces elevated host mutation with **VFS filesystem redirection** and **Virtual Registry Copy-on-Write (CoW)**. 100% clean deletion without DLL rot. | Modern desktop apps, Microsoft Store, Enterprise Intune apps. |
-| **User-Space Package Managers (Scoop, Winget)** | Extracts portable `.zip` / `.7z` archives into user space (`%LOCALAPPDATA%` or `~/scoop/apps`) and creates execution symlinks/shims (`.shim`, `.exe`). **Zero administrative elevation, zero registry writes, zero global mutex locks**. | Developer CLI tools, runtimes, utilities. |
-| **Scriptable Lightweight Installers (Inno Setup, NSIS)** | Single compiled binary executing high-speed, direct file extraction without costing overhead or global `msiserver` locking. See [`docs/knowledge/windows_scripted_installers.md`](windows_scripted_installers.md) for a full architectural deep dive. | Desktop games, utilities, standalone ISV tools. |
-| **Private Application Hives & Portable Apps** | Applications bundle their dependencies locally (Win32 Side-by-Side Manifests, local `.ini` / `.toml` / `.json` configs, and `RegLoadAppKey` hives) rather than registering global COM components. | IDEs, text editors, portable developer suites. |
+| Strategy / Tool | Core Mechanism | Elevation & Locks | Primary Use Cases |
+| :--- | :--- | :--- | :--- |
+| **MSIX / AppX** | VFS redirection + Virtual Registry CoW | Sandboxed; clean removal | Store & Intune desktop apps |
+| **Scoop / Winget** | User-space extraction + CLI shims | Zero admin or mutex locks | Developer CLI tools & runtimes |
+| **Inno Setup / NSIS** | Single-binary direct file extraction | No `msiserver` costing/locks | Games, utilities, standalone ISVs |
+| **Private App Hives** | Local configs + `RegLoadAppKey()` hives | Instance-isolated; zero `HKLM` | IDEs, editors, portable suites |
+
+* **Architectural Notes**:
+  * **MSIX / AppX Containerization**: Replaces elevated host mutation with VFS filesystem redirection and Copy-on-Write (`Registry.dat`) virtualization, guaranteeing 100% clean deletion without DLL rot.
+  * **User-Space Package Managers (`Scoop`, `Winget`)**: Extracts portable `.zip` / `.7z` archives into user space (`%LOCALAPPDATA%` or `~/scoop/apps`) and creates execution symlinks/shims (`.shim`, `.exe`) with zero administrative elevation, zero registry writes, and zero global mutex locks.
+  * **Scriptable Lightweight Installers (`Inno Setup`, `NSIS`)**: Compiles into a standalone binary executing direct file extraction without relational costing overhead or global `msiserver` locking (see [`docs/knowledge/windows_scripted_installers.md`](windows_scripted_installers.md)).
+  * **Private Application Hives & Portable Apps**: Bundles dependencies locally using Win32 Side-by-Side manifests, local `.ini`/`.toml`/`.json` configs, and in-memory `RegLoadAppKey` hives rather than registering global COM components.
 
 ---
 
@@ -312,16 +313,21 @@ To allow legacy Win32 apps to run cleanly inside MSIX without code modifications
 
 | Dimension | MSI (`.msi`) | MSIX (`.msix`) | DEB (`dpkg` / `apt`) | RPM (`rpm` / `dnf`) | ALPM (`pacman` / `zst`) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Package Data Model** | Relational Database (OLE COM Storage) | ZIP64 Container + Declarative XML Manifest | UNIX `ar` archive + tarballs (`data.tar`, `control.tar`) | Binary Cpio archive + RPM Header database | Zstandard-compressed tarball (`.pkg.tar.zst`) |
-| **State Tracking Scope** | Per-package database cached on host (`C:\Windows\Installer`) | Per-package manifest + OS AppX Database | Global host database (`/var/lib/dpkg/status`) | Global host database (`/var/lib/rpm/`) | Global host database (`/var/lib/pacman/local/`) |
-| **Scripting / Lifecycle Hooks** | `CustomAction` (DLL, VBScript, EXE) | ❌ **None** (Strictly declarative manifest extensions) | Imperative Maintainer Scripts (`preinst`, `postinst`, `prerm`, `postrm`) | Multi-tier Scriptlets (`%pre`, `%post`), Triggers (`%triggerin`), Lua | Declarative subsystem `.hook` files + legacy `.INSTALL` |
-| **Execution Safety & Rollback** | **Native Two-Phase Transaction** with `.rbf` rollback scripts | **Atomic Container Lifecycle** (Delete on failure) | Journaled state machine (`dpkg --configure -a`) | RPM transaction rollback / cleanup | No automatic rollback on post-transaction failure |
-| **Isolation & Sandboxing** | ❌ None (Direct host filesystem & registry mutation) | **Lightweight Virtualization** (VFS + Virtual Registry CoW) | ❌ None (Direct root `/` file extraction) | ❌ None (Direct root `/` file extraction) | ❌ None (Direct root `/` file extraction) |
-| **Multi-Package Concurrency** | ❌ Single global install lock (Error 1618) | Parallel container installations supported | ❌ Single dpkg lock (`/var/lib/dpkg/lock`) | ❌ Single RPM database lock | ❌ Single pacman database lock (`db.lck`) |
-| **Delta Patching Strategy** | Binary patch packages (`.msp`) with database schema transforms | **Block Map Streaming** (`AppxBlockMap.xml` 64KB HTTP Range requests) | Transport-level `debdelta` binary diffs | **DeltaRPM (`drpm`)** binary payload reconstruction | Package compression dictionary optimizations |
-| **Shared Dependency Model** | Component GUID reference counting | Private bundling or shared Framework Packages | Shared dynamic libraries via package dependencies | Shared dynamic libraries via package dependencies | Shared dynamic libraries via package dependencies |
-| **Headless / Enterprise Automation** | SQL Transforms (`.mst`) + silent flags (`/qn`) | Enterprise Group Policy / Intune XML deployment | `debconf-set-selections` + `DEBIAN_FRONTEND=noninteractive` | Kickstart + DNF Python transaction plugins | Scripted `pacman --noconfirm` automation |
-| **Clean Uninstallation** | Partial (Depends on CustomAction quality and GUID tracking) | **100% Guaranteed Residue-Free** (Folder delete) | Leaves unpurged config files unless `purge` is invoked | Leaves modified `%config` files renamed as `.rpmsave` | Leaves modified configuration files as `.pacsave` |
+| **Package Format** | OLE COM Database | ZIP64 + XML Manifest | `ar` + `data/control.tar` | Cpio + RPM Header | `.pkg.tar.zst` tarball |
+| **State Tracking** | `C:\Windows\Installer` | OS AppX Database | `/var/lib/dpkg/status` | `/var/lib/rpm/` | `/var/lib/pacman/local/` |
+| **Lifecycle Hooks** | `CustomAction` | ❌ Declarative XML | `pre/postinst`, `pre/postrm` | `%pre/%post`, `%triggerin`, Lua | `.hook` files, `.INSTALL` |
+| **Rollback Safety** | 2-phase (`.rbs` / `.rbf`) | Atomic container delete | Journaled (`--configure -a`) | RPM transaction cleanup | ❌ None post-commit |
+| **Isolation** | ❌ Direct host mutation | VFS + Registry CoW | ❌ Direct `/` extraction | ❌ Direct `/` extraction | ❌ Direct `/` extraction |
+| **Concurrency** | ❌ Global mutex (`1618`) | ✅ Parallel containers | ❌ Single `dpkg` lock | ❌ Single RPM DB lock | ❌ Single `db.lck` |
+| **Delta Patching** | `.msp` + SQL transforms | `AppxBlockMap.xml` (64KB) | `debdelta` diffs | DeltaRPM (`drpm`) | Dict compression |
+| **Dependencies** | Component GUID refcount | Private or Framework pkgs | Shared dynamic libraries | Shared dynamic libraries | Shared dynamic libraries |
+| **Headless Mode** | `.mst` + `/qn` flags | Group Policy / Intune | `debconf` + `noninteractive` | Kickstart + DNF plugins | `pacman --noconfirm` |
+| **Uninstallation** | Partial (GUID/CA quality) | ✅ 100% residue-free | Keeps config (`purge` erases) | Keeps `.rpmsave` | Keeps `.pacsave` |
+
+* **Architectural Notes**:
+  * **Rollback Safety**: MSI executes a two-phase transaction backed by `.rbs` rollback scripts and `.rbf` file backups in `C:\Config.Msi\`. MSIX deletes the isolated container folder on failure. DEB journals package states for recovery via `dpkg --configure -a`.
+  * **Delta Patching**: MSIX uses `AppxBlockMap.xml` to fetch modified 64 KB chunks over HTTP Range requests, whereas MSI applies `.msp` binary patch packages with relational schema transforms.
+  * **Uninstallation**: MSIX guarantees 100% residue-free removal by deleting the virtualized container folder. DEB retains modified conffiles unless `apt purge` (`dpkg --purge`) is invoked, while RPM and ALPM preserve modified configs as `.rpmsave` and `.pacsave`.
 
 ---
 

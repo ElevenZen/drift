@@ -8,31 +8,33 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 
 ### All Available Commands:
 
-| Command | Command Signature | Purpose |
-| :--- | :--- | :--- |
-| **`init`** | `drift init [-f] [--no-git-root] [--json]` | Initialize a new Drift workspace repository. |
-| **`new`** | `drift new <pkg> [-t <dir>] [-m <symlink\|copy>] [-f] [--json]` | Scaffold a new package directory and `drift_package.toml`. |
-| **`add`** | `drift add <pkg> <paths...> [-n] [--no-hooks] [--json]` | Import system files into a package with dot-prefix translation. |
-| **`status`** | `drift status [packages...] [--json]` | Audit template evolution, active system drift, and pending deltas. |
-| **`diff`** | `drift diff [packages...] [-t\|-s] [--stat] [-y] [--json]` | Visualize diffs across template, sandbox, and active system layers. |
-| **`deploy`** | `drift deploy [packages...] [-f] [-r\|--reinstall] [-c] [-n] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
-| **`plan`** | `drift plan [packages...] [-a] [-f] [-r] [-c] [--with-hooks] [--no-deps] [--json]` | Full-cycle deployment planning across all pipeline phases without modifying system state. |
-| **`rollback`** | `drift rollback [packages...] [-f] [--no-hooks] [--json]` | Rollback failed deployments and restore systems to last clean state. |
-| **`adopt`** | `drift adopt [packages...] [-i] [--accept-conflicts] [-f] [-n] [--no-render] [--no-reverse-sync\|--no-sync] [--json]` | Incorporate active runtime system drifts back into source templates. |
-| **`uninstall`** | `drift uninstall <packages...> [-f] [--detach] [-n] [--no-deps] [--no-hooks] [--json]` | Uninstall packages or detach management while preserving physical files. |
-| **`gc`** | `drift gc [-n] [--no-hooks] [--json]` | Identify and purge orphan packages, zombie database folders, and stale WAL folders. |
-| **`repair`** | `drift repair [-n] [--json]` | Self-heal damaged or missing workspace components and databases. |
-| **`clone`** | `drift clone <git_url> [destination] [-b <branch>] [--depth <N>] [--no-repair] [--json]` | Clone a Git repository and auto-bootstrap/repair the workspace. |
-| **`health`** | `drift health [packages...] [--from <install\|source>] [-t <seconds>] [-v] [--json]` | Execute runtime health check probes on installed packages. |
-| **`complete`** | `drift complete [<shell>] [--install] [--json]` | Generate or install native interactive tab-completion scripts (bash, zsh, fish). |
-| **`help`** | `drift help [topic]` | Display interactive mini-manual documentation pages. |
-| **`render`** | `drift render [packages...] [-c] [-n] [--with-hooks\|--no-hooks] [--json]` | *(Low-Level)* Incremental Merkle DAG compilation of templates into `render/` sandbox. |
-| **`render-commit`** | `drift render-commit [packages...] -m "msg" [--json]` | *(Low-Level)* Stage and commit compiled sandbox changes. |
-| **`reverse-sync`** | `drift reverse-sync [packages...] [--json]` | *(Low-Level)* Pull active system configuration changes into `install/`. |
-| **`stage`** | `drift stage [packages...] [-f] [--no-deps] [--json]` | *(Low-Level)* Stage compiled sandbox templates into `install/` state DB. |
-| **`apply`** | `drift apply [packages...] [-f] [-n] [-r\|--reinstall] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]` | *(Low-Level)* Apply state database configurations to host filesystem or preview deployment plan. |
-| **`install-commit`** | `drift install-commit [packages...] -m "msg" [--json]` | *(Low-Level)* Stage and commit deployed configurations in `install/`. |
-| **`hook`** | `drift hook <pkg> <hook_name> [--from <install\|render\|source>] [--json]` | *(Low-Level)* Directly trigger a specific package lifecycle hook script. |
+| Command | Positional Arguments | Key Flags | Purpose |
+| :--- | :--- | :--- | :--- |
+| **`init`** | — | `-f`, `--no-git-root` | Initialize a new Drift workspace repository |
+| **`new`** | `<pkg>` | `-t`, `-m`, `-f` | Scaffold a new package and `drift_package.toml` |
+| **`add`** | `<pkg> <paths...>` | `-n`, `--no-hooks` | Import host files with `dot-` prefix translation |
+| **`status`** | `[packages...]` | `--json` | Audit template evolution and active host drift |
+| **`diff`** | `[packages...]` | `-t`, `-s`, `--stat`, `-y` | Visualize diffs across `src/`, `render/`, `install/` |
+| **`deploy`** | `[packages...]` | `-f`, `-r`, `-c`, `-n`, `--rollback` | Sentinel-guarded render, stage, apply, and GC |
+| **`plan`** | `[packages...]` | `-a`, `-f`, `-r`, `-c`, `--with-hooks` | Full-cycle dry-run deployment preview in sandbox |
+| **`rollback`** | `[packages...]` | `-f`, `--no-hooks` | Rollback failed deployments to last clean state |
+| **`adopt`** | `[packages...]` | `-i`, `--accept-conflicts`, `-f`, `-n` | Patch live host drifts back into `src/` templates |
+| **`uninstall`** | `<packages...>` | `-f`, `--detach`, `-n`, `--no-deps` | Uninstall packages or detach symlinks as copies |
+| **`gc`** | — | `-n`, `--no-hooks` | Purge orphan packages, zombie dirs, and stale WALs |
+| **`repair`** | — | `-n`, `--json` | Self-heal missing workspace folders and Git DBs |
+| **`clone`** | `<git_url> [dest]` | `-b`, `--depth`, `--no-repair` | Clone a Git repo and auto-repair the workspace |
+| **`health`** | `[packages...]` | `--from`, `-t`, `-v` | Execute runtime health check probes on packages |
+| **`complete`** | `[<shell>]` | `--install`, `--json` | Generate or install shell tab-completion scripts |
+| **`help`** | `[topic]` | — | Display interactive mini-manual documentation |
+| **`render`** | `[packages...]` | `-c`, `-n`, `--with-hooks` | *(Low-Level)* Compile templates into `render/` |
+| **`render-commit`** | `[packages...]` | `-m "msg"` | *(Low-Level)* Commit compiled `render/` changes |
+| **`reverse-sync`** | `[packages...]` | `--json` | *(Low-Level)* Sync live host changes into `install/` |
+| **`stage`** | `[packages...]` | `-f`, `--no-deps` | *(Low-Level)* Stage `render/` into `install/` DB |
+| **`apply`** | `[packages...]` | `-f`, `-n`, `-r`, `--rollback` | *(Low-Level)* Apply `install/` to host filesystem |
+| **`install-commit`** | `[packages...]` | `-m "msg"` | *(Low-Level)* Commit deployed state in `install/` |
+| **`hook`** | `<pkg> <hook_name>` | `--from <install\|render\|source>` | *(Low-Level)* Trigger a specific lifecycle hook |
+
+* **Note**: All commands accept movable global flags (`--json`, `-v/--verbose`, `--raw-errors`, `--trace`) before or after the subcommand. See Section 3 below for complete per-command flag signatures.
 
 ---
 
@@ -172,7 +174,7 @@ Simulates the entire multi-stage deployment pipeline end-to-end in an ephemeral 
 
 *   **Command Signature**: `drift plan [packages...] [-a / --all] [-f / --force] [-r / --reinstall] [-c / --clean] [--with-hooks] [--no-hooks] [--no-deps] [--json]`
 *   **Transparent Deploy Alias**: Running `drift deploy -n` or `drift deploy --dry-run` transparently routes to `drift plan`.
-*   **Architectural Specification**: For mathematical modeling, path masking algebra, and fault isolation proofs, consult [`docs/plan_engine.md`](plan_engine.md).
+*   **Architectural Specification**: For mathematical modeling, path masking algebra, and fault isolation proofs, consult [`docs/features/plan_engine.md`](features/plan_engine.md).
 
 #### Four-Phase Simulation Pipeline
 1.  **Phase 0: Non-Destructive Host Drift Audit**:
@@ -399,31 +401,36 @@ Drift enforces a clear architectural distinction between **runtime safety safegu
 
 ### Summary Matrix of `--force` Behaviors
 
-| Command | Primitive | What `--force` Overrides | Invariants Respected (Not Bypassed) |
+| Command | Primitive | Overrides with `--force` | Invariants Respected |
 | :--- | :--- | :--- | :--- |
-| **`drift new <pkg> --force`** | Primitive 10 | Overwrites existing `drift_package.toml` in `src/<pkg>/` | Valid package naming rules |
-| **`drift deploy --force`** | Primitive 4, 5, Pipeline | • Bypasses Stage 1 Sentinel Drift audit (proceeds despite uncommitted host changes in `install/`)<br>• Bypasses `"staging"` / `"installing"` mid-failure state locks in `state.toml`<br>• Bypasses uncommitted modifications check in `install/`<br>• Bypasses missing required package dependencies | `enable_install = false` is strictly respected |
-| **`drift stage --force`** | Primitive 4 | • Bypasses `"staging"` / `"installing"` mid-failure state locks in `state.toml`<br>• Ignores uncommitted modifications in `install/`<br>• Bypasses missing required package dependencies | `enable_install = false` is strictly respected |
-| **`drift apply --force`** | Primitive 5 | • Bypasses `"staging"` / `"installing"` mid-failure state locks in `state.toml`<br>• Bypasses missing required package dependencies | `enable_install = false` is strictly respected |
-| **`drift rollback --force`** | Primitive 8 | Bypasses rollback eligibility check; forces hard reset to clean Git HEAD even for cleanly committed `"installed"` packages | Valid package tracking in `install/` |
-| **`drift adopt --force`** | Primitive Adopt | Bypasses Git cleanliness safeguard on target source files in `src/<pkg>/` (adopts drifts despite dirty source files) | Valid patch application |
-| **`drift uninstall --force`** | Primitive 7 | • Bypasses active package safeguard (uninstalls packages still enabled in `drift_workspace.toml`)<br>• Bypasses remaining package broken dependency safeguard | Only installed packages are uninstalled |
-| **`drift init --force`** | Workspace Init | Overwrites existing workspace templates and database configurations | Root path safety checks |
+| **`drift new <pkg>`** | Primitive 10 | Existing `drift_package.toml` in `src/<pkg>/` | Package naming rules |
+| **`drift deploy`** | P4, P5, Pipeline | Sentinel drift, midway locks, dirty `install/`, missing deps | `enable_install = false` |
+| **`drift stage`** | Primitive 4 | Midway locks, dirty `install/`, missing deps | `enable_install = false` |
+| **`drift apply`** | Primitive 5 | Midway locks, missing required deps | `enable_install = false` |
+| **`drift rollback`** | Primitive 8 | Eligibility check (resets clean `"installed"` to `HEAD`) | Tracked in `install/` |
+| **`drift adopt`** | Adopt Pipeline | Dirty Git working tree in `src/<pkg>/` | Valid patch application |
+| **`drift uninstall`** | Primitive 7 | Enabled-in-workspace & reverse-dependency guards | Installed status check |
+| **`drift init`** | Workspace Init | Existing workspace templates and configs | Root path safety checks |
+
+* **Detailed `--force` Bypasses**:
+  * **`drift deploy --force`**: Commits a recoverable Drift Snapshot in `install/.git` to bypass Stage 1 Sentinel Drift audit, clears `"staging"`/`"installing"` mid-failure state locks in `state.toml`, ignores uncommitted modifications in `install/`, and bypasses missing required package dependencies.
+  * **`drift stage --force` / `drift apply --force`**: Bypasses `"staging"`/`"installing"` state locks in `state.toml`, uncommitted modifications in `install/` (during `stage`), and missing required package dependencies.
+  * **`drift uninstall --force`**: Allows uninstalling packages still marked enabled in `drift_workspace.toml` and bypasses the broken reverse-dependency check on remaining installed packages.
 
 ---
 
 ## 5. Standardized Process Exit Codes
 
-| Exit Code | Semantic Meaning | Description |
+| Exit Code | Enum Constant | Description |
 | :---: | :--- | :--- |
-| **`0`** | **`SUCCESS` / `HEALTHY`** | The command completed cleanly; status is clean, diffs match, or all health probes passed. |
-| **`1`** | **`GENERAL_ERROR` / `UNHEALTHY`** | Runtime failure, subprocess crash, unresolved file collision, or unhealthy probe. |
-| **`2`** | **`CONFIG_ERROR`** | Missing or malformed `drift_workspace.toml`, `drift_package.toml`, or invalid configuration types. |
-| **`3`** | **`DRIFT_DETECTED`** | Sentinel safety guard tripped: uncommitted runtime system changes detected on host. |
-| **`4`** | **`RENDER_ERROR`** | Template compilation failure or missing required environment variable. |
-| **`5`** | **`COLLISION_ERROR`** | Target file collision detected during install or apply. |
-| **`6`** | **`HEALTH_CHECK_FAILED`** | Package health check probe failed or returned non-zero exit status. |
-| **`7`** | **`HOOK_SKIPPED`** | Direct hook trigger bypassed or skipped because the hook is not configured or disabled. |
+| **`0`** | `SUCCESS` | Operation completed cleanly; status is clean or all probes passed |
+| **`1`** | `GENERAL_ERROR` | Runtime failure, hook error, permission failure, or midway lock |
+| **`2`** | `CONFIG_ERROR` | Malformed TOML/YAML/JSON config, cyclic dependency, or CLI syntax error |
+| **`3`** | `DRIFT_DETECTED` | Sentinel guard tripped: uncommitted host drift in `install/` |
+| **`4`** | `RENDER_ERROR` | Template compilation failure or output path collision in `render/` |
+| **`5`** | `COLLISION_ERROR` | Target inside `drift_root` or cross-package destination conflict |
+| **`6`** | `HEALTH_CHECK_FAILED` | Package health check probe failed or returned non-zero exit code |
+| **`7`** | `HOOK_SKIPPED` | Direct hook trigger skipped because hook is unconfigured or disabled |
 
 ---
 
@@ -432,16 +439,16 @@ Drift enforces a clear architectural distinction between **runtime safety safegu
 To maintain absolute consistency between the CLI runtime, interactive help, argument parsing, error boundaries, and tab completions across multiple shells, Drift is built on a **Single Source of Truth (SSOT)** architecture.
 
 * **Architecture Flow**:
-  * **Single Source of Truth**: [`src/drift/cli/schema.py`](src/drift/cli/schema.py)
+  * **Single Source of Truth**: [`src/drift/cli/schema.py`](../src/drift/cli/schema.py)
     * **CLI Parser Frontends**:
-      * [`src/drift/cli/argparse_backend.py`](src/drift/cli/argparse_backend.py) (`generate_argparse_parser`)
-      * [`src/drift/cli/typer_backend.py`](src/drift/cli/typer_backend.py) (`generate_typer_app` via Metaprogramming)
-      * $\rightarrow$ **Dispatcher**: [`src/drift/cli/cli_handlers.py`](src/drift/cli/cli_handlers.py) (`DriftCLIContext & handle_*`)
-      * $\rightarrow$ **Execution**: [`src/drift/cli/actions.py`](src/drift/cli/actions.py) (`execute_*`)
+      * [`src/drift/cli/argparse_backend.py`](../src/drift/cli/argparse_backend.py) (`generate_argparse_parser`)
+      * [`src/drift/cli/typer_backend.py`](../src/drift/cli/typer_backend.py) (`generate_typer_app` via Metaprogramming)
+      * $\rightarrow$ **Dispatcher**: [`src/drift/cli/cli_handlers.py`](../src/drift/cli/cli_handlers.py) (`DriftCLIContext & handle_*`)
+      * $\rightarrow$ **Execution**: [`src/drift/cli/actions.py`](../src/drift/cli/actions.py) (`execute_*`)
     * **Shell Completion Generators**:
-      * [`src/drift/cli/completion/bash.py`](src/drift/cli/completion/bash.py) (`BashGenerator`)
-      * [`src/drift/cli/completion/zsh.py`](src/drift/cli/completion/zsh.py) (`ZshGenerator`)
-      * [`src/drift/cli/completion/fish.py`](src/drift/cli/completion/fish.py) (`FishGenerator`)
+      * [`src/drift/cli/completion/bash.py`](../src/drift/cli/completion/bash.py) (`BashGenerator`)
+      * [`src/drift/cli/completion/zsh.py`](../src/drift/cli/completion/zsh.py) (`ZshGenerator`)
+      * [`src/drift/cli/completion/fish.py`](../src/drift/cli/completion/fish.py) (`FishGenerator`)
 
 ### 1. Pure Declarative Schema (`src/drift/cli/schema.py`)
 - Defines data models: `OptionSpec`, `PositionalSpec`, `CommandSpec`, `CompletionSchema`, and choice registries (`LIFECYCLE_HOOKS`, `HELP_TOPICS`, `SHELLS`, etc.).
