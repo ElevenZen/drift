@@ -104,10 +104,12 @@ A GUI application (like qBittorrent, desktop theme manager, or IDE preferences) 
     *   **Adopt**: Run `drift adopt qbittorrent` (or `drift adopt qbittorrent -i`) to incorporate modifications from `install/` back to your declarative templates under `src/`.
     *   **Dismiss / Overwrite**: Run `drift deploy qbittorrent --force`. Stage 1 detects the drift, commits a **Drift Snapshot** into the `install/` Git history (guaranteeing disaster recovery auditability), and proceeds to compile, stage, and overwrite active host configurations with clean templates from `src/`.
 
-#### Workflow 3: Full Recovery (The Rollback Loop)
-A deployment failed midway due to a permission error, or manual system edits corrupted a config directory.
-1.  **Rollback (`drift rollback nvim`)**:
-    *   Reverts the `install/` database to the last successfully committed deployment commit, then triggers a **Full Package Redeploy**, restoring configurations to a known-clean state.
+#### Workflow 3: Full Recovery & Automatic Rollback (The Rollback Loop)
+A deployment failed midway due to a permission error, a fatal `post_update` service reload hook failed, or manual system edits corrupted a config directory.
+1.  **Automatic Whole-Batch Rollback (`auto_rollback = true` / `--rollback`)**:
+    *   Critical service packages (or entire workspaces/CLI runs via `[settings] rollback` or `--rollback always`) automatically trigger **Primitive 8** if a fatal installation or hook failure (`failure_is_fatal = true`) occurs during deployment, reverting all attempted and rollback-eligible packages in the batch back to their pre-deploy state.
+2.  **Manual Rollback (`drift rollback [nvim]`)**:
+    *   Reverses recorded host file actions via the package's Write-Ahead Log (`backup/<pkg>/wal/actions.json`) and restores stashed backups (`backup/<pkg>/wal/stash/`), resets `install/<pkg>/` and `install/state.toml` to the last clean `HEAD` commit, and performs an incremental convergence pass with lifecycle hooks to restore configurations to a known-clean state.
 
 #### Workflow 4: Uninstallation & Detachment (The Uninstall Loop)
 You no longer want a package active on this machine.
@@ -123,22 +125,26 @@ You no longer want a package active on this machine.
 
 ## 3. The Core Primitives
 
-All high-level workflows in drift are composed of fourteen atomic, sequential primitives:
+All high-level workflows in drift are composed of seventeen atomic, sequential primitives:
 
 * **Execution Flow (`drift deploy`)**:
-  * **Stage 1: Pre-Flight Safety (Reverse Sync & Audit)**:
-    * Primitive 1: Reverse Sync (`drift reverse-sync`).
-    * Drift Audit: Check `git -C install status --porcelain`.
-      * *If Drift Detected (Dirty)*: **ABORT DEPLOY** (Display Diff B, guide `drift adopt` or `--force`).
-      * *If Clean Slate*: Proceed to Stage 2.
-  * **Stage 2: Core Staged Pipeline**:
+  * **Stage 0: Pre-Flight Checks & Stale WAL Cleanup**:
+    * Verify Git committability on `render/` and `install/`.
+    * Assert no targeted package is in a midway transaction state (`assert_no_midway_deploy_state`).
+    * Purge stale `backup/<pkg>/wal/` folders for non-rollback-eligible targeted packages (`purge_redundant_wal_folders`).
+  * **Stage 1: Pre-Flight Safety (Render, Reverse Sync & Sentinel Audit)**:
     * Primitive 2: Render Packages (`src/` $\rightarrow$ `render/`).
     * Primitive 3: Render Repo Commit (`git -C render commit`).
+    * Primitive 1: Reverse Sync (`drift reverse-sync`) & Convergent Drift Auto-Resolution (`resolve_and_commit_converged_drifts`).
+    * Drift Audit: Check `git -C install status --porcelain`.
+      * *If Divergent Drift Detected (Dirty)*: **ABORT DEPLOY** (Display Diff B, guide `drift adopt` or `--force`).
+      * *If Clean Slate (or Snapshot Committed under `--force`)*: Proceed to Stage 2.
+  * **Stage 2: Core Staged Pipeline**:
     * Primitive 4: Stage Render to Install (`render/` $\rightarrow$ `install/`).
-    * Primitive 5: Install Repo Deployment (Deploy to host system targets via native relative symlinks or physical copy).
+    * Primitive 5: Install Repo Deployment (Deploy to host system targets via native relative symlinks or physical copy, recording WAL and triggering whole-batch auto-rollback on fatal error if policy dictates).
     * Primitive 6: Install Repo Commit (`git -C install commit`).
   * **Stage 3: Post-Deployment Maintenance**:
-    * Primitive 9: Workspace GC (Bulk unused repo cleanup).
+    * Primitive 9: Workspace GC (Bulk unused repo & redundant WAL cleanup).
   * **Deploy Success**
 
 ### Primitive 1: Reverse Sync (System $\rightarrow$ `install/` [Low-level: `drift reverse-sync`])
@@ -181,11 +187,21 @@ Reconciles the sandbox `render/` folder into the `install/` database:
 ### Primitive 5: Install Repo Deployment [Low-level: `drift apply`]
 Applies changes to the physical active system across a two-phase architecture:
 *   **Pre-Flight Inspection (`prepare_install`)**: Validates readiness guards (`assert_packages_install_ready`), verifies hook file existence, checks escalation privileges, audits cross-package path collisions, and resolves prerequisite topological deploy order (`InstallPlan`).
-*   **Execution Phase (`execute_install`)**: Deploys prerequisites first using strongly-typed `InstallConfig(force, dry_run, flags, no_deps)`.
+*   **Execution Phase (`execute_install`)**: Deploys prerequisites first using strongly-typed `InstallOptions(force, dry_run, reinstall, run_hooks_when_unchanged, flags, no_deps, rollback)`.
+*   **Write-Ahead Log (WAL) & Backup Stashing (`clear_package_wal`, `execute_delivery_actions`)**:
+    *   At the start of each package's physical installation (`execute_package_install_impl`), any stale WAL directory is cleared via `clear_package_wal(backup_pkg_dir, sudo)`.
+    *   As `execute_delivery_actions` applies file mutations (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `CREATE_DIR`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`), each reversible operation is appended to `backup/<pkg>/wal/actions.json`.
+    *   Whenever `backup_item` overwrites an existing backup file in `backup/<pkg>/overwritten/` or `backup/<pkg>/deleted/`, the prior backup is stashed into `backup/<pkg>/wal/stash/` so that a rollback can restore the exact pre-transaction backup archive.
 *   **Collision Guard & Planning (`plan_package_install`)**: Pure read-only per-path planner compiling inspectable `PackageInstallPlan`. Backs up colliding physical files to `backup/<package>/overwritten/` with `dot-` prefix translation (`decode_dot_prefix`), and historical orphans to `backup/<package>/deleted/`.
 *   **Empty Folder Deployment**: [`filter_deployable_files`](../src/drift/core/ignore.py) with `include_empty_dirs=True` records empty directory leaf nodes into `deployed_files` (translating `.drift_keep` into its parent folder). Empty directories are deployed as concrete directories via `FileActionType.CREATE_DIR` (`mkdir -p`) and never symlinked. Empty directories are excluded from cross-package conflict assertions (`include_empty_dirs=False`), allowing multiple packages to share folder hierarchies.
 *   **Privilege & State Recording**: Deploys files with root escalation if `sudo = true` is configured in `drift_package.toml`. The `sudo` boolean, target directory, install method, and `deployed_files` manifest are atomically updated in `install/state.toml`.
-*   **Hooks**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment (skipped during `--dry-run`).
+*   **Hooks & Fatality (`[hooks] failure_is_fatal`)**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment (skipped during `--dry-run`). By default, hook failures are fatal (`failure_is_fatal = true`), leaving the package in `"installing"` state and raising `HookExecutionError(is_fatal=True)`. If `failure_is_fatal = false` (or configured per-hook as `false` for `post_install` / `post_update`), the package still transitions to `"installed"` and commits its `install/` state before reporting the non-fatal hook error.
+*   **Automatic Whole-Batch Rollback (`RollbackPolicy`)**:
+    *   When a fatal exception occurs during `execute_install` (either a physical file delivery error or a fatal `HookExecutionError`), Drift evaluates the 3-tier rollback policy ladder via `_should_trigger_auto_rollback`:
+        1. **CLI Override (`InstallOptions.rollback` / `--rollback`)**: `ALWAYS` (`always`/`yes`) forces rollback; `NEVER` (`never`/`no`) suppresses rollback; `AUTO` (`auto`) defers to workspace settings.
+        2. **Workspace Policy (`[settings] rollback` in `drift_workspace.toml`)**: `ALWAYS` forces rollback; `NEVER` suppresses rollback; `AUTO` (default) defers to the failing package's configuration.
+        3. **Package Configuration (`[package] auto_rollback` in `drift_package.toml`)**: Boolean (`true` / `false`, default `false`).
+    *   When triggered, `_trigger_batch_auto_rollback` gathers all rollback-eligible packages inside the current batch (`batch_candidates = plan.packages_install_order`, unioned with any attempted packages) and invokes `run_primitive_8_rollback_recovery(workspace_config, target_pkgs=rollback_targets, force=False, flags=hook_flags)`. It marks `exc.auto_rolled_back = True` on the re-raised exception so `drift deploy` / `drift apply` reports that automatic rollback has already completed (`requires_rollback = False`).
 *   **State Machine**: Sets the package state to **`"installing"`** (transient guard) at the start, and transitions to **`"installed"`** (final state) upon successful completion (skipped during `--dry-run`).
 *   **Symlink Mode**: Deploys relative symlinks from host target paths to `install/<pkg>/` via Drift's native linker.
 *   **Copy Mode**: Copies files to `target_directory` (prefixed with `sudo` if configured).
@@ -194,7 +210,7 @@ Applies changes to the physical active system across a two-phase architecture:
 Locks the deployed configurations and `state.toml` into the local state database with an automated commit.
 
 ### Primitive 7: Uninstall Repo Package [High-level: `drift uninstall`]
-Removes or detaches packages from the system using strongly-typed `UninstallConfig(force, dry_run, detach, no_deps, flags)`:
+Removes or detaches packages from the system using strongly-typed `UninstallOptions(force, dry_run, detach, no_deps, flags)`:
 1.  **Declarative Plan-then-Execute Architecture**:
     *   **Context Gathering (`PackageUninstallContext`)**: Gathers domain-level parameters (`pkg_name`, `target_dir`, `install_method`, `deployed_files`, `sudo`, `install_pkg_dir`, `backup_pkg_dir`, `drift_root`, `hooks`, `detach`, `is_missing_install_dir`) directly from `StateRegistry` without retaining heavy `PackageConfig` instances. The recorded `sudo` privilege is preserved from `state.toml`, guaranteeing consistent elevated permissions even if the package config in `install/` was altered or missing.
     *   **Action Execution Context Derivation**: Derives an `FileActionExecutionContext` carrying execution flags (`sudo`, `resolve_symlinks`). Backup restoration collision paths are planned directly into `deleted/` via `plan_backup_restoration`'s `backup_subfolder=BackupSubfolder.DELETED` and `is_first_time=True`, ensuring any pre-existing host files or directories colliding with restored files or ancestors are backed up to `deleted/` rather than corrupting the active `overwritten/` backup store or unbacked in-place overwrites.
@@ -219,16 +235,27 @@ Removes or detaches packages from the system using strongly-typed `UninstallConf
 
 ### Primitive 8: Rollback Recovery [High-level: `drift rollback`]
 Restores system configurations and the local state database to the last clean, committed state after an aborted or failed deployment:
-*   **Unified Reverse Topological Order**: Executes a single unified `resolve_package_uninstall_order` across all rollback candidate packages.
-*   **Dispatch by Classification**: Dispatches committed packages to redeployment (`rollback_redeploy_committed_package`) and uncommitted first-time packages to uninstallation (`rollback_uninstalled_first_time_package`) one-by-one in ordered sequence.
-*   **State Reset**: Resets `install/` to HEAD, purges untracked files via `git clean -fd`, and redeploys committed packages with `force=True`.
+1.  **Rollback Eligibility Resolution (`check_is_package_rollback_eligible` & `check_is_package_uncommitted_in_install`)**:
+    *   Without `--force`, a package is eligible for rollback iff its `install/<pkg>/` directory exists on disk (excluding ghost packages) **and** either:
+        - Its state in `install/state.toml` is in `ROLLBACK_ELIGIBLE_STATES` (`"staging"`, `"staged"`, `"installing"`), **or**
+        - Its state is `"installed"` and it has uncommitted changes in the `install/` Git repository (`has_uncommitted_modifications(install_base, pkg)` is `True` or `pkg` is absent from committed `HEAD:state.toml`). This ensures that earlier packages in a multi-package deployment batch that already reached `"installed"` before a downstream package crashed (prior to `Primitive 6: install-commit`) can be rolled back cleanly without requiring `--force`.
+    *   With `--force`, the eligibility check is bypassed, allowing any tracked package in `install/` to be hard-reset and redeployed to `HEAD`.
+2.  **Unified Reverse Topological Order**:
+    *   Executes a single unified `resolve_package_uninstall_order` across all candidate packages so dependent packages are rolled back before their prerequisites.
+3.  **3-Step WAL Rollback Recovery Pipeline**:
+    *   **Step 1 — Physical WAL Reversal & Stash Restoration (`_rollback_step1_reverse_wal`)**:
+        Reverses recorded host file actions from `backup/<pkg>/wal/actions.json` in strict LIFO order (`rollback_package_wal`), restores any stashed prior backups from `backup/<pkg>/wal/stash/` (`restore_wal_stash`), and clears the WAL directory (`clear_package_wal`).
+    *   **Step 2 — Git State Checkout & First-Time Pruning (`_rollback_step2_git_checkout`)**:
+        For packages present in committed `HEAD:state.toml`, checks out `install/<pkg>/` and `install/state.toml` entries from `HEAD` and cleans untracked files (`git clean -fd`). For uncommitted first-time packages (absent from `HEAD:state.toml`), removes the untracked `install/<pkg>/` directory and deletes the package entry from `install/state.toml`.
+    *   **Step 3 — Incremental Convergence & Hook Restoration (`_rollback_step3_incremental_install`)**:
+        For previously committed packages, invokes `run_primitive_5_install(reinstall=False, run_hooks_when_unchanged=True, rollback=RollbackPolicy.NEVER)` with `raise_on_error=False` on `hook_flags`. Because Step 1 already reversed the WAL mutations, file delivery is a fast no-op (`SKIP_IDENTICAL`) or repairs any residual drift, while `run_hooks_when_unchanged=True` guarantees `pre_update` and `post_update` hooks run to restore service state, and `rollback=RollbackPolicy.NEVER` prevents recursive auto-rollback loops.
 
 ### Primitive 9: Workspace Garbage Collection [High-level: `drift gc`]
-Identifies and cleans up workspace anomalies, orphaned packages, zombie database directories, and ghost registry records across 3 structured stages:
+Identifies and cleans up workspace anomalies, orphaned packages, zombie database directories, ghost registry records, and stale Write-Ahead Log (`wal/`) folders across 4 structured stages:
 1.  **Orphan Package Uninstallation (Stage 1)**:
     *   Scans `install/state.toml` for packages marked as `"installed"`.
     *   Cross-references against `config/drift_workspace.toml` (`is_package_enabled(pkg)`). Packages present in state but disabled or removed from configuration declarations are identified as *orphans*.
-    *   Executes **Primitive 7 (Uninstall)** with `UninstallConfig(force=True, dry_run=dry_run, flags=flags)`:
+    *   Executes **Primitive 7 (Uninstall)** with `UninstallOptions(force=True, dry_run=dry_run, flags=flags)`:
         *   Triggers package `pre_uninstall` and `post_uninstall` lifecycle hooks (unless `--no-hooks` is active).
         *   Unlinks symlinks or deletes physical files from active host targets.
         *   Restores original backed-up host files from `backup/<package>/overwritten/`.
@@ -237,8 +264,7 @@ Identifies and cleans up workspace anomalies, orphaned packages, zombie database
 2.  **Ghost Package Registry Purge (Stage 1b)**:
     *   Scans `install/state.toml` for packages whose directories in `install/` are missing on disk.
     *   Removes ghost records from `StateRegistry` and saves `state.toml`, committing the cleanup to Git.
-3.  **Database Folder Purge (Stage 2 - `render/` and `install/`)**:
-
+3.  **Database & WAL Folder Purge (Stage 2 - `render/`, `install/`, and `backup/<pkg>/wal/`)**:
     *   **`render/` Purge Rules (`purge_render_folders`)**:
         *   Scans visible subdirectories in `render/` (ignoring `.git`, `config/` via `CONFIG_DIR_NAME`, and `FORBIDDEN_PACKAGE_NAMES`).
         *   Purges a package directory if:
@@ -253,11 +279,16 @@ Identifies and cleans up workspace anomalies, orphaned packages, zombie database
             1. *Zombie folder*: Lacks any valid package config file.
             2. *Unregistered & Obsolete*: Directory is **not** registered in `state.toml` AND (is disabled in workspace config OR missing from `src/`).
         *   Removes the directory via `shutil.rmtree` (or logs under `--dry-run`).
-3.  **Scoped Database Git Commits (Stage 3)**:
+    *   **`backup/<pkg>/wal/` Purge Rules (`purge_redundant_wal_folders`)**:
+        *   Scans `backup/<pkg>/wal/` across all package backup folders (or scoped `target_pkgs` during pre-deploy cleanup).
+        *   Evaluates rollback eligibility via `check_is_package_rollback_eligible(pkg, registry, install_base=install_path, head_registry=head_registry)`:
+            1. **Preserved (Rollback-Eligible)**: If the package is in `"staging"`, `"staged"`, `"installing"`, or is in `"installed"` state with uncommitted changes in `install/`, its `wal/` folder is **strictly preserved** so `drift rollback` can reverse its host mutations.
+            2. **Purged (Redundant / Stale)**: If the package is cleanly committed (`"installed"` with no uncommitted changes in `install/`), unregistered in `state.toml`, or a ghost package (`not (install_path / pkg).is_dir()`), its `backup/<pkg>/wal/` directory is purged via `clear_package_wal` (respecting recorded `sudo` privileges).
+4.  **Scoped Database Git Commits (Stage 3)**:
     *   When not running in `--dry-run` mode:
         *   Auto-stages and commits purged folder deletions in the `render/` Git repository (scoped strictly to purged package names).
         *   Auto-stages and commits purged folder deletions in the `install/` Git repository (scoped strictly to purged package names).
-4.  **Structured Observability & CLI Options**:
+5.  **Structured Observability & CLI Options**:
     *   Returns strongly-typed `GcResult` dataclass with detailed uninstalled orphan results, purged zombie lists, and Git commit metadata.
     *   Supports `--dry-run` for non-destructive inspection, `--no-hooks` for bypassing uninstall hooks, and `--json` for machine-readable output.
 
@@ -331,13 +362,14 @@ The `drift` Python command provides a unified interface for all primitives and h
 *   **`drift new <package> [-f/--force] [-t/--target <dir>] [-m/--method <symlink|copy>] [--json]`**: Scaffolds a new dotfiles package (Primitive 10).
 *   **`drift add <package> <paths...> [--dry-run] [--no-hooks] [--json]`**: Imports active system files into a declarative package (Primitive 11).
 *   **`drift adopt [packages...] [-i/--interactive] [--accept-conflicts] [-f/--force] [--dry-run] [--no-hooks] [--json]`**: Reconciles system drift into templates.
-*   **`drift deploy [packages...] [-f/--force] [--no-hooks] [--json]`**: Atomic Two-Stage deployment with Sentinel drift safety guards.
-*   **`drift health [packages...] [-t/--timeout <secs>] [-v/--verbose] [--json]`**: Runs runtime health check probes on installed packages (Primitive 12).
-*   **`drift uninstall <packages...> [-f/--force] [--detach] [--dry-run] [--no-hooks] [--json]`**: Safely cleans or detaches a package from the system (Primitive 7).
-*   **`drift rollback [packages...] [-f/--force] [--no-hooks] [--json]`**: Emergency recovery after midway failure (Primitive 8).
+*   **`drift deploy [packages...] [-f/--force] [-r/--reinstall] [-c/--clean] [-n/--dry-run] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]`**: Atomic Two-Stage deployment with Sentinel drift safety guards and configurable whole-batch auto-rollback.
+*   **`drift plan [packages...] [-a/--all] [-f/--force] [-r/--reinstall] [-c/--clean] [--with-hooks] [--no-deps] [--json]`**: Full-cycle non-destructive deployment simulation (Primitive 17).
+*   **`drift health [packages...] [--from <install|source>] [-t/--timeout <secs>] [-v/--verbose] [--json]`**: Runs runtime health check probes on installed packages (Primitive 12).
+*   **`drift uninstall <packages...> [-f/--force] [--detach] [--dry-run] [--no-deps] [--no-hooks] [--json]`**: Safely cleans or detaches a package from the system (Primitive 7).
+*   **`drift rollback [packages...] [-f/--force] [--no-hooks] [--json]`**: Emergency recovery after midway failure or uncommitted deployment (Primitive 8).
 *   **`drift status [packages...] [--json]`**: Audits and aggregates the alignment of templates, system drift, and pending deployments.
 *   **`drift diff [packages...] [-t/--template] [-s/--system] [--stat] [-y/--side-by-side] [--json]`**: Visualizes changes between layers (Diff A, Diff B, or Diff Δ).
-*   **`drift gc [--dry-run] [--no-hooks] [--json]`**: Cleans orphan packages, purges disabled/missing/zombie database folders in `render/` and `install/`, and auto-commits database purges (Primitive 9).
+*   **`drift gc [--dry-run] [--no-hooks] [--json]`**: Cleans orphan packages, purges disabled/missing/zombie database folders in `render/` and `install/`, removes redundant `backup/<pkg>/wal/` folders, and auto-commits database purges (Primitive 9).
 *   **`drift repair [--dry-run] [--json]`**: Audits and self-heals workspace structure, repositories, config templates, and secrets (Primitive 14).
 *   **`drift complete [<shell>] [--install] [--json]`**: Generates or installs native interactive shell tab-completion scripts (bash, zsh, fish, nu).
 *   **`drift help [topic]`**: Interactive mini user manual with pager fallback support (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift_workspace.toml`, `workspace`, `health`, `clone`, `faq`).
@@ -345,12 +377,12 @@ The `drift` Python command provides a unified interface for all primitives and h
 ### Low-Level Control Commands (Ordered by Pipeline Lifecycle)
 These commands are for advanced users or CI/CD pipelines to trigger specific primitives:
 *   **`drift reverse-sync [packages...] [--json]`**: Trigger Primitive 1 (System $\rightarrow$ install/).
-*   **`drift render [packages...] [--no-hooks] [--json]`**: Trigger Primitive 2 (Render).
+*   **`drift render [packages...] [-c/--clean] [-n/--dry-run] [--with-hooks|--no-hooks] [--json]`**: Trigger Primitive 2 (Render).
 *   **`drift render-commit [packages...] -m <msg> [--json]`**: Trigger Primitive 3 (Commit Render).
-*   **`drift stage [packages...] [--force] [--json]`**: Trigger Primitive 4 (Staging).
-*   **`drift apply [packages...] [--force] [--no-hooks] [--json]`**: Trigger Primitive 5 (Physical Deployment).
+*   **`drift stage [packages...] [--force] [--no-deps] [--json]`**: Trigger Primitive 4 (Staging).
+*   **`drift apply [packages...] [--force] [-n/--dry-run] [-r/--reinstall] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]`**: Trigger Primitive 5 (Physical Deployment).
 *   **`drift install-commit [packages...] -m <msg> [--json]`**: Trigger Primitive 6 (Commit install/).
-*   **`drift hook <package> <hook_name> [--json]`**: Directly executes a specific lifecycle hook script for a single package.
+*   **`drift hook <package> <hook_name> [--from <install|render|source>] [--json]`**: Directly executes a specific lifecycle hook script for a single package.
 
 ---
 
@@ -359,9 +391,10 @@ These commands are for advanced users or CI/CD pipelines to trigger specific pri
 This section provides the essential syntax and specifications for global and package-level configurations.
 
 ### A. Global Workspace Configuration: `config/drift_workspace.toml` Specification
-Rather than scanning the filesystem blindly, the drift engine relies on a centralized workspace configuration file located at `config/drift_workspace.toml` (which can itself be a template named `drift_workspace.envst.toml`). This file orchestrates two main responsibilities:
+Rather than scanning the filesystem blindly, the drift engine relies on a centralized workspace configuration file located at `config/drift_workspace.toml` (which can itself be a template named `drift_workspace.envst.toml`). This file orchestrates three main responsibilities:
 1. **Workspace Paths & Rendering Engines**: Defines directories (`source_directory`, `render_directory`, `install_directory`, `backup_directory`, `default_target_directory`, `default_install_method`) and template engines with their file suffixes and rendering subprocess commands (e.g. `envsubst`, `mustache`).
-2. **Enabled Packages Registry**: Declares exactly which package subfolders under `src/` are globally active via the `[packages.enable]` section.
+2. **Global Execution Settings (`[settings]`)**: Configures workspace-level operational policies such as `rollback = "auto" | "always" | "never"` (alias: `"yes"` / `"no"`), `ensure_hooks_executable_in_src`, `hook_inject_non_interactive_envs`, and `hook_output_encoding`.
+3. **Enabled Packages Registry**: Declares exactly which package subfolders under `src/` are globally active via the `[packages.enable]` section.
 
 *   **Active Package Determination**:
     During global operations (like a bulk `drift status` or `drift deploy`), the engine checks the package registry table:
@@ -393,6 +426,22 @@ default_target_directory = "~"
 
 # Default deployment method: "symlink" (symlink) or "copy" (physical)
 default_install_method = "symlink"
+
+[settings]
+# Automatically chmod +x hook scripts in src/<pkg>/drift_hooks/ during render
+ensure_hooks_executable_in_src = true
+
+# Inject non-interactive environment variables (PAGER=cat, CI=true, etc.) into hooks
+hook_inject_non_interactive_envs = true
+
+# Output encoding for hook subprocess stdout/stderr ("utf-8", "system", etc.)
+hook_output_encoding = "utf-8"
+
+# Workspace-level automatic rollback policy on fatal deploy/apply failure:
+# - "auto" (default): Respects each package's `auto_rollback` setting in drift_package.toml
+# - "always" / "yes": Forces automatic whole-batch rollback on any fatal package failure
+# - "never" / "no": Disables automatic rollback across the workspace (unless overridden by CLI --rollback)
+rollback = "auto"
 
 [render.envsubst]
 # Shell script providing env variables for envsubst
@@ -727,6 +776,10 @@ target_directory = "~/.config/example"
 # Note: All lifecycle hooks always execute in user space without sudo to preserve injected environment variables.
 sudo = false
 
+# If true, automatically rolls back the deployment batch via Primitive 8 if a fatal
+# installation or hook failure occurs on this package (when workspace/CLI rollback policy is "auto").
+auto_rollback = false
+
 # ---------------------------------------------------------------------
 # Fully-Controlled Directory (FCD) Audit Options & Ignore Mechanics
 # ---------------------------------------------------------------------
@@ -832,6 +885,12 @@ health = "drift_hooks/health.bash"
 
 # Timeout in seconds for lifecycle hook script executions (Default: 120)
 timeout = 120
+
+# Controls whether a hook failure is treated as a fatal transaction abort (Default: true).
+# Accepts a boolean (`true` / `false`) or a per-hook table (e.g. `{ post_update = false, DEFAULT = true }`).
+# When `false` on `post_install` or `post_update`, the package still transitions to `"installed"`
+# and commits its `install/` state without requiring rollback.
+failure_is_fatal = true
 
 # Optional Windows-specific hook overrides (aliases: [hooks.windows], [hooks.win32], [hooks.winos], [hooks.win]).
 # [hooks.windows]
@@ -993,20 +1052,22 @@ Inter-package dependencies are orchestrated across every stage of the Drift life
     *   `execute_stage_packages` stages packages in this exact topological order (`StagePlan.packages_stage_order`), preserving update sequence for shared install methods (e.g. `SYMLINK`).
 *   **Primitive 5: Install Repo Deployment**:
     *   `prepare_install` validates deployment readiness (`assert_packages_install_ready`), verifies hook file permissions, audits cross-package path collisions, and resolves global topological deployment order in `InstallPlan`.
-    *   `execute_install` deploys packages sequentially, guaranteeing prerequisites are installed and active before dependent packages deploy.
-    *   Controlled by strongly-typed `InstallConfig(force, dry_run, flags, no_deps)`.
+    *   `execute_install` deploys packages sequentially, guaranteeing prerequisites are installed and active before dependent packages deploy, recording reversible host mutations into `backup/<pkg>/wal/actions.json`, and triggering automatic whole-batch rollback (`_trigger_batch_auto_rollback`) if a fatal failure occurs under an active `RollbackPolicy`.
+    *   Controlled by strongly-typed `InstallOptions(force, dry_run, reinstall, run_hooks_when_unchanged, flags, no_deps, rollback)`.
 *   **Primitive 7: Uninstall Repo Package**:
-    *   Operates using `UninstallConfig(force, dry_run, detach, no_deps, flags)`.
+    *   Operates using `UninstallOptions(force, dry_run, detach, no_deps, flags)`.
     *   Pre-flight check evaluates `assert_no_broken_dependencies_on_uninstall` (bypassed if `force` or `no_deps`).
     *   Multi-package uninstallation executes in reverse topological order via `resolve_package_uninstall_order`, ensuring dependent packages run their `pre_uninstall` / `post_uninstall` hooks and release files while their prerequisites remain fully operational on the host.
     *   Compiles a declarative `UninstallPlan` (`PackageUninstallPlan`) decomposing operations into fundamental file actions (`DELETE_ITEM`, `CREATE_COPY`, `ENSURE_DIR`, `INFO_MESSAGE`), executing safely with ancestor collision protection.
     *   If a package directory is missing in `install/`, Drift logs a warning and cleans the record from `StateRegistry` without crashing.
 *   **Primitive 8: Rollback Recovery**:
+    *   Identifies rollback-eligible packages via `check_is_package_rollback_eligible` (packages in `"staging"`, `"staged"`, `"installing"`, or `"installed"` with uncommitted changes in `install/`, excluding ghost packages unless `--force` is passed).
     *   Executes a single unified reverse topological sort (`resolve_package_uninstall_order`) across all candidate packages requiring recovery.
-    *   Iterates through the ordered list one-by-one, dispatching committed packages to redeployment (`rollback_redeploy_committed_package`) and uncommitted first-time packages to uninstallation (`rollback_uninstalled_first_time_package`) with `UninstallConfig(force=True)`.
+    *   Runs the 3-step WAL recovery pipeline: Step 1 reverses WAL actions (`rollback_package_wal`) and restores stashed backups (`restore_wal_stash`), Step 2 checks out `install/<pkg>/` and `state.toml` from `HEAD` (or prunes uncommitted first-time installs), and Step 3 executes incremental `run_primitive_5_install(reinstall=False, run_hooks_when_unchanged=True, rollback=RollbackPolicy.NEVER)` for committed packages.
 *   **Primitive 9: Workspace Garbage Collection**:
-    *   Orphan uninstallation is invoked with `UninstallConfig(force=True)`.
+    *   Orphan uninstallation is invoked with `UninstallOptions(force=True)`.
     *   Stage 1b scans `install/state.toml` for ghost packages (records whose directories in `install/` are missing on disk), removes them from `StateRegistry`, and commits the cleanup to Git.
+    *   Stage 2 purges zombie/obsolete folders in `render/` and `install/` and invokes `purge_redundant_wal_folders` to remove stale `backup/<pkg>/wal/` directories for packages that are not rollback-eligible (cleanly committed `"installed"`, unregistered, or ghost packages).
 
 #### 6. Orthogonality to Template Imports (`[[imports]]`)
 Inter-package dependencies are architecturally orthogonal to the planned template import system (`[[imports]]`):
@@ -1159,17 +1220,23 @@ Rather than relying on mutating collision routines or monolithic filesystem fold
     *   When saving displaced host files into `backup/<package>/overwritten/` or `backup/<package>/deleted/`, leading dots on path components are translated back to `dot-` prefixes (e.g. `.bashrc` $\rightarrow$ `dot-bashrc`, `.config/nvim` $\rightarrow$ `dot-config/nvim`).
     *   This ensures that the backup archive mirrors the exact structural naming conventions of `src/` and `install/`.
 
-#### 3. Inspectable Simulation & Execution Separation
+#### 3. Inspectable Simulation, Write-Ahead Log (WAL) & Execution Separation
 *   **Dry-Run Mode (`drift apply --dry-run`)**:
     *   Passes `dry_run=True` to compile and display the complete `PackageInstallPlan` with planned actions, action counts, and skipped lifecycle hooks without performing any filesystem mutations.
     *   Supports programmatic consumption via `--json`.
+*   **Write-Ahead Log (`backup/<package>/wal/`) & Backup Stashing**:
+    *   Before executing physical installation for a package (`execute_package_install_impl`), any residual WAL directory is purged via `clear_package_wal(backup_pkg_dir, sudo)`.
+    *   During `execute_delivery_actions`, every reversible filesystem mutation (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `CREATE_DIR`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`) is serialized and appended to `backup/<package>/wal/actions.json`.
+    *   If `backup_item` displaces a file to `backup/<package>/overwritten/<rel_path>` or `backup/<package>/deleted/<rel_path>` where a previous backup file already exists, the prior backup is stashed into `backup/<package>/wal/stash/overwritten/<rel_path>` (or `stash/deleted/<rel_path>`) before the new backup is written.
+    *   If the deployment aborts or is rolled back (`drift rollback` / automatic batch rollback), `rollback_package_wal` replays `actions.json` in reverse (LIFO) order to undo host mutations, `restore_wal_stash` restores stashed prior backups, and `clear_package_wal` cleans `backup/<package>/wal/`.
 *   **Execution Phase (`execute_package_actions`)**:
     *   State mutations strictly follow the pre-computed plan in dependency order: intermediate directory creation, backups, symlink/copy file application, and orphan pruning.
 
 > [!IMPORTANT]
 > **Transient `backup/` Directory Policy & User Responsibility**:
-> Drift creates timestamped and package-scoped subdirectories under `backup/<package>/overwritten/` and `backup/<package>/deleted/` to protect pre-existing host files from silent loss.
+> Drift creates package-scoped subdirectories under `backup/<package>/overwritten/`, `backup/<package>/deleted/`, and `backup/<package>/wal/` to protect pre-existing host files from silent loss and enable transactional rollback recovery.
 > *   **Not Versioned or Tracked by Drift**: The `backup/` folder is intentionally unmanaged and untracked by Git in Drift.
+> *   **Automatic WAL Hygiene**: While `overwritten/` and `deleted/` archives are retained for user inspection, `backup/<package>/wal/` is a transient transaction log that is automatically cleaned by `drift gc` and pre-deploy checks (`purge_redundant_wal_folders`) once a package's deployment is cleanly committed in `install/`.
 > *   **User Responsibility**: It is solely the user's responsibility to periodically review `backup/`, archive important displaced configurations, or commit them into personal backup storage before cleaning.
 
 ### E. Execution Safeguards and Package Exclusion
@@ -1197,14 +1264,18 @@ To enable granular control over modular configurations, the deployment pipeline 
     *   Defaults to `true`. If set to `false`, the sync engine **completely skips copying its files from `render/` to `install/`**.
     *   This isolates the package's output files inside the local `render/` sandbox database, preventing them from registering in the state database or deploying onto the host target. This is ideal for testing rendering outputs in sandboxes before enabling active system installation.
 
-### F. Orphan Package Garbage Collection & Uninstall Protection
-To maintain parity between declarations and system states, the deployer enforces two robust policies:
+### F. Orphan Package Garbage Collection, WAL Hygiene & Uninstall Protection
+To maintain parity between declarations and system states, the deployer enforces three robust policies:
 1.  **Orphan Package Garbage Collection (Self-Cleaning)**:
     *   When executing a **Bulk All-Packages Deployment** (`drift deploy` with no targeted package), the system compares the state database `install/state.toml` with the active packages list in `config/drift_workspace.toml` (and respects `enable_install = false` in `drift_package.toml`).
     *   If a package is registered as `"installed"` in `install/state.toml`, but is **no longer active/enabled** in configuration declarations, the post-deployment GC step **automatically executes Primitive 7 (Uninstall) on this orphan package** during Stage 3.
     *   This ensures decommissioned packages are automatically and cleanly purged from the host system, restoring overwritten original files from `backup/<package>/overwritten/`.
-    *   **Database Hygiene**: In addition to orphan uninstallation, GC purges disabled or missing package folders from `render/`, cleans unregistered obsolete folders from `install/`, purges zombie directories lacking valid package configurations, and auto-commits database changes into local Git repositories.
-2.  **Uninstall Protection Safeguard**:
+    *   **Database & WAL Hygiene**: In addition to orphan uninstallation, GC removes ghost entries from `state.toml`, purges disabled or missing package folders from `render/`, cleans unregistered obsolete folders from `install/`, purges zombie directories lacking valid package configurations, removes redundant `backup/<pkg>/wal/` folders for packages that are not rollback-eligible (`purge_redundant_wal_folders`), and auto-commits database changes into local Git repositories.
+2.  **Redundant WAL Folder Garbage Collection (`purge_redundant_wal_folders`)**:
+    *   Both `drift gc` (workspace-wide) and Stage 0 of `drift deploy` (scoped to `target_pkgs`) invoke `purge_redundant_wal_folders` to inspect `backup/<pkg>/wal/`.
+    *   A package's `wal/` folder is **preserved** iff `check_is_package_rollback_eligible(pkg, registry, install_base=install_path, head_registry=head_registry)` is `True` — i.e., its `install/<pkg>/` directory exists and the package is in `"staging"`, `"staged"`, `"installing"`, or is `"installed"` with uncommitted changes in `install/`.
+    *   For all other packages (cleanly committed `"installed"` packages, unregistered packages absent from `state.toml`, or ghost entries missing `install/<pkg>/`), `clear_package_wal` removes `backup/<pkg>/wal/`.
+3.  **Uninstall Protection Safeguard**:
     *   If a user tries to manually uninstall a package (e.g. `drift uninstall proxychains`), but that package is **still active/enabled** inside `config/drift_workspace.toml` (and has `enable_install != false`), this represents a direct contradiction because the package would simply be re-installed on the next bulk deploy.
     *   In this case, the uninstaller will **halt and print an error**, instructing the user to first disable the package in declarations, **unless a `--force` flag is supplied**.
 
@@ -1249,7 +1320,7 @@ If a configuration file, folder, or symlink is manually deleted, modified, or ad
         - Emits unified diffs via `logger.debug(...)` (visible with global `-v` / `--verbose`).
         - Passing `--accept-conflicts` permits automated application of conflicting patches with merge conflict markers.
 
-### H. State Registry Database (`install/state.toml`)
+### H. State Registry Database (`install/state.toml`) & Rollback Eligibility
 To safely determine whether a package should execute its `pre/post_install` or `pre/post_update` lifecycle hook, track deployed artifacts, verify execution privileges, and detect destination migrations, the system maintains a persistent, local-only state registry file at `install/state.toml`.
 *   This registry tracks package lifecycle states:
     ```toml
@@ -1296,6 +1367,12 @@ To safely determine whether a package should execute its `pre/post_install` or `
     - **`"staged"`**: (Stable) The package has been successfully staged from `render/` to `install/`, but not yet applied to the system.
     - **`"staging"`**: (Transient) The package is currently undergoing database synchronization (Primitive 4).
     - **`"installing"`**: (Transient) The package is currently being physically applied to the system (Primitive 5).
+*   **Rollback Eligibility Predicates (`check_is_package_uncommitted_in_install` & `check_is_package_rollback_eligible`)**:
+    - `MIDWAY_TRANSACTION_STATES = ("staging", "installing")` defines transient crash locks that block subsequent `deploy`, `stage`, or `apply` runs unless `--force` is passed.
+    - `ROLLBACK_ELIGIBLE_STATES = ("staging", "staged", "installing")` defines states that are unconditionally eligible for rollback when `install/<pkg>/` exists on disk.
+    - Additionally, in a multi-package deployment batch (`pkg_a` followed by `pkg_b`), `pkg_a` transitions to `"installed"` at the end of its physical install step before `pkg_b` starts, while `Primitive 6: install-commit` only runs after the entire batch succeeds. If `pkg_b` crashes, `pkg_a` is in `"installed"` state with uncommitted changes in `install/`.
+    - `check_is_package_uncommitted_in_install(pkg, state_registry, install_base, head_registry=None)` returns `True` when `pkg` is in `"installed"` state, `(install_base / pkg).is_dir()` exists, and either `has_uncommitted_modifications(install_base, pkg)` is `True` or `pkg` is absent from committed `HEAD:state.toml`.
+    - `check_is_package_rollback_eligible(pkg, state_registry, install_base=None, head_registry=None)` unifies both conditions (while rejecting ghost packages whose `install/<pkg>/` directory is missing), powering `StateRegistry.get_rollback_eligible_packages`, `drift rollback` without `--force`, whole-batch auto-rollback, and WAL preservation in `drift gc`.
 *   **Safety Abort Logic**:
     When a package enters Primitive 4 or 5, the system checks its current state.
     - **Mid-Operation Safety Interlocks**: If the state is **`"staging"`** or **`"installing"`**, and the `force` flag is not passed, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity. Passing `--force` overrides this safety interlock.
@@ -1386,10 +1463,11 @@ To prevent subtle cross-platform bugs where State 2 paths on Windows pass `not p
 
 The active configuration engine and orchestrator follow a strict sequence designed for predictability, transaction-like integrity, and extensive error recovery.
 
-#### 1. Discovery and Registry Check
+#### 1. Discovery, Registry Check & Stale WAL Cleanup
 Deployment can be triggered in **Bulk Mode** (evaluating all declared active packages) or **Targeted Mode** (focusing on a specific package).
 *   **Discovery**: The orchestrator checks workspace declarations in `config/drift_workspace.toml` to identify enabled packages, then verifies that `enable_install` is `true` in each package's `drift_package.toml`.
 *   **Mid-Operation Registry Interlock**: The state database at `install/state.toml` is queried. If any package is currently in a `"staging"` or `"installing"` state, execution is aborted unless the `--force` flag is supplied, preventing corruption from a previous midway failure.
+*   **Pre-Flight Redundant WAL Purge**: Before template rendering begins, `purge_redundant_wal_folders` cleans up any stale `backup/<pkg>/wal/` folders for targeted packages that are not in a rollback-eligible state (`log_level=logging.DEBUG`).
 
 #### 2. Stage 1: Alignment Safeguard (System -> Install)
 *   The system executes **Primitive 1: Reverse Sync** on all target packages to capture and reconcile any manual, local modifications made directly on the active host system.
@@ -1423,12 +1501,12 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
         3. *Ignore & Metadata Synchronization*: All `.drift/` control plane metadata (`.drift_ignore`, `drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1 without extra ignore shims.
     - **Staged Transaction Complete (or Dry-Run Simulation)**: In live execution, updates the state registry database to stable `"staged"` and returns a structured `StageResult` containing changed packages and their `PackageStagePlan`s. In dry-run mode (`dry_run=True`), compiles and returns the full `StageResult` with zero mutations to `install/` or `state.toml`.
 
-#### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
+#### 4. Stage 2: Physical Deployment Sequence & Batch Auto-Rollback (Primitive 5)
 For each redeployable package:
 *   **Target Directory Check**: The engine verifies that the package's target directory is absolute and is not nested inside or equal to the workspace root (`target_dir.resolve()` relative to `drift_root.resolve()`).
 *   **Cross-Package Conflict Guard**: Verifies no two deployable packages target identical host file paths (`assert_no_cross_package_conflicts`). Empty directories are excluded from conflict assertions (`include_empty_dirs=False`), allowing shared directory trees across packages.
 *   **Target Migration Check**: If the target directory changed from previous deployments (`target_migrated_from`), Drift undeploys files from the former host location and forces a full redeployment.
-*   **State Transition to `"installing"`**: The state registry database `state.toml` is written to mark the package's state as `"installing"`.
+*   **Stale WAL Cleanup & State Transition to `"installing"`**: Clears any residual `backup/<pkg>/wal/` directory (`clear_package_wal`) and writes `state.toml` to mark the package's state as `"installing"`.
 *   **Declarative Plan Compilation (`plan_package_install`)**:
     - *Intermediate Directory Inspection*: Evaluates all intermediate directory levels between `target_dir` and the destination file, planning `BACKUP_OVERWRITE` and `ENSURE_DIR` if blocked by files or internal symlinks.
     - *Leaf Inspection*: Evaluates leaf destinations according to `install_method` (`symlink` or `copy`), planning `CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, or `BACKUP_OVERWRITE`. Empty directories are planned as `CREATE_DIR` (`mkdir -p`) and never symlinked.
@@ -1436,9 +1514,11 @@ For each redeployable package:
     - *Dry-Run Preview*: If `--dry-run` is active, displays the plan summary and exits without modifying the host filesystem or executing lifecycle hooks.
 *   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`).
 *   **Target Manifest Synchronization**: Synchronizes deployable targets to `state.toml` before physical delivery so crashes have an authoritative list for recovery.
-*   **Plan Execution Phase (`execute_package_actions`)**:
-    - Applies planned operations in topological dependency order: intermediate directory creation, backups to `backup/<pkg>/overwritten/`, atomic file copying or relative symlink creation, and orphan pruning. Elevated permissions are used if `sudo = true` is configured.
-*   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`). The host target directory is accessible via `$drift_package_target_dir`.
+*   **Plan Execution & WAL Recording (`execute_package_actions`)**:
+    - Applies planned operations in topological dependency order: intermediate directory creation, backups to `backup/<pkg>/overwritten/` (stashing any existing backup into `backup/<pkg>/wal/stash/`), atomic file copying or relative symlink creation, and orphan pruning, while recording each reversible operation to `backup/<pkg>/wal/actions.json`. Elevated permissions are used if `sudo = true` is configured.
+*   **Lifecycle Post-Hook & Fatality Evaluation (`failure_is_fatal`)**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`). The host target directory is accessible via `$drift_package_target_dir`. If the hook fails and `hooks.is_failure_fatal(hook_name)` is `True`, the package remains in `"installing"` state and raises `HookExecutionError(is_fatal=True)`. If `is_failure_fatal` is `False`, the package still transitions to `"installed"` and commits its `install/` state before reporting the non-fatal hook error.
+*   **Automatic Whole-Batch Rollback (`_trigger_batch_auto_rollback`)**:
+    - If a fatal exception occurs during `execute_install` and `_should_trigger_auto_rollback` evaluates to `True` under the 3-tier policy ladder (`CLI --rollback` > `[settings] rollback` > `[package] auto_rollback`), Drift automatically invokes **Primitive 8** (`force=False`) across all attempted and rollback-eligible packages in the batch (`plan.packages_install_order`), reverting their host files via WAL and resetting `install/` to `HEAD`.
 *   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, `target_directory`, `install_method`, and `sudo` flag are saved, and the list of successfully deployed paths (including empty directories) is recorded in the `deployed_files` manifest inside `state.toml`.
 
 #### 5. Stage 2: Final State Commit (Primitive 6)
@@ -1447,11 +1527,12 @@ For each redeployable package:
 #### 6. Stage 3: Post-Deployment Workspace Garbage Collection (Primitive 9 - Bulk Mode Only)
 *   **Bulk Deployment Automation**: If a bulk deployment (all active packages) succeeds, the engine automatically triggers **Primitive 9: Workspace Garbage Collection**.
     *   *Note*: When running targeted deployments for specific packages (`drift deploy <pkg>`), Stage 3 GC is bypassed to keep surgical operations isolated.
-*   **Decomposed 4-Phase Execution Pipeline**:
+*   **Decomposed 5-Phase Execution Pipeline**:
     1.  *Orphan Package Uninstallation*: Compares `install/state.toml` against active packages declared in `drift_workspace.toml`. Packages marked as `"installed"` in state but disabled or removed from configuration declarations are automatically uninstalled via **Primitive 7 (Uninstall)** with `force=True` (triggering lifecycle hooks, unlinking/deleting active host files, restoring original backups from `backup/<package>/overwritten/`, pruning package directories, and synchronizing `state.toml`).
-    2.  *Render Database Purge*: Traverses `render/` to identify and remove directories that are zombies (lacking valid config), disabled in workspace config, or whose source folder `src/<pkg>` was deleted. Internal directories (`.git`, `config/`) and forbidden names are strictly preserved.
-    3.  *Install Database Purge*: Traverses `install/` to identify and remove directories that are zombies or are not registered in `state.toml` while disabled/missing from `src/`. Registered packages are protected from raw filesystem removal and handled exclusively via graceful uninstallation in step 1.
-    4.  *Scoped Git Database Commits*: Auto-stages and commits purged folder deletions in `render/` and `install/` repositories, scoping commits specifically to purged package paths.
+    2.  *Ghost Registry Entry Purge*: Removes records from `install/state.toml` whose corresponding `install/<pkg>/` directory is missing on disk.
+    3.  *Render & Install Database Purge*: Traverses `render/` and `install/` to identify and remove directories that are zombies (lacking valid config), disabled in workspace config, or missing from `src/<pkg>`. Registered packages in `install/` are protected from raw filesystem removal and handled exclusively via graceful uninstallation in step 1.
+    4.  *Redundant WAL Directory Purge (`purge_redundant_wal_folders`)*: Purges `backup/<pkg>/wal/` directories for all packages that are not rollback-eligible (cleanly committed `"installed"`, unregistered, or ghost packages), while preserving `wal/` folders for any package with uncommitted transaction state.
+    5.  *Scoped Git Database Commits*: Auto-stages and commits purged folder deletions in `render/` and `install/` repositories, scoping commits specifically to purged package paths.
 
 ---
 

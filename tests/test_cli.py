@@ -999,9 +999,57 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             self.assertTrue(opts.no_reverse_sync)
             self.assertIn("[DRY-RUN] No drifted packages found", mock_out.getvalue())
 
+    def test_cli_deploy_and_apply_rollback_flag_across_backends(self) -> None:
+        """Verifies --rollback {auto,always,yes,never,no} on deploy and apply across Typer and Argparse backends."""
+        from drift.cli import run_argparse_cli
+        from drift.core.constants import RollbackPolicy
+
+        # 1. Default rollback is None on both deploy and apply
+        for runner in (main, run_argparse_cli):
+            with patch("drift.cli.cli_handlers.execute_deploy") as mock_deploy:
+                with patch("sys.stdout", StringIO()):
+                    runner(["-C", self.drift_root, "deploy", "pkg_a"])
+                self.assertTrue(mock_deploy.called)
+                self.assertIsNone(mock_deploy.call_args.kwargs.get("rollback"))
+
+            with patch("drift.cli.cli_handlers.execute_apply") as mock_apply:
+                with patch("sys.stdout", StringIO()):
+                    runner(["-C", self.drift_root, "apply", "pkg_a"])
+                self.assertTrue(mock_apply.called)
+                self.assertIsNone(mock_apply.call_args.kwargs.get("rollback"))
+
+        # 2. All valid --rollback values route and normalize to RollbackPolicy
+        expected_map = {
+            "auto": RollbackPolicy.AUTO,
+            "always": RollbackPolicy.ALWAYS,
+            "yes": RollbackPolicy.ALWAYS,
+            "never": RollbackPolicy.NEVER,
+            "no": RollbackPolicy.NEVER,
+        }
+        for flag_val, expected_policy in expected_map.items():
+            for runner in (main, run_argparse_cli):
+                with patch("drift.cli.cli_handlers.execute_deploy") as mock_deploy:
+                    with patch("sys.stdout", StringIO()):
+                        runner(["-C", self.drift_root, "deploy", "--rollback", flag_val, "pkg_a"])
+                    self.assertEqual(mock_deploy.call_args.kwargs.get("rollback"), expected_policy)
+
+                with patch("drift.cli.cli_handlers.execute_apply") as mock_apply:
+                    with patch("sys.stdout", StringIO()):
+                        runner(["-C", self.drift_root, "apply", "--rollback", flag_val, "pkg_a"])
+                    self.assertEqual(mock_apply.call_args.kwargs.get("rollback"), expected_policy)
+
+        # 3. Invalid --rollback value exits with code 1 (ExitCode.GENERAL_ERROR) across both backends
+        for cmd in ("deploy", "apply"):
+            for runner in (main, run_argparse_cli):
+                with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+                    with self.assertRaises(SystemExit) as cm:
+                        runner(["-C", self.drift_root, cmd, "--rollback", "invalid_choice", "pkg_a"])
+                    self.assertEqual(cm.exception.code, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

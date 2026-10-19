@@ -15,24 +15,24 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`add`** | `drift add <pkg> <paths...> [-n] [--no-hooks] [--json]` | Import system files into a package with dot-prefix translation. |
 | **`status`** | `drift status [packages...] [--json]` | Audit template evolution, active system drift, and pending deltas. |
 | **`diff`** | `drift diff [packages...] [-t\|-s] [--stat] [-y] [--json]` | Visualize diffs across template, sandbox, and active system layers. |
-| **`deploy`** | `drift deploy [packages...] [-f] [-r\|--reinstall] [-c] [-n] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
+| **`deploy`** | `drift deploy [packages...] [-f] [-r\|--reinstall] [-c] [-n] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
 | **`plan`** | `drift plan [packages...] [-a] [-f] [-r] [-c] [--with-hooks] [--no-deps] [--json]` | Full-cycle deployment planning across all pipeline phases without modifying system state. |
 | **`rollback`** | `drift rollback [packages...] [-f] [--no-hooks] [--json]` | Rollback failed deployments and restore systems to last clean state. |
 | **`adopt`** | `drift adopt [packages...] [-i] [--accept-conflicts] [-f] [-n] [--no-render] [--no-reverse-sync\|--no-sync] [--json]` | Incorporate active runtime system drifts back into source templates. |
 | **`uninstall`** | `drift uninstall <packages...> [-f] [--detach] [-n] [--no-deps] [--no-hooks] [--json]` | Uninstall packages or detach management while preserving physical files. |
-| **`gc`** | `drift gc [-n] [--no-hooks] [--json]` | Identify and purge orphan packages and zombie database folders. |
+| **`gc`** | `drift gc [-n] [--no-hooks] [--json]` | Identify and purge orphan packages, zombie database folders, and stale WAL folders. |
 | **`repair`** | `drift repair [-n] [--json]` | Self-heal damaged or missing workspace components and databases. |
 | **`clone`** | `drift clone <git_url> [destination] [-b <branch>] [--depth <N>] [--no-repair] [--json]` | Clone a Git repository and auto-bootstrap/repair the workspace. |
-| **`health`** | `drift health [packages...] [-t <seconds>] [-v] [--json]` | Execute runtime health check probes on installed packages. |
+| **`health`** | `drift health [packages...] [--from <install\|source>] [-t <seconds>] [-v] [--json]` | Execute runtime health check probes on installed packages. |
 | **`complete`** | `drift complete [<shell>] [--install] [--json]` | Generate or install native interactive tab-completion scripts (bash, zsh, fish). |
 | **`help`** | `drift help [topic]` | Display interactive mini-manual documentation pages. |
 | **`render`** | `drift render [packages...] [-c] [-n] [--with-hooks\|--no-hooks] [--json]` | *(Low-Level)* Incremental Merkle DAG compilation of templates into `render/` sandbox. |
 | **`render-commit`** | `drift render-commit [packages...] -m "msg" [--json]` | *(Low-Level)* Stage and commit compiled sandbox changes. |
 | **`reverse-sync`** | `drift reverse-sync [packages...] [--json]` | *(Low-Level)* Pull active system configuration changes into `install/`. |
 | **`stage`** | `drift stage [packages...] [-f] [--no-deps] [--json]` | *(Low-Level)* Stage compiled sandbox templates into `install/` state DB. |
-| **`apply`** | `drift apply [packages...] [-f] [-n] [-r\|--reinstall] [--no-deps] [--no-hooks] [--json]` | *(Low-Level)* Apply state database configurations to host filesystem or preview deployment plan. |
+| **`apply`** | `drift apply [packages...] [-f] [-n] [-r\|--reinstall] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]` | *(Low-Level)* Apply state database configurations to host filesystem or preview deployment plan. |
 | **`install-commit`** | `drift install-commit [packages...] -m "msg" [--json]` | *(Low-Level)* Stage and commit deployed configurations in `install/`. |
-| **`hook`** | `drift hook <pkg> <hook_name> [--json]` | *(Low-Level)* Directly trigger a specific package lifecycle hook script. |
+| **`hook`** | `drift hook <pkg> <hook_name> [--from <install\|render\|source>] [--json]` | *(Low-Level)* Directly trigger a specific package lifecycle hook script. |
 
 ---
 
@@ -126,7 +126,7 @@ Provides deep comparisons between configuration layers:
 
 ---
 
-### F. Safe Deployment: `drift deploy [packages...] [--force] [-r|--reinstall] [-c] [-n|--dry-run] [--no-deps] [--no-hooks] [--json]`
+### F. Safe Deployment: `drift deploy [packages...] [--force] [-r|--reinstall] [-c] [-n|--dry-run] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]`
 Deploys configurations using an atomic two-stage compilation and application engine.
 
 *   **Command Options**:
@@ -135,12 +135,16 @@ Deploys configurations using an atomic two-stage compilation and application eng
     - `-r / --reinstall`: Force full reinstallation of all packages, bypassing stage change skipping. By default, Drift analyzes staging changes (`installed_files`, hook scripts, and `drift_package.toml`) and skips deploying packages whose stage outputs are unchanged. Passing `-r` or `--reinstall` forces all lifecycle hooks and physical file applications to execute regardless of stage changes.
     - `-c / --clean / --no-cache`: Bypasses the render cache and lockfile, forcing clean re-rendering of all templates and static assets during the compilation phase.
     - `-n / --dry-run`: Transparent alias to `drift plan`. Simulates the entire deployment lifecycle without modifying filesystem or Git state.
+    - `--rollback <auto|always|yes|never|no>`: Overrides automatic rollback behavior upon fatal installation or hook failure (`Step 4b`), taking precedence over `[settings] rollback` in `drift_workspace.toml` and `[package] auto_rollback` in `drift_package.toml`:
+        - `auto`: Defers to workspace `[settings] rollback` (which in turn defers to per-package `auto_rollback = true | false` when set to `"auto"`).
+        - `always` / `yes`: Forces automatic whole-batch rollback if any package encounters a fatal failure during physical installation.
+        - `never` / `no`: Disables automatic rollback even for packages declaring `auto_rollback = true`.
     - `--no-deps`: Bypasses missing required package dependency checks during topological ordering and staging.
     - `--no-hooks / --no-hook`: Completely bypasses executing all lifecycle hooks across rendering, deployment, and post-deploy garbage collection.
     - `--json`: Outputs a `DeployResult` in structured JSON format.
 
 #### Stage 0: Pre-flight Checks
-Verifies Git committability on `render/` and `install/`, discovers target packages, and asserts that no targeted package is in an uncommitted midway transaction state (`assert_no_midway_deploy_state`).
+Verifies Git committability on `render/` and `install/`, discovers target packages, asserts that no targeted package is in an uncommitted midway transaction state (`assert_no_midway_deploy_state`), and purges any stale `backup/<pkg>/wal/` folders for targeted packages that are not in a rollback-eligible state (`purge_redundant_wal_folders`).
 
 #### Stage 1: Template Compilation & Sentinel Drift Audit
 1.  **Render**: Compiles `src/` templates into `render/` (`Primitive 2`).
@@ -155,7 +159,7 @@ Verifies Git committability on `render/` and `install/`, discovers target packag
 1.  **Staging Pre-Flight (`Step 3a`)**: Read-only staging validation and delta resolution (`prepare_stage_packages`).
 2.  **Deployment Pre-Flight (`Step 4a`)**: Validates destination permissions, hook existence, and cross-package path collisions against `render/` (`prepare_install` with `install_path_mask`) *before* mutating `install/` or `state.toml`, eliminating midway rollbacks on pre-flight errors.
 3.  **Physical Staging (`Step 3b`)**: Mirrors staged changes from `render/` to `install/` (`execute_stage_packages`).
-4.  **Physical Deployment (`Step 4b`)**: Delivers files via atomic symlink/copy (`execute_install`).
+4.  **Physical Deployment (`Step 4b`)**: Clears any stale WAL (`clear_package_wal`), delivers files via atomic symlink/copy while recording reversible operations in `backup/<pkg>/wal/actions.json` (`execute_install`), and triggers automatic whole-batch rollback via `Primitive 8` if a fatal failure occurs under an active auto-rollback policy.
 5.  **Commit Install (`Step 5`)**: Scope-commits deployed configurations in `install/` (`Primitive 6`).
 
 #### Stage 3: Post-deploy Garbage Collection
@@ -211,17 +215,21 @@ Simulates the entire multi-stage deployment pipeline end-to-end in an ephemeral 
 ---
 
 ### H. Recovery: `drift rollback [packages...] [--force] [--no-hooks] [--json]`
-Reverts failed midway deployments and restores system files to the last committed clean state.
+Reverts failed or uncommitted deployments and restores system files and `install/` state to the last committed clean state.
 *   **Command Options**:
-    - `packages...`: Optional package name(s) to rollback. If omitted, discovers all packages in the local state database.
-    - `--force / -f`: Bypasses the failed midway conflict state safeguard (`staging` or `installing`), allowing a hard reset of packages to their last committed clean Git HEAD state even if they are currently in `installed` state.
-    - `--no-hooks / --no-hook`: Bypasses execution of lifecycle hooks during rollback.
-    - `--json`: Outputs a list of rolled-back package names in JSON format.
-*   **Mechanism (Primitive 8)**:
-    1.  Resets `install/` database for target packages to the last clean HEAD commit.
-    2.  Resets `install/state.toml` back to HEAD.
-    3.  Performs a **Full Reinstall** restoring physical target system files.
-    4.  Restores state registry entries back to `"installed"`.
+    - `packages...`: Optional package name(s) to rollback. If omitted, discovers all rollback-eligible packages in `install/state.toml` (or all tracked packages when `--force` is passed).
+    - `--force / -f`: Bypasses the rollback eligibility check (`check_is_package_rollback_eligible`), allowing a hard reset and redeployment to clean Git `HEAD` even for packages that are in `"installed"` state with no uncommitted `install/` changes.
+    - `--no-hooks / --no-hook`: Bypasses execution of lifecycle hooks during rollback recovery.
+    - `--json`: Outputs a `RollbackResult` object in JSON format.
+*   **Rollback Eligibility Without `--force`**:
+    A package is eligible for rollback without `--force` when its `install/<pkg>/` directory exists and either:
+    1. Its state in `install/state.toml` is in `ROLLBACK_ELIGIBLE_STATES` (`"staging"`, `"staged"`, `"installing"`), **or**
+    2. Its state is `"installed"` and it has uncommitted changes in `install/` (`check_is_package_uncommitted_in_install` — e.g. an earlier package in a multi-package batch that completed `Step 4b` before a later package crashed prior to `Step 5` `install-commit`, or a newly installed package not yet present in `HEAD:state.toml`).
+*   **Mechanism (Primitive 8 — 3-Step WAL Recovery Pipeline)**:
+    Evaluates target packages in unified reverse topological dependency order (`resolve_package_uninstall_order`):
+    1.  **Step 1 (WAL Reversal & Stash Restoration)**: Reverses recorded host mutations from `backup/<pkg>/wal/actions.json` in LIFO order (`rollback_package_wal`) and restores any stashed prior backups from `backup/<pkg>/wal/stash/` (`restore_wal_stash`).
+    2.  **Step 2 (Git Checkout / Uncommitted First-Time Pruning)**: Checks out `install/<pkg>/` and `install/state.toml` from `HEAD` for committed packages, or purges untracked `install/<pkg>/` and removes the entry from `state.toml` for uncommitted first-time installations.
+    3.  **Step 3 (Incremental Convergence & Hook Restoration)**: For committed packages, runs incremental `run_primitive_5_install(reinstall=False, run_hooks_when_unchanged=True, rollback=RollbackPolicy.NEVER)` with `raise_on_error=False` so any residual host drift is converged and lifecycle hooks (`pre_update` / `post_update`) restore service state without triggering recursive auto-rollback.
 
 ---
 
@@ -288,7 +296,9 @@ Incorporate runtime system and GUI changes back into your declarative source tem
 ### K. Garbage Collection: `drift gc [-n] [--no-hooks] [--json]`
 Identifies and purges orphaned and untracked database entities across the workspace.
 *   **Orphan Packages**: Uninstalls packages present in `install/` state database but disabled in `drift_workspace.toml`.
-*   **Zombie Folders**: Identifies and purges package subdirectories in `render/` and `install/` that lack valid configuration files.
+*   **Ghost Registry Entries**: Removes entries from `install/state.toml` whose corresponding `install/<pkg>/` directory is missing on disk.
+*   **Zombie Folders**: Identifies and purges package subdirectories in `render/` and `install/` that lack valid configuration files or belong to unregistered/disabled packages.
+*   **Redundant WAL Folders**: Purges stale `backup/<pkg>/wal/` Write-Ahead Log directories for packages that are cleanly committed (`"installed"` with no uncommitted changes in `install/`), unregistered in `state.toml`, or ghost entries, while preserving WAL folders for any rollback-eligible package.
 
 ---
 
@@ -364,16 +374,17 @@ For advanced continuous integration, scripting, and pipeline automation:
 2.  **`drift render-commit [packages...] -m "message" [--json]`**: Stages and commits compiled sandbox changes (`Primitive 3`).
 3.  **`drift reverse-sync [packages...] [--json]`**: Pulls live host configuration changes into `install/` (`Primitive 1`).
 4.  **`drift stage [packages...] [--force] [--no-deps] [--json]`**: Computes delta and stages sandbox to `install/` (`Primitive 4`). Pass `--force` to bypass midway failed state checks and uncommitted modifications in `install/` *(does not bypass `enable_install = false`)*. Pass `--no-deps` to bypass missing prerequisite checks.
-5.  **`drift apply [packages...] [--force] [-n] [-r|--reinstall] [--no-deps] [--no-hooks] [--json]`**: Deploys `install/` state to host paths (`Primitive 5`).
+5.  **`drift apply [packages...] [--force] [-n] [-r|--reinstall] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]`**: Deploys `install/` state to host paths (`Primitive 5`).
     - `-n / --dry-run`: Simulates deployment and previews the inspectable deployment plan without modifying the host filesystem or executing lifecycle hooks.
     - `-r / --reinstall`: Forces full reinstallation and lifecycle hook execution regardless of change status.
       > [!NOTE]
       > **Non-Deployable Files & Standalone `apply` Pitfall**: Primitive 5's change-detection is purely host-driven: its planner evaluates discrepancies between deployable payload files in `install/<pkg>/` and target host filesystem state. It has no independent awareness of non-deployable control-plane modifications (such as edits to `.drift/hooks/*`, `drift_package.toml`, or `.drift_ignore`). If only a lifecycle hook script or package config was updated while deployable files on the host remain identical, `drift apply` without `-r` will skip the package and bypass hook execution. Always supply `-r / --reinstall` when running standalone `drift apply` after modifying lifecycle hooks or package configurations directly in `install/`. (The high-level `drift deploy` pipeline handles this automatically by tracking staging deltas and passing `reinstall=True` to changed packages).
     - `--force / -f`: Bypasses midway failed state checks (`staging` / `installing` in `install/state.toml`). *(Does not bypass `enable_install = false`)*.
+    - `--rollback <auto|always|yes|never|no>`: Overrides automatic whole-batch rollback behavior when a fatal installation or hook failure occurs during `apply` (`auto`, `always`/`yes`, `never`/`no`).
     - `--no-deps`: Bypasses missing prerequisite dependency checks during topological ordering.
     - `--no-hooks / --no-hook`: Bypasses executing lifecycle hooks (`pre_install`, `post_install`, etc.).
 6.  **`drift install-commit [packages...] -m "message" [--json]`**: Commits deployed configurations inside `install/` (`Primitive 6`).
-7.  **`drift hook <package> <hook-name> [--json]`**: Directly executes a specific lifecycle hook script for a single package.
+7.  **`drift hook <package> <hook-name> [--from <install|render|source>] [--json]`**: Directly executes a specific lifecycle hook script for a single package.
 
 ---
 
@@ -394,7 +405,7 @@ Drift enforces a clear architectural distinction between **runtime safety safegu
 | **`drift deploy --force`** | Primitive 4, 5, Pipeline | • Bypasses Stage 1 Sentinel Drift audit (proceeds despite uncommitted host changes in `install/`)<br>• Bypasses `"staging"` / `"installing"` mid-failure state locks in `state.toml`<br>• Bypasses uncommitted modifications check in `install/`<br>• Bypasses missing required package dependencies | `enable_install = false` is strictly respected |
 | **`drift stage --force`** | Primitive 4 | • Bypasses `"staging"` / `"installing"` mid-failure state locks in `state.toml`<br>• Ignores uncommitted modifications in `install/`<br>• Bypasses missing required package dependencies | `enable_install = false` is strictly respected |
 | **`drift apply --force`** | Primitive 5 | • Bypasses `"staging"` / `"installing"` mid-failure state locks in `state.toml`<br>• Bypasses missing required package dependencies | `enable_install = false` is strictly respected |
-| **`drift rollback --force`** | Primitive 8 | Bypasses conflict state check; forces hard reset to clean Git HEAD even for packages in `"installed"` state | Valid package tracking in `install/` |
+| **`drift rollback --force`** | Primitive 8 | Bypasses rollback eligibility check; forces hard reset to clean Git HEAD even for cleanly committed `"installed"` packages | Valid package tracking in `install/` |
 | **`drift adopt --force`** | Primitive Adopt | Bypasses Git cleanliness safeguard on target source files in `src/<pkg>/` (adopts drifts despite dirty source files) | Valid patch application |
 | **`drift uninstall --force`** | Primitive 7 | • Bypasses active package safeguard (uninstalls packages still enabled in `drift_workspace.toml`)<br>• Bypasses remaining package broken dependency safeguard | Only installed packages are uninstalled |
 | **`drift init --force`** | Workspace Init | Overwrites existing workspace templates and database configurations | Root path safety checks |

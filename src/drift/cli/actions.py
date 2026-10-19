@@ -27,7 +27,7 @@ Requires a healthy workspace (calls assert_workspace_healthy):
   execute_gc              -> P9  run_primitive_9_purge_workspace_garbage
   execute_new_package     -> P10 run_primitive_10_create_new_package
   execute_add             -> P11 run_primitive_11_add_resources
-  execute_deploy          ->     run_primitive_deploy_pipeline_with_error_handling
+  execute_deploy          ->     run_primitive_deploy_pipeline
   execute_adopt           ->     run_primitive_adopt_drifts
   execute_diff            -> P15 run_primitive_15_workspace_diff
   execute_status          -> P16 run_primitive_status
@@ -60,7 +60,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Union, Any, Sequence
 
-from ..core.constants import CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, ExitCode, PackageStage
+from ..core.constants import CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, ExitCode, InstallMethod, PackageStage, RollbackPolicy
 from ..core.exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, InstallCollisionError
 from ..utils.host_facts import init_system_facts
 from ..config.workspace_config import WorkspaceConfig
@@ -305,6 +305,7 @@ def execute_apply(
     no_deps: bool = False,
     dry_run: bool = False,
     verbose: bool = False,
+    rollback: Optional[RollbackPolicy] = None,
 ) -> None:
     """Core function to execute state application (apply), shared by both CLI backends."""
     from ..primitives.install_repo import run_primitive_5_install, InstallOptions
@@ -324,6 +325,7 @@ def execute_apply(
             flags=flags,
             no_deps=no_deps,
             dry_run=dry_run,
+            rollback=rollback,
         ),
     )
     if json_mode:
@@ -374,8 +376,8 @@ def execute_new_package(
     drift_root: Path,
     package_name: str,
     force: bool = False,
-    target_directory: Optional[str] = None,
-    install_method: Optional[str] = None,
+    target_directory: Optional[Path] = None,
+    install_method: Optional[InstallMethod] = None,
     json_mode: bool = False
 ) -> None:
     """Core function to create a new package, shared by both CLI backends."""
@@ -530,21 +532,20 @@ def execute_adopt(
 def execute_diff(
     drift_root: Path,
     package_names: Sequence[str] = (),
-    diff_type: Union[WorkspaceDiffType, str] = WorkspaceDiffType.PENDING,
+    diff_type: WorkspaceDiffType = WorkspaceDiffType.PENDING,
     side_by_side: bool = False,
     stat: bool = False,
     json_mode: bool = False
 ) -> None:
     """Core function to visualize changes, shared by both CLI backends."""
     prepare_cli_environment(drift_root)
-    diff_type_enum = diff_type if isinstance(diff_type, WorkspaceDiffType) else WorkspaceDiffType(diff_type)
     assert_workspace_healthy(drift_root, command_name="diff")
     workspace_config = load_workspace_config_default(drift_root)
     from ..primitives.workspace_diff import run_primitive_15_workspace_diff
     diff_result = run_primitive_15_workspace_diff(
         workspace_config,
         package_names=package_names,
-        diff_type=diff_type_enum,
+        diff_type=diff_type,
         side_by_side=side_by_side,
         stat=stat,
         quiet=json_mode,
@@ -556,7 +557,7 @@ def execute_diff(
 def execute_add(
     drift_root: Path,
     package_name: str,
-    import_paths: List[str],
+    import_paths: Sequence[Path],
     dry_run: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False,
@@ -570,9 +571,8 @@ def execute_add(
     assert_workspace_healthy(drift_root, command_name="add")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
-    paths = [Path(p) for p in import_paths]
     res = run_primitive_11_add_resources(
-        workspace_config, package_name, paths, dry_run=dry_run, flags=flags
+        workspace_config, package_name, list(import_paths), dry_run=dry_run, flags=flags
     )
     if json_mode:
         print(res.to_json())
@@ -616,22 +616,29 @@ def execute_deploy(
     reinstall: bool = False,
     no_deps: bool = False,
     no_cache: bool = False,
+    rollback: Optional[RollbackPolicy] = None,
 ) -> None:
     """Core function to execute transactional deploy workflow, shared by both CLI backends."""
-    from ..primitives.deploy_repo import run_primitive_deploy_pipeline_with_error_handling
+    from ..primitives.deploy_repo import run_primitive_deploy_pipeline, DeployOptions
     from ..hooks.lifecycle_hooks import HookExecFlags
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="deploy")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode, no_cache=no_cache)
-    res = run_primitive_deploy_pipeline_with_error_handling(
-        workspace_config=workspace_config,
-        packages_to_deploy=package_names,
+    options = DeployOptions(
         force=force,
-        flags=flags,
         reinstall=reinstall,
         no_deps=no_deps,
+        no_hooks=no_hooks,
+        no_cache=no_cache,
+        rollback=rollback,
+        flags=flags,
+    )
+    res = run_primitive_deploy_pipeline(
+        workspace_config=workspace_config,
+        packages_to_deploy=package_names,
+        options=options,
     )
     if json_mode:
         print(res.to_json())
@@ -721,7 +728,7 @@ def execute_health(
     json_mode: bool = False,
     verbose: bool = False,
     timeout: Optional[int] = None,
-    from_stage: Union[str, PackageStage] = PackageStage.INSTALL,
+    from_stage: PackageStage = PackageStage.INSTALL,
 ) -> None:
     """Core function to run package health check probes, shared by both CLI backends."""
     prepare_cli_environment(drift_root)
@@ -790,7 +797,7 @@ def execute_hook(
     package_name: str,
     hook_name: str,
     json_mode: bool = False,
-    from_stage: Optional[Union[str, PackageStage]] = None,
+    from_stage: Optional[PackageStage] = None,
 ) -> None:
     """Core function to trigger a single package lifecycle hook, shared by both CLI backends."""
     prepare_cli_environment(drift_root)

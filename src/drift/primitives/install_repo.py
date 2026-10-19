@@ -105,6 +105,7 @@ from ..config.package_config import (
 from ..core.constants import (
     InstallMethod,
     BackupSubfolder,
+    RollbackPolicy,
 )
 from ..core.exceptions import (
     ConfigError,
@@ -299,6 +300,7 @@ def execute_package_install_impl(
     options: InstallOptions,
 ) -> PackageInstallResult:
     """Performs state transition, hooks, physical file actions, and registry updates under active package envs."""
+    clear_package_wal(context.backup_pkg_dir, sudo=context.sudo)
     state_registry.set_package_state(context.pkg_name, "installing")
     state_registry.save()
 
@@ -309,7 +311,7 @@ def execute_package_install_impl(
         else:
             context.hooks.trigger_pre_update(flags=hook_flags)
     except HookExecutionError as e:
-        if not e.requires_rollback:
+        if not e.is_fatal:
             if context.is_first_time:
                 state_registry.packages.pop(context.pkg_name, None)
             else:
@@ -348,7 +350,7 @@ def execute_package_install_impl(
             context.hooks.trigger_post_update(flags=hook_flags)
         success = True
     except HookExecutionError as e:
-        if not e.requires_rollback:
+        if not e.is_fatal:
             no_rollback_err = True
             logger.error(f"❌ Post-install hook '{e.hook_name}' failed for package '{context.pkg_name}'. Files remain installed (no rollback needed).")
         raise
@@ -643,6 +645,72 @@ def prepare_install(
     )
 
 
+def _should_trigger_auto_rollback(
+    policy: RollbackPolicy,
+    context: PackageInstallContext,
+) -> bool:
+    """Determines whether a fatal installation failure should trigger automatic rollback."""
+    if policy == RollbackPolicy.ALWAYS:
+        return True
+    if policy == RollbackPolicy.NEVER:
+        return False
+    return context.auto_rollback
+
+
+def _wrap_subcommand_error(pkg: str, e: subprocess.CalledProcessError) -> RuntimeError:
+    """Formats, logs, and wraps a subprocess.CalledProcessError into a logged RuntimeError."""
+    stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+    stdout_str = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
+    err_msg = (
+        f"Subcommand failed during package '{pkg}' installation.\n"
+        f"Command: {shlex.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)}\n"
+        f"Exit Code: {e.returncode}"
+    )
+    if stderr_str.strip():
+        err_msg += f"\nStderr:\n{stderr_str.strip()}"
+    if stdout_str.strip():
+        err_msg += f"\nStdout:\n{stdout_str.strip()}"
+    logger.error(err_msg)
+    return mark_logged(RuntimeError(err_msg))
+
+
+def _trigger_batch_auto_rollback(
+    workspace_config: WorkspaceConfig,
+    state_registry: StateRegistry,
+    attempted_pkgs: Sequence[str],
+    batch_candidates: Sequence[str],
+    failing_pkg: str,
+    hook_flags: HookExecFlags,
+    exc: BaseException,
+) -> None:
+    """Executes automatic rollback across all attempted and rollback-eligible packages in the current batch."""
+    from .rollback_repo import run_primitive_8_rollback_recovery
+
+    install_base = workspace_config.install_path
+    eligible_in_batch = [
+        p for p, _ in state_registry.get_rollback_eligible_packages(
+            target_packages=batch_candidates,
+            install_base=install_base,
+        )
+    ]
+    rollback_targets = list(dict.fromkeys(list(attempted_pkgs) + eligible_in_batch))
+    logger.warning(
+        f"🔄 Auto-rollback triggered by failure in package '{failing_pkg}'. "
+        f"Reverting batch packages: {', '.join(rollback_targets)}"
+    )
+    try:
+        run_primitive_8_rollback_recovery(
+            workspace_config=workspace_config,
+            package_names=rollback_targets,
+            force=False,
+            flags=hook_flags,
+        )
+        setattr(exc, "auto_rolled_back", True)
+    except Exception as rb_exc:
+        logger.error(f"❌ Auto-rollback failed: {rb_exc}")
+        setattr(exc, "auto_rolled_back", False)
+
+
 def execute_install(
     workspace_config: WorkspaceConfig,
     plan: InstallPlan,
@@ -689,12 +757,16 @@ def execute_install(
         assert_can_escalate()
 
     hook_flags = opts.get_hook_flags(settings=workspace_config.settings)
+    rollback_policy = opts.resolve_rollback_policy(settings=workspace_config.settings)
     results: List[PackageInstallResult] = []
+    attempted_pkgs: List[str] = []
+    batch_candidates = list(plan.pkg_metadata_map.keys()) or list(plan.packages_install_order)
 
     # 1. Execute physical installation strictly in topological packages_install_order
     for pkg in plan.packages_install_order:
         context = plan.contexts[pkg]
         pkg_plan = plan.package_plans[pkg]
+        attempted_pkgs.append(pkg)
         try:
             pkg_res = execute_package_install(
                 context=context,
@@ -704,20 +776,20 @@ def execute_install(
                 options=opts,
             )
             results.append(pkg_res)
-        except subprocess.CalledProcessError as e:
-            stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
-            stdout_str = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
-            err_msg = (
-                f"Subcommand failed during package '{pkg}' installation.\n"
-                f"Command: {shlex.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)}\n"
-                f"Exit Code: {e.returncode}"
-            )
-            if stderr_str.strip():
-                err_msg += f"\nStderr:\n{stderr_str.strip()}"
-            if stdout_str.strip():
-                err_msg += f"\nStdout:\n{stdout_str.strip()}"
-            logger.error(err_msg)
-            raise mark_logged(RuntimeError(err_msg)) from e
+        except Exception as e:
+            target_exc = _wrap_subcommand_error(pkg, e) if isinstance(e, subprocess.CalledProcessError) else e
+            is_fatal = target_exc.is_fatal if isinstance(target_exc, HookExecutionError) else True
+            if is_fatal and _should_trigger_auto_rollback(rollback_policy, context):
+                _trigger_batch_auto_rollback(
+                    workspace_config=workspace_config,
+                    state_registry=plan.state_registry,
+                    attempted_pkgs=attempted_pkgs,
+                    batch_candidates=batch_candidates,
+                    failing_pkg=pkg,
+                    hook_flags=hook_flags,
+                    exc=target_exc,
+                )
+            raise target_exc
 
     # 2. Append skipped packages results at last
     for pkg in plan.skipped_packages:

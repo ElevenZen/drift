@@ -28,10 +28,10 @@ from .install_repo import (
     run_primitive_6_commit_install_repo,
     InstallOptions,
 )
-from .workspace_gc import run_primitive_9_purge_workspace_garbage
+from .workspace_gc import run_primitive_9_purge_workspace_garbage, purge_redundant_wal_folders
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.exceptions import HookExecutionError, DriftError, is_drift_error, is_logged, mark_logged
-from ..core.constants import STATE_REGISTRY_FILE_NAME, InstallMethod
+from ..core.constants import STATE_REGISTRY_FILE_NAME, InstallMethod, RollbackPolicy
 from ..core.state_registry import load_state_registry
 from ..models import (
     NextActionType,
@@ -365,22 +365,31 @@ def execute_physical_install_step(
             plan=install_plan,
         )
         return install_res.packages, CompletedStep(4, "physical_install")
-    except HookExecutionError as e:
-        if e.requires_rollback:
-            print_emergency_recovery_card(failed_step, str(e), list(target_pkgs))
-            raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
-        # No rollback needed, so commit the changes here.
-        try:
-            run_primitive_6_commit_install_repo(
-                workspace_config,
-                commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
-                target_pkgs=list(pkgs_to_install),
-            )
-        except Exception as commit_err:
-            logger.error(f"Failed to commit install/ repository changes following non-rollback hook failure: {commit_err}")
-        logger.error(f"❌ [DEPLOY ABORTED] {failed_step} stopped due to hook failure in '{e.package}'.")
-        raise mark_logged(RuntimeError(f"{failed_step} stopped due to hook failure in '{e.package}': {e.message}")) from e
     except Exception as e:
+        if isinstance(e, HookExecutionError) and not e.is_fatal:
+            # No rollback needed, so commit the changes here.
+            try:
+                run_primitive_6_commit_install_repo(
+                    workspace_config,
+                    commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
+                    target_pkgs=list(pkgs_to_install),
+                )
+            except Exception as commit_err:
+                logger.error(f"Failed to commit install/ repository changes following non-rollback hook failure: {commit_err}")
+            logger.error(f"❌ [DEPLOY ABORTED] {failed_step} stopped due to hook failure in '{e.package}'.")
+            raise mark_logged(RuntimeError(f"{failed_step} stopped due to hook failure in '{e.package}': {e.message}")) from e
+
+        if getattr(e, "auto_rolled_back", False):
+            pkg_suffix = f" in '{e.package}'" if isinstance(e, HookExecutionError) else ""
+            detail = e.message if isinstance(e, HookExecutionError) else str(e)
+            logger.error(
+                f"❌ [DEPLOY ABORTED] {failed_step} failed{pkg_suffix}. "
+                "Batch packages were automatically rolled back to their last committed clean state."
+            )
+            raise mark_logged(
+                RuntimeError(f"Auto-rollback completed after {failed_step} failed{pkg_suffix}: {detail}")
+            ) from e
+
         print_emergency_recovery_card(failed_step, str(e), list(target_pkgs))
         raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
 
@@ -418,15 +427,13 @@ def execute_install_commit_step(
 def execute_sequential_compile_and_apply(
     workspace_config: WorkspaceConfig,
     target_pkgs: List[str],
-    force: bool = False,
-    flags: Optional[HookExecFlags] = None,
-    reinstall: bool = False,
-    no_deps: bool = False,
+    options: Optional[DeployOptions] = None,
 ) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
     """Sequential Compile, Sentinel Audit, Pre-flight Planning, and Physical Apply pipeline."""
     logger.info("🚀 Starting sequential compilation and apply pipeline...")
+    opts = options or DeployOptions()
     completed_steps: List[CompletedStep] = []
-    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
+    hook_flags = opts.get_hook_flags(settings=workspace_config.settings)
 
     # 1. Render raw templates to sandbox
     completed_steps.append(
@@ -439,11 +446,11 @@ def execute_sequential_compile_and_apply(
     )
 
     # Sentinel Drift Auditing (after render so convergent host changes can be auto-resolved against render/)
-    check_and_prevent_system_drifts(workspace_config, target_pkgs, force=force)
+    check_and_prevent_system_drifts(workspace_config, target_pkgs, force=opts.force)
 
     # 3a. Sandbox staging pre-flight validation and delta resolution (Read-Only)
     stage_plan = prepare_staging_step(
-        workspace_config, target_pkgs, force=force, no_deps=no_deps
+        workspace_config, target_pkgs, force=opts.force, no_deps=opts.no_deps
     )
     if stage_plan is None:
         logger.info("✨ No active packages are enabled for staging/deployment. Skipping physical deployment.")
@@ -453,7 +460,7 @@ def execute_sequential_compile_and_apply(
     pkgs_to_install = resolve_packages_to_install(
         stage_plan=stage_plan,
         target_pkgs=target_pkgs,
-        reinstall=reinstall,
+        reinstall=opts.reinstall,
     )
 
     # NOTE [Stage Delta Filter & Unchanged Host Hook Bridge]:
@@ -464,18 +471,19 @@ def execute_sequential_compile_and_apply(
     # deployable files against host state. If a staging change only affected non-deployable files (e.g.
     # an updated lifecycle hook script or altered hook flags), Primitive 5 would see 0 host mutations
     # and skip the package unless run_hooks_when_unchanged=True (or reinstall=True).
-    # Therefore, we pass reinstall=reinstall and run_hooks_when_unchanged=True so file delivery remains
+    # Therefore, we pass reinstall=opts.reinstall and run_hooks_when_unchanged=True so file delivery remains
     # strictly incremental (unless --reinstall was explicitly requested), while ensuring that all packages
     # selected for deployment execute their lifecycle hooks and update state.toml.
     install_plan: Optional[InstallPlan] = None
     if pkgs_to_install:
         install_options = InstallOptions(
             resolve_symlinks=True,
-            force=force,
-            reinstall=reinstall,
+            force=opts.force,
+            reinstall=opts.reinstall,
             run_hooks_when_unchanged=True,
             flags=hook_flags,
-            no_deps=no_deps,
+            no_deps=opts.no_deps,
+            rollback=opts.rollback,
         )
         # 4a. Deployment pre-flight validation against render/ before mutating install/ or state.toml
         install_plan = prepare_physical_install_step(
@@ -514,30 +522,23 @@ def execute_sequential_compile_and_apply(
     return installed_packages, completed_steps
 
 
-def run_primitive_deploy_pipeline(
+def execute_deploy_pipeline(
     workspace_config: WorkspaceConfig,
     packages_to_deploy: Sequence[str] = (),
-    force: bool = False,
-    flags: Optional[HookExecFlags] = None,
-    reinstall: bool = False,
-    no_deps: bool = False,
+    options: Optional[DeployOptions] = None,
 ) -> DeployResult:
     """Main deployment pipeline controller running pre-flight guards, compile, sentinel audit, and apply.
 
     Args:
         workspace_config: The workspace configuration instance.
         packages_to_deploy: Specific package name(s) to deploy, or empty/omitted for all active packages.
-        force: If True, bypasses the Sentinel Drift check (capturing and committing a drift snapshot
-            in install/ before overwriting) and passes force to Primitive 4 (staging) and Primitive 5
-            (install) to bypass midway failed state checks and uncommitted modification safeguards.
-            Note: Does NOT bypass 'enable_install = false' package configurations.
-        flags: Optional HookExecFlags controlling hook execution options.
-        reinstall: If True, forces full reinstallation of all requested packages regardless of staging delta.
-        no_deps: If True, bypasses missing required package dependency checks.
+        options: Optional DeployOptions controlling force, reinstall, no_deps, rollback, and hook flags.
 
     Returns:
         DeployResult containing detailed status and deployed packages.
     """
+    opts = options or DeployOptions()
+
     # 0. Pre-flight checks: Verify render/ and install/ repositories can commit successfully
     logger.info("🔍 Running pre-flight Git configuration checks...")
     assert_repo_can_commit(workspace_config.render_path)
@@ -556,16 +557,14 @@ def run_primitive_deploy_pipeline(
         )
 
     # Pre-flight midway transaction state check before rendering templates
-    assert_no_midway_deploy_state(workspace_config, target_pkgs, force=force)
+    assert_no_midway_deploy_state(workspace_config, target_pkgs, force=opts.force)
+    purge_redundant_wal_folders(workspace_config, target_pkgs=target_pkgs, log_level=logging.DEBUG)
 
     # Deploy Pipeline Execution (Render -> Render-Commit -> Sentinel Audit -> Stage & Install Plan -> Stage & Install Execute)
     deployed_packages, completed_steps = execute_sequential_compile_and_apply(
         workspace_config,
         target_pkgs,
-        force=force,
-        flags=flags,
-        reinstall=reinstall,
-        no_deps=no_deps,
+        options=opts,
     )
 
     # Call garbage collection on global deploy
@@ -573,7 +572,9 @@ def run_primitive_deploy_pipeline(
     if not packages_to_deploy:
         logger.info("🧹 Performing global deployment garbage collection...")
         gc_res = run_primitive_9_purge_workspace_garbage(
-            workspace_config, dry_run=False, flags=flags
+            workspace_config,
+            dry_run=False,
+            flags=opts.get_hook_flags(settings=workspace_config.settings),
         )
 
     if deployed_packages:
@@ -592,34 +593,26 @@ def run_primitive_deploy_pipeline(
     )
 
 
-def run_primitive_deploy_pipeline_with_error_handling(
+def run_primitive_deploy_pipeline(
     workspace_config: WorkspaceConfig,
     packages_to_deploy: Sequence[str] = (),
-    force: bool = False,
-    flags: Optional[HookExecFlags] = None,
-    reinstall: bool = False,
-    no_deps: bool = False,
+    options: Optional[DeployOptions] = None,
 ) -> DeployResult:
     """Executes the deployment pipeline, catching exceptions and returning a structured DeployResult.
 
     Args:
         workspace_config: The workspace configuration instance.
         packages_to_deploy: Specific package name(s) to deploy, or None for all active packages.
-        force: If True, bypasses safeguards and proceeds with deployment.
-        flags: Optional HookExecFlags controlling hook execution options.
-        no_deps: If True, bypasses missing required package dependency checks.
+        options: Optional DeployOptions controlling force, reinstall, no_deps, rollback, and hook flags.
 
     Returns:
         DeployResult containing detailed status, deployed packages, or failure details.
     """
     try:
-        return run_primitive_deploy_pipeline(
+        return execute_deploy_pipeline(
             workspace_config=workspace_config,
             packages_to_deploy=packages_to_deploy,
-            force=force,
-            flags=flags,
-            reinstall=reinstall,
-            no_deps=no_deps,
+            options=options,
         )
     except Exception as e:
         err_str = str(e)

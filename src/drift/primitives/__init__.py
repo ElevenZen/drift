@@ -99,8 +99,8 @@ from .workspace_status import (
     run_primitive_status,
 )
 from .deploy_repo import (
+    execute_deploy_pipeline,
     run_primitive_deploy_pipeline,
-    run_primitive_deploy_pipeline_with_error_handling,
     DeployOptions,
 )
 from .plan_repo import (
@@ -199,8 +199,8 @@ __all__ = [
     "run_primitive_15_workspace_diff",
     "PackageStatus",
     "run_primitive_status",
+    "execute_deploy_pipeline",
     "run_primitive_deploy_pipeline",
-    "run_primitive_deploy_pipeline_with_error_handling",
     "DeployOptions",
     "preview_deploy",
     "run_primitive_plan",

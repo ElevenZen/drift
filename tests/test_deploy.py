@@ -9,14 +9,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, InstallMethod
-from drift.models import NextActionType
+from drift.models import DeployOptions, NextActionType
 from drift.core.exceptions import HookMissingError, TargetPermissionError
 from drift.config.workspace_config import WorkspaceConfig
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.state_registry import load_state_registry, save_state_registry
 from drift.primitives.deploy_repo import (
+    execute_deploy_pipeline,
     run_primitive_deploy_pipeline,
-    run_primitive_deploy_pipeline_with_error_handling,
 )
 from drift.primitives.rollback_repo import run_primitive_8_rollback_recovery
 from drift.utils.git_utils import get_git_status_porcelain
@@ -123,7 +123,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
         # 3. Running deploy should raise RuntimeError because of drift
         with self.assertRaises(RuntimeError) as context:
-            run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+            execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         self.assertIn("[DEPLOY ABORTED] System drift detected", str(context.exception))
 
@@ -137,7 +137,11 @@ target_directory = "{self.system_target_dir.as_posix()}"
         target_file.write_text("Modified on host system directly!", encoding="utf-8")
 
         # 3. Running deploy with force=True should succeed and overwrite active drift
-        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], force=True)
+        run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_a"],
+            options=DeployOptions(force=True),
+        )
 
         self.assertEqual(target_file.read_text(encoding="utf-8"), "Hello source config!")
 
@@ -177,7 +181,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
         try:
             with self.assertRaises(RuntimeError) as context:
-                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         finally:
             sys.stderr = original_stderr
 
@@ -195,7 +199,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         mock_render.side_effect = ValueError("rendering error")
         
         with self.assertRaises(RuntimeError) as context:
-            run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+            execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         
         self.assertIn("Step 1 (Template Rendering) failed.", str(context.exception))
 
@@ -212,7 +216,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
         try:
             with self.assertRaises(RuntimeError) as context:
-                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         finally:
             sys.stderr = original_stderr
         
@@ -222,9 +226,23 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
     @patch("drift.primitives.deploy_repo.run_primitive_9_purge_workspace_garbage")
     def test_global_deploy_calls_gc(self, mock_gc) -> None:
-        """Verifies that global deploy (packages_to_deploy=()) calls GC at the end."""
+        """Verifies that global deploy (packages_to_deploy=()) calls GC at the end with resolved hook flags."""
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=())
-        mock_gc.assert_called_once_with(self.workspace_config, dry_run=False, flags=None)
+        mock_gc.assert_called_once_with(
+            self.workspace_config,
+            dry_run=False,
+            flags=DeployOptions().get_hook_flags(settings=self.workspace_config.settings),
+        )
+
+        mock_gc.reset_mock()
+        opts_no_hooks = DeployOptions(no_hooks=True)
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=(), options=opts_no_hooks)
+        mock_gc.assert_called_once_with(
+            self.workspace_config,
+            dry_run=False,
+            flags=opts_no_hooks.get_hook_flags(settings=self.workspace_config.settings),
+        )
+        self.assertTrue(mock_gc.call_args.kwargs["flags"].no_hooks)
 
     def test_deploy_pipeline_checks_git_configs(self) -> None:
         """Verifies that deploy pipeline verifies git config user.name and user.email exists."""
@@ -240,17 +258,17 @@ target_directory = "{self.system_target_dir.as_posix()}"
         with patch.dict(os.environ, env_override, clear=False):
             # Deploy should fail on pre-flight checks
             with self.assertRaises(RuntimeError) as context:
-                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
             
             self.assertIn("Git configuration error: 'user.name' is not configured", str(context.exception))
 
-    def test_deploy_post_update_hook_failure_with_rollback_on_failure_false(self) -> None:
-        """Verifies that when rollback_on_failure=False, a failing post_update hook stops and reports without leaving package in installing state."""
+    def test_deploy_post_update_hook_failure_with_failure_is_fatal_false(self) -> None:
+        """Verifies that when failure_is_fatal=False, a failing post_update hook stops and reports without leaving package in installing state."""
         # 1. First-time deploy succeeds
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         self.assertTrue((self.system_target_dir / "file.txt").is_file())
 
-        # 2. Add a failing post_update hook script and set rollback_on_failure = false
+        # 2. Add a failing post_update hook script and set failure_is_fatal = false
         pkg_dir = self.source_dir / "pkg_a"
         scripts_dir = pkg_dir / "drift_hooks"
         scripts_dir.mkdir(parents=True, exist_ok=True)
@@ -266,17 +284,17 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         post_update = "drift_hooks/post_update.sh"
-        rollback_on_failure = false
+        failure_is_fatal = false
         """, encoding="utf-8")
 
         (pkg_dir / "extra.conf").write_text("extra content", encoding="utf-8")
 
         # 3. Deploy update - should fail on hook but NOT report midway crash
         with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_deploy_pipeline(
+            execute_deploy_pipeline(
                 self.workspace_config,
                 packages_to_deploy=["pkg_a"],
-                flags=HookExecFlags(streaming=False),
+                options=DeployOptions(flags=HookExecFlags(streaming=False)),
             )
 
         self.assertNotIn("Midway crash", str(ctx.exception))
@@ -293,17 +311,17 @@ target_directory = "{self.system_target_dir.as_posix()}"
         run_primitive_deploy_pipeline(
             self.workspace_config,
             packages_to_deploy=["pkg_a"],
-            flags=HookExecFlags(streaming=False),
+            options=DeployOptions(flags=HookExecFlags(streaming=False)),
         )
         self.assertTrue((self.system_target_dir / "extra.conf").is_file())
 
-    def test_deploy_post_update_hook_failure_with_rollback_on_failure_true(self) -> None:
-        """Verifies that when rollback_on_failure=True (default), a failing post_update hook triggers emergency midway crash state."""
+    def test_deploy_post_update_hook_failure_with_failure_is_fatal_true(self) -> None:
+        """Verifies that when failure_is_fatal=True (default), a failing post_update hook triggers emergency midway crash state."""
         # 1. First-time deploy succeeds
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         self.assertTrue((self.system_target_dir / "file.txt").is_file())
 
-        # 2. Add a failing post_update hook script with default rollback_on_failure = true
+        # 2. Add a failing post_update hook script with default failure_is_fatal = true
         pkg_dir = self.source_dir / "pkg_a"
         scripts_dir = pkg_dir / "drift_hooks"
         scripts_dir.mkdir(parents=True, exist_ok=True)
@@ -319,16 +337,16 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         post_update = "drift_hooks/post_update.sh"
-        rollback_on_failure = true
+        failure_is_fatal = true
         """, encoding="utf-8")
 
         # 3. Deploy update - should fail with Midway crash
         with patch("sys.stderr", new=StringIO()):
             with self.assertRaises(RuntimeError) as ctx:
-                run_primitive_deploy_pipeline(
+                execute_deploy_pipeline(
                     self.workspace_config,
                     packages_to_deploy=["pkg_a"],
-                    flags=HookExecFlags(streaming=False),
+                    options=DeployOptions(flags=HookExecFlags(streaming=False)),
                 )
 
         self.assertIn("Midway crash", str(ctx.exception))
@@ -397,7 +415,9 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
         # 2. Second deploy with reinstall=True
         res2 = run_primitive_deploy_pipeline(
-            self.workspace_config, packages_to_deploy=["pkg_a"], reinstall=True
+            self.workspace_config,
+            packages_to_deploy=["pkg_a"],
+            options=DeployOptions(reinstall=True),
         )
         self.assertEqual(res2.status, "SUCCESS")
         self.assertEqual(len(res2.deployed_packages), 1)
@@ -488,14 +508,18 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
         # 3. Deploy should abort and suggest drift rollback
         with self.assertRaises(RuntimeError) as context:
-            run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+            execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         err_msg = str(context.exception)
         self.assertIn("Package(s) in midway transaction state", err_msg)
         self.assertIn("drift rollback pkg_a", err_msg)
 
         # 4. Deploy with --force should bypass the midway check
-        res_force = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], force=True)
+        res_force = run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_a"],
+            options=DeployOptions(force=True),
+        )
         self.assertEqual(res_force.status, "SUCCESS")
 
     def test_deploy_pipeline_skipped_packages_retain_installed_state(self) -> None:
@@ -566,7 +590,11 @@ target_directory = "{self.system_target_dir.as_posix()}"
             set_test_mode(True, enable_logging=False)
 
         # 4. Running full deploy repairs and restores package config file in install/
-        res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], reinstall=True)
+        res = run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_a"],
+            options=DeployOptions(reinstall=True),
+        )
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue((pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists())
 
@@ -592,7 +620,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
                 "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Target directory not writable", packages=["pkg_a"]),
             ):
-                res = run_primitive_deploy_pipeline_with_error_handling(
+                res = run_primitive_deploy_pipeline(
                     self.workspace_config, packages_to_deploy=["pkg_a"]
                 )
         finally:
@@ -641,7 +669,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
                 "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Target directory not writable", packages=["pkg_a"]),
             ):
-                res = run_primitive_deploy_pipeline_with_error_handling(
+                res = run_primitive_deploy_pipeline(
                     self.workspace_config, packages_to_deploy=["pkg_a"]
                 )
         finally:
@@ -684,7 +712,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
                 "drift.primitives.deploy_repo.prepare_install",
                 side_effect=RuntimeError("Generic unexpected failure"),
             ):
-                res = run_primitive_deploy_pipeline_with_error_handling(
+                res = run_primitive_deploy_pipeline(
                     self.workspace_config, packages_to_deploy=["pkg_a"]
                 )
         finally:
@@ -716,7 +744,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
                 "drift.primitives.deploy_repo.prepare_install",
                 side_effect=RuntimeError("Generic unexpected failure"),
             ):
-                res = run_primitive_deploy_pipeline_with_error_handling(
+                res = run_primitive_deploy_pipeline(
                     self.workspace_config, packages_to_deploy=["pkg_a"]
                 )
         finally:
@@ -770,7 +798,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
                 "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Collision on pkg_b", packages=["pkg_b"]),
             ):
-                res = run_primitive_deploy_pipeline_with_error_handling(
+                res = run_primitive_deploy_pipeline(
                     self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"]
                 )
         finally:
@@ -818,7 +846,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
                 "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Collision on pkg_b", packages=["pkg_b"]),
             ):
-                res = run_primitive_deploy_pipeline_with_error_handling(
+                res = run_primitive_deploy_pipeline(
                     self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"]
                 )
         finally:
@@ -849,7 +877,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
                 "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Target directory not writable", packages=["pkg_a"]),
             ):
-                res = run_primitive_deploy_pipeline_with_error_handling(
+                res = run_primitive_deploy_pipeline(
                     self.workspace_config, packages_to_deploy=["pkg_a"]
                 )
         finally:
@@ -1030,7 +1058,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         (self.system_target_dir / "file.txt").write_text("converged a", encoding="utf-8")
         (self.system_target_dir / "file_b.txt").write_text("divergent host edit b", encoding="utf-8")
 
-        res = run_primitive_deploy_pipeline_with_error_handling(
+        res = run_primitive_deploy_pipeline(
             self.workspace_config, packages_to_deploy=["pkg_a"]
         )
         self.assertEqual(res.status, "ABORTED_DRIFT")
@@ -1050,7 +1078,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         (self.system_target_dir / "file.txt").write_text("host edit while template broken", encoding="utf-8")
         (self.source_dir / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).write_text("invalid = [toml", encoding="utf-8")
 
-        res = run_primitive_deploy_pipeline_with_error_handling(
+        res = run_primitive_deploy_pipeline(
             self.workspace_config, packages_to_deploy=["pkg_a"]
         )
         self.assertEqual(res.status, "FAILED")
@@ -1089,9 +1117,336 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual([p.package for p in res.deployed_packages], ["pkg_b"])
         self.assertEqual((self.system_target_dir / "file_b.txt").read_text(encoding="utf-8"), "hello from pkg_b")
 
+    def test_deploy_auto_rollback_reverts_entire_multi_package_batch_and_allows_immediate_retry(self) -> None:
+        """Verifies that auto_rollback=true on a failing package reverts the entire batch (including earlier installed packages) and suppresses manual rollback prompt."""
+        pkg_a_dir = self.source_dir / "pkg_a"
+        pkg_b_dir = self.source_dir / "pkg_b"
+        pkg_b_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_b"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+        auto_rollback = true
+        dependencies = ["pkg_a"]
+        """, encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("v1 content b", encoding="utf-8")
+
+        # 1. Initial clean deploy of both packages
+        res0 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
+        self.assertEqual(res0.status, "SUCCESS")
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "Hello source config!")
+        self.assertEqual((self.system_target_dir / "file_b.txt").read_text(encoding="utf-8"), "v1 content b")
+
+        # 2. Update both packages, and add a failing post_update hook on pkg_b (which has auto_rollback = true)
+        (pkg_a_dir / "file.txt").write_text("v2 content a", encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("v2 content b", encoding="utf-8")
+        hooks_dir = pkg_b_dir / "drift_hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        fail_hook = hooks_dir / "post_update.py"
+        fail_hook.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(1)\n", encoding="utf-8")
+        fail_hook.chmod(0o755)
+        (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_b"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+        auto_rollback = true
+        dependencies = ["pkg_a"]
+
+        [hooks]
+        post_update = "drift_hooks/post_update.py"
+        """, encoding="utf-8")
+
+        stderr_capture = StringIO()
+        with patch("sys.stderr", stderr_capture):
+            res_fail = run_primitive_deploy_pipeline(
+                self.workspace_config,
+                packages_to_deploy=["pkg_a", "pkg_b"],
+                options=DeployOptions(flags=HookExecFlags(streaming=False)),
+            )
+
+        self.assertEqual(res_fail.status, "FAILED")
+        assert res_fail.failure is not None
+        # Auto-rollback succeeded, so manual rollback is NOT required
+        self.assertFalse(res_fail.failure.requires_rollback)
+        self.assertEqual(res_fail.failure.recommended_command, "drift deploy")
+        self.assertNotIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+
+        # Both pkg_a (which had already reached 'installed' before pkg_b failed) and pkg_b are reverted to v1!
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "Hello source config!")
+        self.assertEqual((self.system_target_dir / "file_b.txt").read_text(encoding="utf-8"), "v1 content b")
+        self.assertEqual((self.install_dir / "pkg_a" / "file.txt").read_text(encoding="utf-8"), "Hello source config!")
+        self.assertEqual((self.install_dir / "pkg_b" / "file_b.txt").read_text(encoding="utf-8"), "v1 content b")
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+
+        reg_after = load_state_registry(self.state_file)
+        self.assertEqual(reg_after.get_package_state("pkg_a"), "installed")
+        self.assertEqual(reg_after.get_package_state("pkg_b"), "installed")
+        self.assertFalse((self.workspace_config.backup_path / "pkg_a" / "wal").exists())
+        self.assertFalse((self.workspace_config.backup_path / "pkg_b" / "wal").exists())
+
+        # 3. Fix hook and retry deploy immediately without needing manual rollback or --force
+        fail_hook.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n", encoding="utf-8")
+        res_retry = run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_a", "pkg_b"],
+            options=DeployOptions(flags=HookExecFlags(streaming=False)),
+        )
+        self.assertEqual(res_retry.status, "SUCCESS")
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "v2 content a")
+        self.assertEqual((self.system_target_dir / "file_b.txt").read_text(encoding="utf-8"), "v2 content b")
+
+    def test_deploy_and_apply_rollback_policy_precedence_matrix(self) -> None:
+        """Verifies CLI --rollback > workspace [settings] rollback > package auto_rollback across deploy and apply."""
+        from drift.core.constants import RollbackPolicy
+        from drift.config.workspace_config import SettingsConfig
+        from drift.primitives.install_repo import run_primitive_5_install, InstallOptions
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.render_repo import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+
+        pkg_a_dir = self.source_dir / "pkg_a"
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        hooks_dir = pkg_a_dir / "drift_hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        fail_hook = hooks_dir / "post_update.py"
+        fail_hook.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(1)\n", encoding="utf-8")
+        fail_hook.chmod(0o755)
+
+        def _write_pkg_a_config(auto_rb: bool) -> None:
+            (pkg_a_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+            [package]
+            name = "pkg_a"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir.as_posix()}"
+            auto_rollback = {"true" if auto_rb else "false"}
+
+            [hooks]
+            post_update = "drift_hooks/post_update.py"
+            """, encoding="utf-8")
+
+        # Case 1: Package auto_rollback = false, Workspace [settings] rollback = ALWAYS -> triggers auto-rollback
+        _write_pkg_a_config(auto_rb=False)
+        (pkg_a_dir / "file.txt").write_text("v2", encoding="utf-8")
+        self.workspace_config.settings = SettingsConfig(rollback=RollbackPolicy.ALWAYS)
+        with patch("sys.stderr", StringIO()):
+            res1 = run_primitive_deploy_pipeline(
+                self.workspace_config,
+                packages_to_deploy=["pkg_a"],
+                options=DeployOptions(flags=HookExecFlags(streaming=False)),
+            )
+        self.assertEqual(res1.status, "FAILED")
+        assert res1.failure is not None
+        self.assertFalse(res1.failure.requires_rollback)
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "Hello source config!")
+        self.assertEqual(load_state_registry(self.state_file).get_package_state("pkg_a"), "installed")
+
+        # Case 2: Package auto_rollback = true, Workspace [settings] rollback = ALWAYS, CLI rollback = NEVER -> no auto-rollback
+        _write_pkg_a_config(auto_rb=True)
+        self.workspace_config.settings = SettingsConfig(rollback=RollbackPolicy.ALWAYS)
+        with patch("sys.stderr", StringIO()):
+            res2 = run_primitive_deploy_pipeline(
+                self.workspace_config,
+                packages_to_deploy=["pkg_a"],
+                options=DeployOptions(
+                    rollback=RollbackPolicy.NEVER,
+                    flags=HookExecFlags(streaming=False),
+                ),
+            )
+        self.assertEqual(res2.status, "FAILED")
+        assert res2.failure is not None
+        self.assertTrue(res2.failure.requires_rollback)
+        self.assertEqual(load_state_registry(self.state_file).get_package_state("pkg_a"), "installing")
+
+        # Clean up midway state via manual rollback before Case 3
+        from drift.primitives.rollback_repo import run_primitive_8_rollback_recovery
+        run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+
+        # Case 3: Package auto_rollback = false, Workspace [settings] rollback = NEVER, CLI rollback = ALWAYS -> triggers auto-rollback
+        _write_pkg_a_config(auto_rb=False)
+        self.workspace_config.settings = SettingsConfig(rollback=RollbackPolicy.NEVER)
+        with patch("sys.stderr", StringIO()):
+            res3 = run_primitive_deploy_pipeline(
+                self.workspace_config,
+                packages_to_deploy=["pkg_a"],
+                options=DeployOptions(
+                    rollback=RollbackPolicy.ALWAYS,
+                    flags=HookExecFlags(streaming=False),
+                ),
+            )
+        self.assertEqual(res3.status, "FAILED")
+        assert res3.failure is not None
+        self.assertFalse(res3.failure.requires_rollback)
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "Hello source config!")
+        self.assertEqual(load_state_registry(self.state_file).get_package_state("pkg_a"), "installed")
+
+        # Case 4: Standalone 'apply' (run_primitive_5_install) with CLI rollback = ALWAYS triggers auto-rollback
+        run_primitive_2_render_packages(self.workspace_config, ["pkg_a"])
+        run_primitive_3_commit_render_repo(self.workspace_config, "Render v2", ["pkg_a"])
+        run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_a"])
+        with self.assertRaises(RuntimeError) as cm:
+            run_primitive_5_install(
+                self.workspace_config,
+                target_pkgs=["pkg_a"],
+                options=InstallOptions(
+                    rollback=RollbackPolicy.ALWAYS,
+                    flags=HookExecFlags(streaming=False),
+                ),
+            )
+        self.assertTrue(getattr(cm.exception, "auto_rolled_back", False))
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "Hello source config!")
+        self.assertEqual(load_state_registry(self.state_file).get_package_state("pkg_a"), "installed")
+        self.assertEqual(get_git_status_porcelain(self.workspace_config.install_path), [])
+
+    def test_deploy_non_fatal_hook_failure_does_not_trigger_auto_rollback(self) -> None:
+        """Verifies that a non-fatal hook failure (failure_is_fatal=false) never triggers auto-rollback even with rollback=ALWAYS."""
+        from drift.core.constants import RollbackPolicy
+
+        pkg_a_dir = self.source_dir / "pkg_a"
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        hooks_dir = pkg_a_dir / "drift_hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        fail_hook = hooks_dir / "post_update.py"
+        fail_hook.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(1)\n", encoding="utf-8")
+        fail_hook.chmod(0o755)
+        (pkg_a_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+        auto_rollback = true
+
+        [hooks]
+        post_update = "drift_hooks/post_update.py"
+        failure_is_fatal = false
+        """, encoding="utf-8")
+        (pkg_a_dir / "file.txt").write_text("v2 non-fatal", encoding="utf-8")
+
+        res = run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_a"],
+            options=DeployOptions(
+                rollback=RollbackPolicy.ALWAYS,
+                flags=HookExecFlags(streaming=False),
+            ),
+        )
+        self.assertEqual(res.status, "FAILED")
+        assert res.failure is not None
+        self.assertFalse(res.failure.requires_rollback)
+        # File update remains in place because hook failure was non-fatal (not rolled back)
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "v2 non-fatal")
+        self.assertEqual(load_state_registry(self.state_file).get_package_state("pkg_a"), "installed")
+
+    def test_pre_deploy_and_pre_install_purges_stale_wal_for_clean_installed_package(self) -> None:
+        """Verifies stale WAL folders on clean 'installed' packages are purged at the start of deploy and install."""
+        from drift.core.constants import BackupSubfolder, WAL_ACTIONS_FILE_NAME
+
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        # Create a bogus stale WAL for pkg_a (which is in clean committed 'installed' state)
+        stale_wal_dir = self.workspace_config.backup_path / "pkg_a" / BackupSubfolder.WAL
+        stale_wal_dir.mkdir(parents=True, exist_ok=True)
+        stale_wal_file = stale_wal_dir / WAL_ACTIONS_FILE_NAME
+        stale_wal_file.write_text('[{"corrupt_or_stale": true}]', encoding="utf-8")
+        self.assertTrue(stale_wal_file.is_file())
+
+        # Re-running deploy (even when up-to-date) purges the stale WAL at the start of the pipeline
+        res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertFalse(stale_wal_dir.exists())
+
+    def test_deploy_auto_rollback_reverts_unattempted_staged_in_batch_without_touching_unrelated_packages(self) -> None:
+        """Verifies batch auto-rollback reverts unattempted 'staged' packages in the batch while ignoring unrelated packages outside the batch."""
+        pkg_a_dir = self.source_dir / "pkg_a"
+        pkg_b_dir = self.source_dir / "pkg_b"
+        pkg_c_dir = self.source_dir / "pkg_c"
+        pkg_unrel_dir = self.source_dir / "pkg_unrelated"
+
+        for d, name, deps in [
+            (pkg_b_dir, "pkg_b", ["pkg_a"]),
+            (pkg_c_dir, "pkg_c", ["pkg_b"]),
+            (pkg_unrel_dir, "pkg_unrelated", []),
+        ]:
+            d.mkdir(parents=True, exist_ok=True)
+            deps_str = "[" + ", ".join(f'"{dep}"' for dep in deps) + "]"
+            (d / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+            [package]
+            name = "{name}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir.as_posix()}"
+            dependencies = {deps_str}
+            """, encoding="utf-8")
+            (d / f"{name}.txt").write_text(f"v1 {name}", encoding="utf-8")
+
+        # 1. Initial clean deploy of all 4 packages
+        res0 = run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_a", "pkg_b", "pkg_c", "pkg_unrelated"],
+        )
+        self.assertEqual(res0.status, "SUCCESS")
+
+        # 2. Simulate pkg_unrelated having uncommitted staged state outside our targeted batch
+        (self.install_dir / "pkg_unrelated" / "pkg_unrelated.txt").write_text("dirty unrelated", encoding="utf-8")
+        reg = load_state_registry(self.state_file)
+        reg.set_package_state("pkg_unrelated", "staged")
+        save_state_registry(reg)
+
+        # 3. Update pkg_a, pkg_b, pkg_c; configure pkg_b with auto_rollback=true and a failing post_update hook
+        # Because pkg_c depends on pkg_b, Step 4b stages all 3 (pkg_a, pkg_b, pkg_c -> 'staged'),
+        # Step 4c installs pkg_a ('installed'), fails on pkg_b ('installing'), and never reaches pkg_c (still 'staged').
+        (pkg_a_dir / "file.txt").write_text("v2 pkg_a", encoding="utf-8")
+        (pkg_b_dir / "pkg_b.txt").write_text("v2 pkg_b", encoding="utf-8")
+        (pkg_c_dir / "pkg_c.txt").write_text("v2 pkg_c", encoding="utf-8")
+        hooks_dir = pkg_b_dir / "drift_hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        fail_hook = hooks_dir / "post_update.py"
+        fail_hook.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(1)\n", encoding="utf-8")
+        fail_hook.chmod(0o755)
+        (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_b"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+        auto_rollback = true
+        dependencies = ["pkg_a"]
+
+        [hooks]
+        post_update = "drift_hooks/post_update.py"
+        """, encoding="utf-8")
+
+        with patch("sys.stderr", StringIO()):
+            res_fail = run_primitive_deploy_pipeline(
+                self.workspace_config,
+                packages_to_deploy=["pkg_a", "pkg_b", "pkg_c"],
+                options=DeployOptions(flags=HookExecFlags(streaming=False)),
+            )
+
+        self.assertEqual(res_fail.status, "FAILED")
+        assert res_fail.failure is not None
+        self.assertFalse(res_fail.failure.requires_rollback)
+
+        # Verify pkg_a, pkg_b, AND unattempted pkg_c were all rolled back to v1 and 'installed'
+        reg_after = load_state_registry(self.state_file)
+        self.assertEqual(reg_after.get_package_state("pkg_a"), "installed")
+        self.assertEqual(reg_after.get_package_state("pkg_b"), "installed")
+        self.assertEqual(reg_after.get_package_state("pkg_c"), "installed")
+        self.assertEqual((self.install_dir / "pkg_a" / "file.txt").read_text(encoding="utf-8"), "Hello source config!")
+        self.assertEqual((self.install_dir / "pkg_b" / "pkg_b.txt").read_text(encoding="utf-8"), "v1 pkg_b")
+        self.assertEqual((self.install_dir / "pkg_c" / "pkg_c.txt").read_text(encoding="utf-8"), "v1 pkg_c")
+
+        # Verify pkg_unrelated (outside the targeted batch) was NOT touched by the batch auto-rollback
+        self.assertEqual(reg_after.get_package_state("pkg_unrelated"), "staged")
+        self.assertEqual(
+            (self.install_dir / "pkg_unrelated" / "pkg_unrelated.txt").read_text(encoding="utf-8"),
+            "dirty unrelated",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

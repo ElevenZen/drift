@@ -170,6 +170,7 @@ class PackageSectionConfig(AlwaysTruthy):
         "install_method",
         "target_directory",
         "sudo",
+        "auto_rollback",
         "fully_controlled_dirs",
         "requirements",
         "hook_file",
@@ -184,6 +185,7 @@ class PackageSectionConfig(AlwaysTruthy):
     install_method: Optional[InstallMethod] = None
     target_directory: Optional[Path] = None
     sudo: bool = False
+    auto_rollback: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hook_file: Optional[Path] = None
     dependencies: PackageDependencies = field(default_factory=PackageDependencies)
@@ -197,6 +199,7 @@ class PackageSectionConfig(AlwaysTruthy):
         install_method: Optional[InstallMethod] = None,
         target_directory: Optional[Union[str, Path]] = None,
         sudo: bool = False,
+        auto_rollback: bool = False,
         fully_controlled_dirs: Iterable[Path] = (),
         hook_file: Optional[Union[Path, str]] = None,
         dependencies: Optional[PackageDependencies] = None,
@@ -215,6 +218,8 @@ class PackageSectionConfig(AlwaysTruthy):
             raise ConfigError(f"enable_install must be a boolean, got {type(enable_install).__name__}")
         if not isinstance(sudo, bool):
             raise ConfigError(f"sudo must be a boolean, got {type(sudo).__name__}")
+        if not isinstance(auto_rollback, bool):
+            raise ConfigError(f"auto_rollback must be a boolean, got {type(auto_rollback).__name__}")
         if hook_file is not None and not isinstance(hook_file, (str, Path)):
             raise ConfigError(f"hook_file must be a Path or str, got {type(hook_file).__name__}")
         if dependencies is not None and not isinstance(dependencies, PackageDependencies):
@@ -227,6 +232,7 @@ class PackageSectionConfig(AlwaysTruthy):
         self.install_method = install_method
         self.target_directory = expand_path(target_directory) if target_directory else None
         self.sudo = sudo
+        self.auto_rollback = auto_rollback
         self.fully_controlled_dirs = list(fully_controlled_dirs) if fully_controlled_dirs else []
         self.hook_file = Path(hook_file) if hook_file is not None else None
         self.dependencies = dependencies if dependencies is not None else PackageDependencies()
@@ -253,6 +259,8 @@ class PackageSectionConfig(AlwaysTruthy):
             raise ConfigError(f"enable_install must be a boolean for package '{self.name}'.")
         if not isinstance(self.sudo, bool):
             raise ConfigError(f"sudo must be a boolean for package '{self.name}'.")
+        if not isinstance(self.auto_rollback, bool):
+            raise ConfigError(f"auto_rollback must be a boolean for package '{self.name}'.")
         if not isinstance(self.fully_controlled_dirs, list):
             raise ConfigError(f"fully_controlled_dirs must be a list for package '{self.name}'.")
         if not isinstance(self.dependencies, PackageDependencies):
@@ -339,6 +347,12 @@ class PackageSectionConfig(AlwaysTruthy):
             install_method=parsed_install_method,
             target_directory=target_dir,
             sudo=parse_bool_value(data.get("sudo", False), default=False),
+            auto_rollback=parse_bool_value(
+                data.get("auto_rollback", False),
+                default=False,
+                strict=True,
+                context=f"Package '{name}' [package] auto_rollback",
+            ),
             fully_controlled_dirs=fcd_list,
             hook_file=resolved_hook_file,
             dependencies=deps,

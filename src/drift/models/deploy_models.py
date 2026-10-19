@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, TYPE_CHECKING
 
+from ..core.constants import RollbackPolicy
 from ..core.file_action import (
     FileAction,
     filter_display_actions,
@@ -20,6 +21,10 @@ from .render_models import PackageRenderResult
 from .reverse_sync_models import PackageReverseSyncPlan
 from .stage_models import PackageStagePlan
 from .workspace_models import GcResult
+
+if TYPE_CHECKING:
+    from ..config.workspace_config import SettingsConfig
+    from ..hooks.lifecycle_hooks import HookExecFlags
 
 
 class NextActionType(str, Enum):
@@ -48,6 +53,19 @@ class DeployOptions(AlwaysTruthy):
     dry_run: bool = False
     show_all: bool = False
     verbose: bool = False
+    rollback: Optional[RollbackPolicy] = None
+    flags: Optional[HookExecFlags] = None
+
+    def get_hook_flags(self, settings: Optional[SettingsConfig] = None) -> HookExecFlags:
+        """Derives HookExecFlags, merging DeployOptions flags with workspace settings."""
+        from ..hooks.lifecycle_hooks import HookExecFlags
+        effective_no_hooks = self.no_hooks if not self.dry_run else (not self.with_hooks)
+        return HookExecFlags.resolve(
+            self.flags,
+            settings=settings,
+            fallback=HookExecFlags(no_hooks=effective_no_hooks, no_cache=self.no_cache),
+            override=HookExecFlags(dry_run=self.dry_run),
+        )
 
 
 @dataclass

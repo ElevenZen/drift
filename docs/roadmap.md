@@ -174,14 +174,30 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 
 ### 22. Self-Contained Drift Adoption Pipeline & 5-State `AdoptStatus`
 - **Integrated Reverse-Sync & Render Pre-Flight**: [`prepare_adopt`](src/drift/primitives/adopt_repo.py) automatically runs reverse-sync (Step 0a) and template rendering (Step 0b) before planning adoption (configurable via `AdoptOptions.reverse_sync` / `AdoptOptions.render` and CLI `--no-reverse-sync` / `--no-render`), followed by automatic converged drift resolution.
-- **Expressive 5-State `AdoptStatus` & Non-Optional Plans**: Replaced binary `"SUCCESS"` / `"FAILED"` status strings with [`AdoptStatus`](src/drift/models/adopt_models.py) (`CLEAN`, `CONVERGED`, `ADOPTED`, `PARTIAL`, `FAILED`) and per-item [`ItemAdoptOutcome`](src/drift/models/adopt_models.py) (`ADOPTED`, `SKIPPED`, `CONFLICT`). Made `PackageAdoptResult.plan` non-optional and unified dry-run terminal formatting onto `AdoptResult.format_text()`.
+- **Expressive 5-State `AdoptStatus` & Non-Optional Plans**: Replaced binary `"SUCCESS"` / `"FAILED"` status strings with [`AdoptStatus`](src/drift/models/adopt_models.py) (`UP_TO_DATE`, `SUCCESS`, `PARTIAL`, `SKIPPED`, `FAILED`) and per-item [`ItemAdoptOutcome`](src/drift/models/adopt_models.py) (`ADOPTED`, `SKIPPED`, `CONFLICT`). Made `PackageAdoptResult.plan` non-optional and unified dry-run terminal formatting onto `AdoptResult.format_text()`.
 
 ### 23. Domain-Aligned `drift.models` Package, `render_repo.py` Extraction & Config Hook Renaming
 - **Dedicated [`src/drift/models/`](src/drift/models/__init__.py) Package**: Extracted all domain models, option dataclasses, contexts, plans, status enums, and result containers into domain-aligned submodules (`adopt_models.py`, `reverse_sync_models.py`, `render_models.py`, `stage_models.py`, `install_models.py`, `uninstall_models.py`, `deploy_models.py`, `workspace_models.py`), removing the monolithic `src/drift/core/result_models.py` and eliminating circular import chains across `core`, `config`, `render`, and `primitives`.
 - **Clearer `WorkspaceDiffType` & `StageOptions`**: Renamed `DiffType` to [`WorkspaceDiffType`](src/drift/models/workspace_models.py) alongside `DiffResult`, and embedded [`StageOptions`](src/drift/models/stage_models.py) inside `StagePlan.options`.
 - **Unified Primitive Package Structure ([`render_repo.py`](src/drift/primitives/render_repo.py))**: Extracted Primitives 2 and 3 (`run_primitive_2_render_packages`, `run_primitive_3_commit_render_repo`) from `src/drift/render/render_package.py` into [`src/drift/primitives/render_repo.py`](src/drift/primitives/render_repo.py), unifying all operational primitives under `src/drift/primitives/` while keeping `src/drift/render/` focused strictly on single-package compilation.
 - **Disambiguated Config Preprocessor Hook Modules**: Renamed `src/drift/hooks/package_hook.py` and `src/drift/hooks/workspace_hook.py` to [`package_config_hook.py`](src/drift/hooks/package_config_hook.py) and [`workspace_config_hook.py`](src/drift/hooks/workspace_config_hook.py) to clearly distinguish in-memory Python config preprocessors from shell lifecycle hooks ([`package_hooks.py`](src/drift/config/package_hooks.py)).
-- **Test Suite Scale & Hygiene**: Expanded verification to **1,331 passing tests** (`unittest discover -s tests`) with zero terminal leakage.
+
+### 24. WAL-Based Transaction Rollback & Typed `FileAction` Hierarchy
+- **Typed `FileAction` Hierarchy ([`file_action.py`](src/drift/core/file_action.py))**: Decomposed `FileAction` into specialized subclasses [`NormalFileAction`](src/drift/core/file_action.py) and [`BackupFileAction`](src/drift/core/file_action.py) (carrying `stash_path: Optional[Path]` and `orig_mode: Optional[int]`) with JSON serialization (`to_dict` / `from_dict`).
+- **Append-Only Write-Ahead Log (`wal_actions.jsonl`)**: During installation and uninstallation, mutating file actions stash pre-mutation target states under `.drift/backup/<pkg>/wal_stash/` and append JSON-line records via `_append_wal_actions` before modifying host or backup files.
+- **Exact WAL Reversal & Backup Preservation**: [`rollback_package_wal`](src/drift/core/file_action.py) replays recorded WAL entries in reverse order to restore overwritten host files, permissions, and original `overwritten/` / `deleted/` backups without clobbering prior state, followed by incremental re-deployment from `install/` in [`rollback_repo.py`](src/drift/primitives/rollback_repo.py).
+
+### 25. Shell-Free `List[str]` Render Execution & Default Internal `envsubst` Engine
+- **Tokenized `render_command: List[str]` at Ingestion Boundaries**: [`RenderEngineConfig.render_command`](src/drift/config/render_engine_config.py) is strictly typed as `List[str]` and parsed at config ingestion boundaries via [`parse_render_command`](src/drift/config/render_engine_config.py) (`shlex.split(..., posix=True)`). Added [`requires_input_file`](src/drift/config/render_engine_config.py) (`any("%i" in token for token in self.render_command)`) so external engines only require `input_file` when `%i` is referenced, and removed obsolete `is_disabled` and hardcoded `%i`/`%s` checks.
+- **Shell-Free Subprocess Execution (`shell=False`)**: [`run_command`](src/drift/utils/process_utils.py) strictly accepts `List[str]` and enforces `shell=False` across all execution paths, eliminating `shell=True`, `render=True`, and `_patch_windows_render_command`. Added [`AdminPrivilegeError`](src/drift/core/exceptions.py) (`DriftError`, `PermissionError`) for unprivileged Windows elevation attempts and [`branch(predicate, lambda1, lambda2)`](src/drift/utils/config_utils.py) for functional conditional evaluation in [`render_template`](src/drift/render/render_core.py).
+- **Zero-Dependency Default `[render.envsubst]`**: Updated [`drift_workspace_default.toml`](src/drift/templates/drift_workspace_default.toml) to configure `[render.envsubst]` with `render_command = "internal"` (`suffix = "envst"`) by default, enabling out-of-the-box cross-platform rendering (including `config/mustache.envst.json`) without external `bash`/`envsubst` binaries or `config/envsubst.bash` scaffolding.
+
+### 26. Auto-Rollback for Critical Services, 3-State `RollbackPolicy` & Uncommitted `"installed"` Eligibility
+- **Renamed `[hooks] rollback_on_failure` $\to$ `failure_is_fatal`**: Disambiguated hook fatality configuration in [`PackageHooks`](src/drift/config/package_hooks.py) (`failure_is_fatal`, `is_failure_fatal(hook_name)`) and [`HookExecutionError.is_fatal`](src/drift/core/exceptions.py) from auto-rollback execution triggers.
+- **3-State Rollback Policy Ladder (`auto`, `always`/`yes`, `never`/`no`)**: Added [`RollbackPolicy`](src/drift/core/constants.py), workspace `[settings] rollback` in [`SettingsConfig`](src/drift/config/workspace_config.py), per-package `[package] auto_rollback` in [`PackageSectionConfig`](src/drift/config/package_config.py), and CLI `--rollback {auto,always,yes,never,no}` across both `drift deploy` and `drift apply` (`CLI --rollback` > `[settings] rollback` > `[package] auto_rollback`).
+- **Uncommitted `"installed"` Rollback Eligibility & GC WAL Safeguards**: Extracted [`check_is_package_rollback_eligible`](src/drift/core/state_registry.py) and [`check_is_package_uncommitted_in_install`](src/drift/core/state_registry.py) so packages that completed installation earlier in a multi-package batch (still uncommitted in `install/` Git repo) are eligible for `drift rollback` without `--force` and preserve their WAL folders during `drift gc` ([`purge_redundant_wal_folders`](src/drift/primitives/workspace_gc.py)).
+- **Pre-Deploy & Pre-Install Stale WAL Cleanup**: [`run_primitive_deploy_pipeline`](src/drift/primitives/deploy_repo.py) purges stale WAL folders for clean `"installed"` packages after midway state checks, and [`execute_package_install_impl`](src/drift/primitives/install_repo.py) clears any leftover WAL before transitioning to `"installing"`.
+- **Whole-Batch Auto-Rollback Execution**: When a fatal error occurs in [`execute_install`](src/drift/primitives/install_repo.py) and the resolved rollback policy triggers auto-rollback, Drift automatically executes [`run_primitive_8_rollback_recovery`](src/drift/primitives/rollback_repo.py) across the entire attempted + rollback-eligible batch and suppresses the manual `EMERGENCY RECOVERY REQUIRED` card (`DeployFailure.requires_rollback = False`).
 
 ---
 
@@ -193,7 +209,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 * **[`drift plan`](docs/plan_dry_run.md)** [Completed]: Full dry-run visualization of render, stage, and install actions before modifying host files.
 * **`drift doctor`**: Single diagnostic command validating workspace structure, Git repositories, hook permissions, and dependencies.
 * **Asymmetric In-Repo Secret Encryption (Age / SSH-key)**: Zero-disk-leakage in-memory secret decryption into the compilation sandbox.
-* **Smarter Rollback with WAL (Write-Ahead Log)**: Guarantees 100% reversible rollbacks for physical host filesystem side effects.
+* **Smarter Rollback with WAL (Write-Ahead Log)** [Completed]: Guarantees 100% reversible rollbacks for physical host filesystem side effects and backup stores via append-only `wal_actions.jsonl` and `wal_stash/`.
 * **Unified Layered Import System (`[[imports]]`)**: Layered overlay mounting for package inheritance, file remounting, and external assets.
 
 ### 🚀 Tier A: High Value & Ergonomic Wins  
@@ -217,7 +233,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 ### 🔧 Tier C: Advanced & Specialized Patterns
 * **Binary Deployment Strategy (drift + mise)**: Alternative binary management scheme with mise / nix home-manager.
-* **Auto-Rollback for Critical Services**: Automatic revert on deployment failure (depends on WAL).
+* **Auto-Rollback for Critical Services** [Completed]: Automatic revert on deployment failure across `deploy` and `apply` with 3-state `RollbackPolicy` (`auto`, `always`, `never`).
 * **Reorder Render Before Reverse-Sync** [Completed]: Resolves converged template updates directly in git history and pre-plans installation before staging.
 * **`drift revert`**: Fast undo of last deployment commit in the install repository.
 * **Compilation Package Pattern**: Source subfolder builds via `pre_source` hooks.
@@ -236,9 +252,9 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 - [x] **Fix repeating "No packages are enabled" warnings in `drift repair`.**
 
-- [ ] **Smarter rollback with WAL.** Current `drift rollback` does `git checkout` + reinstall, but doesn't rollback backup process or other filesystem side effects. Needs a Write-Ahead Log (WAL) that records each filesystem mutation during deployment, enabling precise reversal. This is prerequisite for reliable auto-rollback. (from old roadmap)
+- [x] **Smarter rollback with WAL.** Current `drift rollback` does `git checkout` + reinstall, but doesn't rollback backup process or other filesystem side effects. Needs a Write-Ahead Log (WAL) that records each filesystem mutation during deployment, enabling precise reversal. This is prerequisite for reliable auto-rollback. (from old roadmap)
 
-- [ ] **Auto-rollback option for critical services.** Add a `auto_rollback = true` option in package config for packages managing services that should not stop for long. If deployment fails midway, automatically revert. Depends on WAL-based rollback. (from old roadmap)  
+- [x] **Auto-rollback option for critical services.** Add a `auto_rollback = true` option in package config for packages managing services that should not stop for long. If deployment fails midway, automatically revert. Depends on WAL-based rollback. (from old roadmap)  
 
 - [ ] **Enhance TOML fallback parser** Use a lexer to parse tokens from toml string instead of scan and split.
 

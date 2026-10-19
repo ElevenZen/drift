@@ -55,11 +55,12 @@ from typing import List, Optional, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig, PackageDependencies
+from ..core.constants import RollbackPolicy
 from ..core.file_action import clear_package_wal, rollback_package_wal
 from ..core.state_registry import (
     StateRegistry,
+    load_head_state_registry,
     load_state_registry,
-    parse_state_registry_content,
 )
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..models import RollbackResult
@@ -123,20 +124,6 @@ def clean_first_time_install_package(install_base: Path, pkg: str) -> None:
         logger.debug(
             f"git clean for package '{pkg}' exited with code {res_clean.returncode}: {res_clean.stderr.strip()}"
         )
-
-
-def load_head_state_registry(install_base: Path) -> StateRegistry:
-    """Loads the committed HEAD version of state.toml from the install repository."""
-    state_file = install_base / "state.toml"
-    res = subprocess.run(
-        ["git", "-C", str(install_base), "show", "HEAD:state.toml"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if res.returncode != 0:
-        return StateRegistry({}, state_file=state_file)
-    return parse_state_registry_content(res.stdout, state_file=state_file)
 
 
 def restore_package_state_from_head(install_base: Path, pkg: str) -> None:
@@ -210,19 +197,24 @@ def validate_rollback_packages(
     state_registry: StateRegistry,
     discovered_packages: Sequence[str],
     force: bool = False,
+    install_base: Optional[Path] = None,
 ) -> List[str]:
-    """Validates that discovered packages are in a failed midway state, or returns all if force is True."""
+    """Validates that discovered packages are in a failed midway or uncommitted state, or returns all if force is True."""
     if force:
         return sorted(set(discovered_packages))
 
-    eligible_pkgs = state_registry.get_rollback_eligible_packages(discovered_packages)
+    eligible_pkgs = state_registry.get_rollback_eligible_packages(
+        discovered_packages,
+        install_base=install_base,
+    )
     packages_to_rollback = {pkg for pkg, _ in eligible_pkgs}
     valid_pkgs, packages_state_wrong = partition(
         lambda pkg: pkg in packages_to_rollback, discovered_packages
     )
     if packages_state_wrong:
         raise RuntimeError(
-            "The following packages are not in a failed midway/conflict state ('staging', 'staged', or 'installing'): "
+            "The following packages are not in a failed midway/conflict state "
+            "('staging', 'staged', or 'installing', or 'installed' with uncommitted install changes): "
             f"[{','.join(sorted(set(packages_state_wrong)))}]. "
             "Running 'rollback' now will bypass reverse synchronization and hard-reset "
             "all configuration files on your system, destroying any local drift. "
@@ -270,6 +262,7 @@ def rollback_reinstall_committed_package(
             reinstall=False,
             run_hooks_when_unchanged=True,
             no_deps=True,
+            rollback=RollbackPolicy.NEVER,
             flags=rollback_flags,
         ),
     )
@@ -319,7 +312,8 @@ def run_primitive_8_rollback_recovery(
     Returns:
         RollbackResult containing details of the rollback operation.
     """
-    state_file = workspace_config.install_path / "state.toml"
+    install_base = workspace_config.install_path
+    state_file = install_base / "state.toml"
     state_registry = load_state_registry(state_file)
 
     # 1. Discover target packages
@@ -345,11 +339,10 @@ def run_primitive_8_rollback_recovery(
         state_registry=state_registry,
         discovered_packages=discovered,
         force=force,
+        install_base=install_base,
     )
 
     logger.info(f"Reverting local state database for packages: {packages_to_rollback}")
-
-    install_base = workspace_config.install_path
     # 3. Classify packages into previously committed (reinstallable) vs first-time (uninstallable)
     packages_to_reinstall, packages_to_uninstall = partition(
         lambda pkg: is_package_committed_in_install_head(install_base, pkg),

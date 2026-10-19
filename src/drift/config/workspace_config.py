@@ -50,6 +50,7 @@ from ..core.constants import (
     FORBIDDEN_PACKAGE_NAMES,
     InstallMethod,
     PACKAGE_CONFIG_FILE_NAME,
+    RollbackPolicy,
 )
 from ..core.exceptions import ConfigError
 from ..core.mixins import AlwaysTruthy
@@ -113,6 +114,7 @@ class SettingsConfig(AlwaysTruthy):
         *HOOK_OUTPUT_ENCODING_KEYS,
         "git_user_name",
         "git_user_email",
+        "rollback",
     )
 
     hook_inject_non_interactive_envs: bool = True
@@ -121,6 +123,7 @@ class SettingsConfig(AlwaysTruthy):
     hook_output_encoding: str = "system"
     git_user_name: Optional[str] = None
     git_user_email: Optional[str] = None
+    rollback: RollbackPolicy = RollbackPolicy.AUTO
 
     def __post_init__(self) -> None:
         if isinstance(self.hook_output_encoding, str) and self.hook_output_encoding.strip().lower() == "system":
@@ -159,6 +162,11 @@ class SettingsConfig(AlwaysTruthy):
                 f"⚠️  [settings] '{provided}' is set but '{missing}' is not. "
                 f"Consider setting both for complete Git identity configuration."
             )
+        if not isinstance(self.rollback, RollbackPolicy):
+            try:
+                self.rollback = RollbackPolicy.from_val(self.rollback)
+            except ValueError as exc:
+                raise ConfigError(f"Invalid rollback policy under [settings]: {exc}") from exc
 
     @classmethod
     def from_dict(cls, data: Any) -> "SettingsConfig":
@@ -192,6 +200,11 @@ class SettingsConfig(AlwaysTruthy):
         )
         git_user_name = data.get("git_user_name")
         git_user_email = data.get("git_user_email")
+        raw_rollback = data.get("rollback", RollbackPolicy.AUTO)
+        try:
+            parsed_rollback = RollbackPolicy.from_val(raw_rollback)
+        except ValueError as exc:
+            raise ConfigError(f"Invalid rollback policy under [settings]: {exc}") from exc
 
         settings = cls(
             hook_inject_non_interactive_envs=parse_bool_value(
@@ -215,6 +228,7 @@ class SettingsConfig(AlwaysTruthy):
             hook_output_encoding=raw_hook_encoding,
             git_user_name=git_user_name,
             git_user_email=git_user_email,
+            rollback=parsed_rollback,
         )
         settings.validate()
         return settings

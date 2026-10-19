@@ -266,13 +266,21 @@ class TestWorkspaceGc(unittest.TestCase):
         return wal_dir
 
     def test_gc_purges_redundant_wal_folders_and_preserves_rollback_eligible(self) -> None:
-        """Verifies GC purges redundant WALs (installed, unregistered, ghost) while keeping rollback-eligible WALs."""
+        """Verifies GC purges redundant WALs (committed installed, unregistered, ghost) while keeping rollback-eligible WALs (including uncommitted installed)."""
         from drift.core.state_registry import StateRegistry, PackageState
+        from drift.utils.git_utils import commit_repo_changes
 
-        # 1. Installed package with redundant WAL + real overwritten backup
+        # 1. Committed installed package with redundant WAL + real overwritten backup
         pkg_installed = "pkg_installed"
         self._setup_valid_pkg_dirs(pkg_installed)
         wal_installed = self._create_pkg_wal(pkg_installed, with_overwritten_backup=True)
+
+        state_file = self.install_dir / "state.toml"
+        StateRegistry(
+            packages={pkg_installed: PackageState(state="installed")},
+            state_file=state_file,
+        ).save()
+        commit_repo_changes(self.install_dir, "Commit pkg_installed", target_pkgs=[pkg_installed])
 
         # 2. Unregistered package with redundant WAL only (should prune backup/<pkg> completely)
         pkg_unregistered = "pkg_unregistered"
@@ -283,17 +291,17 @@ class TestWorkspaceGc(unittest.TestCase):
         self.workspace_config.packages_enable[pkg_ghost_installing] = True
         wal_ghost = self._create_pkg_wal(pkg_ghost_installing, with_overwritten_backup=False)
 
-        # 4. Rollback-eligible packages ('staging', 'staged', 'installing') -> WAL must be preserved
+        # 4. Rollback-eligible packages ('staging', 'staged', 'installing', and uncommitted 'installed') -> WAL must be preserved
         rollback_pkgs = {
             "pkg_staging": "staging",
             "pkg_staged": "staged",
             "pkg_installing": "installing",
+            "pkg_installed_uncommitted": "installed",
         }
         for r_pkg in rollback_pkgs:
             self._setup_valid_pkg_dirs(r_pkg)
             self._create_pkg_wal(r_pkg, with_overwritten_backup=False)
 
-        state_file = self.install_dir / "state.toml"
         registry = StateRegistry(
             packages={
                 pkg_installed: PackageState(state="installed"),
@@ -337,16 +345,23 @@ class TestWorkspaceGc(unittest.TestCase):
     def test_gc_dry_run_reports_redundant_wal_without_deleting(self) -> None:
         """Verifies dry_run=True reports redundant WAL packages without removing WAL files on disk."""
         from drift.core.state_registry import StateRegistry, PackageState
+        from drift.utils.git_utils import commit_repo_changes
 
         pkg_installed = "pkg_installed_dry"
         self._setup_valid_pkg_dirs(pkg_installed)
         wal_installed = self._create_pkg_wal(pkg_installed)
 
+        state_file = self.install_dir / "state.toml"
+        StateRegistry(
+            packages={pkg_installed: PackageState(state="installed")},
+            state_file=state_file,
+        ).save()
+        commit_repo_changes(self.install_dir, "Commit pkg_installed_dry", target_pkgs=[pkg_installed])
+
         pkg_installing = "pkg_installing_dry"
         self._setup_valid_pkg_dirs(pkg_installing)
         wal_installing = self._create_pkg_wal(pkg_installing)
 
-        state_file = self.install_dir / "state.toml"
         registry = StateRegistry(
             packages={
                 pkg_installed: PackageState(state="installed"),
@@ -363,22 +378,53 @@ class TestWorkspaceGc(unittest.TestCase):
         self.assertTrue(wal_installing.exists())
 
     def test_purge_redundant_wal_folders_standalone_without_state_registry_arg(self) -> None:
-        """Verifies purge_redundant_wal_folders loads state.toml automatically when state_registry is None."""
+        """Verifies purge_redundant_wal_folders loads state.toml automatically and purges committed installed, unregistered, and ghost packages."""
         from drift.core.state_registry import StateRegistry, PackageState
+        from drift.utils.git_utils import commit_repo_changes
 
         pkg_installed = "pkg_auto_state"
+        self._setup_valid_pkg_dirs(pkg_installed)
         self._create_pkg_wal(pkg_installed)
+
+        pkg_unregistered = "pkg_not_in_state_registry"
+        self._create_pkg_wal(pkg_unregistered, with_overwritten_backup=True)
+
+        pkg_unregistered_empty_backup = "pkg_not_in_state_only_wal"
+        self._create_pkg_wal(pkg_unregistered_empty_backup, with_overwritten_backup=False)
+
+        # Ghost package: present in state.toml with 'installing' state, but install/<pkg> does not exist on disk
+        pkg_ghost_installing = "pkg_ghost_in_state_only"
+        self._create_pkg_wal(pkg_ghost_installing, with_overwritten_backup=False)
 
         state_file = self.install_dir / "state.toml"
         registry = StateRegistry(
-            packages={pkg_installed: PackageState(state="installed")},
+            packages={
+                pkg_installed: PackageState(state="installed"),
+                pkg_ghost_installing: PackageState(state="installing"),
+            },
             state_file=state_file,
         )
         registry.save()
+        commit_repo_changes(self.install_dir, "Commit pkg_auto_state", target_pkgs=[pkg_installed])
 
+        # Verify ghost package is never returned by get_rollback_eligible_packages when install_base is checked
+        self.assertEqual(registry.get_rollback_eligible_packages(install_base=self.install_dir), [])
+
+        # Pass 1 (Cold / Mutation Pass): committed 'installed', unregistered, and ghost packages are all purged
         purged = purge_redundant_wal_folders(self.workspace_config)
-        self.assertEqual(purged, [pkg_installed])
+        self.assertCountEqual(
+            purged,
+            [pkg_installed, pkg_unregistered, pkg_unregistered_empty_backup, pkg_ghost_installing],
+        )
         self.assertFalse(check_has_package_wal_dir(self.backup_dir / pkg_installed))
+        self.assertFalse(check_has_package_wal_dir(self.backup_dir / pkg_unregistered))
+        # Overwritten backup of unregistered package is preserved while its WAL is removed
+        self.assertTrue((self.backup_dir / pkg_unregistered / BackupSubfolder.OVERWRITTEN / "saved.conf").is_file())
+        # Unregistered & ghost packages with only WAL have their empty backup/<pkg> directory pruned
+        self.assertFalse((self.backup_dir / pkg_unregistered_empty_backup).exists())
+        self.assertFalse((self.backup_dir / pkg_ghost_installing).exists())
+
+        # Pass 2 (Warm / Idempotent Pass)
         self.assertEqual(purge_redundant_wal_folders(self.workspace_config), [])
 
     def test_install_commit_purges_only_stable_target_package_wals(self) -> None:

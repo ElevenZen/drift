@@ -18,6 +18,7 @@ from ..core.mixins import AlwaysTruthy
 from ..core.serialization import SerializableModel
 
 if TYPE_CHECKING:
+    from ..config.workspace_config import SettingsConfig
     from ..hooks.lifecycle_hooks import HookExecFlags
 
 
@@ -36,7 +37,7 @@ class RenderOptions(AlwaysTruthy):
     silent: bool = False
     flags: Optional[HookExecFlags] = None
 
-    def get_hook_flags(self, settings: Any = None) -> HookExecFlags:
+    def get_hook_flags(self, settings: Optional[SettingsConfig] = None) -> HookExecFlags:
         """Derives HookExecFlags, assigning dry_run and no_cache from RenderOptions to HookExecFlags.
 
         When flags is not explicitly specified, defaults no_hooks to True in dry_run mode

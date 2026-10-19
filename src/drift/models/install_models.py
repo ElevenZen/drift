@@ -8,14 +8,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 
-from ..core.constants import BackupSubfolder, InstallMethod
+from ..core.constants import BackupSubfolder, InstallMethod, RollbackPolicy
 from ..core.file_action import (
     FileAction,
     FileActionExecutionContext,
     FileActionType,
     filter_display_actions,
-    format_action_line,
     format_action_summary,
+    format_action_line,
     is_mutating_action,
     rebase_file_action,
 )
@@ -26,7 +26,7 @@ from ..core.serialization import SerializableModel
 if TYPE_CHECKING:
     from ..config.package_config import PackageConfig
     from ..config.package_hooks import PackageHooks
-    from ..config.workspace_config import WorkspaceConfig
+    from ..config.workspace_config import SettingsConfig, WorkspaceConfig
     from ..core.ignore import DriftIgnore
     from ..core.state_registry import StateRegistry
     from ..hooks.lifecycle_hooks import HookExecFlags
@@ -47,9 +47,10 @@ class InstallOptions(AlwaysTruthy):
     run_hooks_when_unchanged: bool = False
     dry_run: bool = False
     no_deps: bool = False
+    rollback: Optional[RollbackPolicy] = None
     flags: Optional[HookExecFlags] = None
 
-    def get_hook_flags(self, settings: Any = None) -> HookExecFlags:
+    def get_hook_flags(self, settings: Optional[SettingsConfig] = None) -> HookExecFlags:
         """Derives HookExecFlags, assigning dry_run from InstallOptions to HookExecFlags."""
         from ..hooks.lifecycle_hooks import HookExecFlags
         return HookExecFlags.resolve(
@@ -57,6 +58,14 @@ class InstallOptions(AlwaysTruthy):
             settings=settings,
             override=HookExecFlags(dry_run=self.dry_run),
         )
+
+    def resolve_rollback_policy(self, settings: Optional[SettingsConfig] = None) -> RollbackPolicy:
+        """Resolves effective RollbackPolicy from CLI option or workspace [settings] rollback."""
+        if self.rollback is not None:
+            return RollbackPolicy.from_val(self.rollback)
+        if settings is not None and getattr(settings, "rollback", None) is not None:
+            return RollbackPolicy.from_val(settings.rollback)
+        return RollbackPolicy.AUTO
 
 
 @dataclass(frozen=True)
@@ -75,6 +84,7 @@ class PackageInstallContext:
     hooks: PackageHooks = field(default_factory=_default_package_hooks)
     reinstall: bool = False
     run_hooks_when_unchanged: bool = False
+    auto_rollback: bool = False
 
     def rebase_install_dir(self, install_base: Path) -> PackageInstallContext:
         """Returns a copy of PackageInstallContext bound to the canonical install_base directory."""
@@ -155,6 +165,7 @@ class PackageInstallContext:
             hooks=metadata.hooks,
             reinstall=reinstall,
             run_hooks_when_unchanged=run_hooks_when_unchanged,
+            auto_rollback=metadata.package.auto_rollback,
         )
 
 

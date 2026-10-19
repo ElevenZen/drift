@@ -138,6 +138,11 @@ render_command = "mustache %i %s"
 # git_user_name = "Drift Bot"
 # git_user_email = "drift@localhost"
 
+# Control workspace-wide automatic rollback behavior when 'deploy' or 'apply' fails midway.
+# Options: "auto" (respect per-package auto_rollback in drift_package.toml), "always"/"yes", or "never"/"no".
+# Defaults to "auto". Can be overridden per invocation via CLI '--rollback'.
+# rollback = "auto"
+
 
 # ---------------------------------------------------------------------
 # Active Packages Registry

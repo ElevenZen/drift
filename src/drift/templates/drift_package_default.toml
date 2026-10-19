@@ -8,6 +8,7 @@ install_method = "{install_method}"  # Options: "symlink" (symlink) or "copy" (p
 # Advanced Flags
 # hook_file = "drift_package.py"  # Dynamic Python hook (configure_package(context))
 # sudo = false
+# auto_rollback = false           # Automatically rollback all batch packages if this package fails installation
 # fully_controlled_dirs = []      # Audit & reverse-sync host-created files for adoption (FCD)
 # enable_render = true
 # enable_install = true
@@ -76,7 +77,7 @@ install_method = "{install_method}"  # Options: "symlink" (symlink) or "copy" (p
 # post_uninstall      = "drift_hooks/post_uninstall.sh"
 # health              = "drift_hooks/health.sh"
 # timeout             = 120
-# rollback_on_failure = true         # Set false (or list of install hooks) if hook failure shouldn't require rollback
+# failure_is_fatal    = true         # Set false (or list of install hooks) if hook failure shouldn't abort installation
 
 # Windows-Specific Lifecycle Hooks (Optional overrides, e.g. post_install = "disable")
 [hooks.windows]
@@ -91,7 +92,7 @@ install_method = "{install_method}"  # Options: "symlink" (symlink) or "copy" (p
 # post_uninstall      = "drift_hooks/post_uninstall.ps1"
 # health              = "drift_hooks/health.ps1"
 # timeout             = 120
-# rollback_on_failure = true
+# failure_is_fatal    = true
 
 # ---------------------------------------------------------------------
 # Package-Level Render Engines (Optional Custom Engines or Overrides)

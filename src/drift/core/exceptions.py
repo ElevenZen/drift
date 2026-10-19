@@ -200,12 +200,12 @@ class HookExecutionError(DriftError, RuntimeError):
         package: str,
         hook_name: str,
         message: str,
-        requires_rollback: bool = True,
+        is_fatal: bool = True,
         exit_code: Optional[int] = None,
     ) -> None:
         super().__init__(message, packages=[package] if package else [])
         self.package = package
         self.hook_name = hook_name
         self.message = message
-        self.requires_rollback = requires_rollback
+        self.is_fatal = is_fatal
         self.hook_exit_code = exit_code

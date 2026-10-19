@@ -3494,6 +3494,89 @@ class TestAnchoredPathValidationEdgeCases(unittest.TestCase):
                         resolve_render_input_file(bad_engine, abs_p)
                     self.assertIn("must be a relative or valid absolute path", str(cm.exception))
 
+    def test_package_section_auto_rollback_parsing_and_validation(self) -> None:
+        # 1. Default is False
+        default_pkg = PackageSectionConfig.from_dict({}, package_name="pkg_default")
+        self.assertFalse(default_pkg.auto_rollback)
+
+        # 2. Explicit True / False and string booleans
+        pkg_true = PackageSectionConfig.from_dict({"auto_rollback": True}, package_name="pkg_true")
+        self.assertTrue(pkg_true.auto_rollback)
+        pkg_str_true = PackageSectionConfig.from_dict({"auto_rollback": "true"}, package_name="pkg_str_true")
+        self.assertTrue(pkg_str_true.auto_rollback)
+        pkg_false = PackageSectionConfig.from_dict({"auto_rollback": False}, package_name="pkg_false")
+        self.assertFalse(pkg_false.auto_rollback)
+
+        # 3. Invalid values rejected
+        for invalid_val in ("invalid", "auto", 123, ["true"]):
+            with self.subTest(invalid_val=invalid_val):
+                with self.assertRaises(ConfigError):
+                    PackageSectionConfig.from_dict({"auto_rollback": invalid_val}, package_name="pkg_bad")
+
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="pkg_bad", auto_rollback="not_a_bool").validate()  # type: ignore[arg-type]
+
+    def test_settings_config_rollback_policy_parsing_and_validation(self) -> None:
+        from drift.core.constants import RollbackPolicy
+        from drift.models.install_models import InstallOptions
+
+        # 1. Default SettingsConfig.rollback is AUTO
+        default_settings = SettingsConfig.from_dict({})
+        self.assertEqual(default_settings.rollback, RollbackPolicy.AUTO)
+
+        # 2. All canonical values, aliases, case variations, and booleans
+        cases = [
+            ("auto", RollbackPolicy.AUTO),
+            ("AUTO", RollbackPolicy.AUTO),
+            ("  Auto ", RollbackPolicy.AUTO),
+            ("always", RollbackPolicy.ALWAYS),
+            ("yes", RollbackPolicy.ALWAYS),
+            ("YES", RollbackPolicy.ALWAYS),
+            (True, RollbackPolicy.ALWAYS),
+            ("never", RollbackPolicy.NEVER),
+            ("no", RollbackPolicy.NEVER),
+            ("NO", RollbackPolicy.NEVER),
+            (False, RollbackPolicy.NEVER),
+            (None, RollbackPolicy.AUTO),
+            (RollbackPolicy.ALWAYS, RollbackPolicy.ALWAYS),
+        ]
+        for raw_val, expected in cases:
+            with self.subTest(raw_val=raw_val):
+                self.assertEqual(RollbackPolicy.from_val(raw_val), expected)
+                if raw_val is not None:
+                    cfg = SettingsConfig.from_dict({"rollback": raw_val})
+                    self.assertEqual(cfg.rollback, expected)
+
+        # 3. Invalid values raise ValueError in from_val and ConfigError in SettingsConfig
+        for bad_val in ("invalid", "sometimes", 1, 0, ["auto"]):
+            with self.subTest(bad_val=bad_val):
+                with self.assertRaises(ValueError):
+                    RollbackPolicy.from_val(bad_val)
+                with self.assertRaises(ConfigError):
+                    SettingsConfig.from_dict({"rollback": bad_val})
+
+        with self.assertRaises(ConfigError):
+            SettingsConfig(rollback="not_a_valid_policy").validate()  # type: ignore[arg-type]
+
+        # 4. InstallOptions.resolve_rollback_policy precedence ladder
+        ws_always = WorkspaceConfig(
+            drift_root=Path("/test").resolve(),
+            settings=SettingsConfig(rollback=RollbackPolicy.ALWAYS),
+        )
+        # Falls back to workspace setting when CLI option is None
+        self.assertEqual(InstallOptions(rollback=None).resolve_rollback_policy(ws_always.settings), RollbackPolicy.ALWAYS)
+        self.assertEqual(InstallOptions(rollback=None).resolve_rollback_policy(None), RollbackPolicy.AUTO)
+        # CLI option overrides workspace setting
+        self.assertEqual(
+            InstallOptions(rollback=RollbackPolicy.NEVER).resolve_rollback_policy(ws_always.settings),
+            RollbackPolicy.NEVER,
+        )
+        self.assertEqual(
+            InstallOptions(rollback="no").resolve_rollback_policy(ws_always.settings),  # type: ignore[arg-type]
+            RollbackPolicy.NEVER,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
+

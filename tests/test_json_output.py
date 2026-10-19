@@ -349,13 +349,13 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         self.assertEqual(parsed["status"], "SUCCESS")
 
     def test_deploy_post_update_hook_failure_json_no_rollback(self) -> None:
-        """Verifies that when rollback_on_failure=False, failed hook in --json reports requires_rollback=False and recommended_command='drift deploy'."""
+        """Verifies that when failure_is_fatal=False, failed hook in --json reports requires_rollback=False and recommended_command='drift deploy'."""
         # 1. First deploy
         devnull = StringIO()
         with patch("sys.stdout", devnull):
             main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
 
-        # 2. Add failing post_update hook with rollback_on_failure = false
+        # 2. Add failing post_update hook with failure_is_fatal = false
         hooks_dir = os.path.join(self.src_dir, "pkg_a", "drift_hooks")
         os.makedirs(hooks_dir, exist_ok=True)
         hook_script = os.path.join(hooks_dir, "post_update.sh")
@@ -371,7 +371,7 @@ install_method = "copy"
 target_directory = "{Path(self.target_dir).as_posix()}"
 [hooks]
 post_update = "drift_hooks/post_update.sh"
-rollback_on_failure = false
+failure_is_fatal = false
 """)
 
         stdout = StringIO()
@@ -391,4 +391,44 @@ rollback_on_failure = false
         self.assertEqual(parsed["failure"]["requires_rollback"], False)
         self.assertEqual(parsed["failure"]["recommended_command"], "drift deploy")
         self.assertIn("post_update", parsed["failure"]["error_message"])
+
+    def test_deploy_auto_rollback_json_reports_requires_rollback_false(self) -> None:
+        """Verifies that when auto-rollback succeeds during deploy --json, failure.requires_rollback is False."""
+        devnull = StringIO()
+        with patch("sys.stdout", devnull):
+            main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+
+        hooks_dir = os.path.join(self.src_dir, "pkg_a", "drift_hooks")
+        os.makedirs(hooks_dir, exist_ok=True)
+        hook_script = os.path.join(hooks_dir, "post_update.sh")
+        with open(hook_script, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 1\n")
+        os.chmod(hook_script, 0o755)
+
+        cfg_path = os.path.join(self.src_dir, "pkg_a", "drift_package.toml")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write(f"""[package]
+name = "pkg_a"
+install_method = "copy"
+target_directory = "{Path(self.target_dir).as_posix()}"
+auto_rollback = true
+[hooks]
+post_update = "drift_hooks/post_update.sh"
+failure_is_fatal = true
+""")
+        with open(os.path.join(self.src_dir, "pkg_a", "file.txt"), "w", encoding="utf-8") as f:
+            f.write("v2 will be auto rolled back")
+
+        stdout = StringIO()
+        with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+            self.assertEqual(cm.exception.code, 1)
+
+        parsed = json.loads(stdout.getvalue().strip())
+        self.assertEqual(parsed["status"], "FAILED")
+        self.assertIsNotNone(parsed["failure"])
+        self.assertEqual(parsed["failure"]["requires_rollback"], False)
+        self.assertEqual(parsed["failure"]["recommended_command"], "drift deploy")
+
 

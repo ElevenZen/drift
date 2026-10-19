@@ -47,6 +47,11 @@ enable_render = true
 # Enable or disable installation/deployment for this package
 enable_install = true
 
+# Automatically roll back the entire deployment batch if installing/updating this package fails.
+# Useful for critical services that should not be left in a broken state.
+# Respects workspace [settings] rollback and CLI --rollback overrides.
+auto_rollback = false
+
 # Fully-Controlled Directories (FCDs). Drift will audit and reverse-sync
 # host-created files and deletions in these subdirectories for interactive adoption (`drift adopt`).
 fully_controlled_dirs = [
@@ -174,11 +179,11 @@ post_render = "drift_hooks/generate_checksums.sh"
 # Run runtime health check probes on installed package (cwd = hook_path.parent)
 health = "drift_hooks/health_check.sh"
 
-# Control whether installation hook failure triggers an emergency rollback state (default: true).
+# Control whether installation hook failure is treated as a fatal deployment error requiring rollback (default: true).
 # Set to false if hook failure does not corrupt system files and only requires stopping with a report.
-# Can also be set to a list of installation hook names: e.g. rollback_on_failure = ["pre_install", "post_install"]
+# Can also be set to a list of installation hook names: e.g. failure_is_fatal = ["pre_install", "post_install"]
 # (Allowed hook names: pre_install, post_install, pre_update, post_update)
-rollback_on_failure = true
+failure_is_fatal = true
 
 
 # Optional Windows-specific hook overrides.

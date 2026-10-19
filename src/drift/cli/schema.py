@@ -112,6 +112,14 @@ PACKAGE_STAGES: List[Choice] = [
     Choice("source", "Read and render health hook from src/ directory"),
 ]
 
+ROLLBACK_POLICIES: List[Choice] = [
+    Choice("auto", "Automatically rollback if the failing package has auto_rollback = true (default)"),
+    Choice("always", "Always rollback all batch packages upon any fatal installation failure"),
+    Choice("yes", "Alias for 'always': always rollback all batch packages upon fatal failure"),
+    Choice("never", "Never automatically rollback on failure"),
+    Choice("no", "Alias for 'never': never automatically rollback on failure"),
+]
+
 SHELLS: List[Choice] = [
     Choice("bash", "GNU Bourne-Again Shell completion script"),
     Choice("zsh", "Z Shell completion script with rich descriptions"),
@@ -421,6 +429,15 @@ def build_completion_schema() -> CompletionSchema:
                         flags=["-n", "--dry-run"],
                         description="Simulate full deployment workflow and preview planned actions without modifying system state",
                         dest="dry_run",
+                    ),
+                    OptionSpec(
+                        flags=["--rollback"],
+                        description="Automatic rollback policy on fatal failure ('auto', 'always'/'yes', 'never'/'no')",
+                        dest="rollback",
+                        takes_value=True,
+                        type=str,
+                        choices=ROLLBACK_POLICIES,
+                        default=None,
                     ),
                 ]
             ),
@@ -774,6 +791,15 @@ def build_completion_schema() -> CompletionSchema:
                         flags=["--no-deps"],
                         description="Bypass missing required package dependency errors and proceed with deployment",
                         dest="no_deps"
+                    ),
+                    OptionSpec(
+                        flags=["--rollback"],
+                        description="Automatic rollback policy on fatal failure ('auto', 'always'/'yes', 'never'/'no')",
+                        dest="rollback",
+                        takes_value=True,
+                        type=str,
+                        choices=ROLLBACK_POLICIES,
+                        default=None,
                     ),
                 ]
             ),

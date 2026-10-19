@@ -154,3 +154,8 @@ backup_directory = "backup"
 # git_user_name = "Drift Bot"
 # git_user_email = "drift@localhost"
 
+# Automatic rollback policy on fatal installation failure during 'drift deploy' / 'drift apply'.
+# Options: "auto" (read [package] auto_rollback, default), "always"/"yes", or "never"/"no".
+# rollback = "auto"
+
+

@@ -202,9 +202,9 @@ class TestDiff(unittest.TestCase):
 
     def test_invalid_diff_type_casting(self):
         """Verifies invalid diff_type strings fail with ValueError during cast."""
-        from drift.cli.actions import execute_diff
+        from drift.models import WorkspaceDiffType
         with self.assertRaises(ValueError):
-            execute_diff(self.drift_root, diff_type="invalid_type")
+            WorkspaceDiffType("invalid_type")
 
     @patch("drift.primitives.workspace_diff.launch_side_by_side_editor")
     def test_diff_side_by_side_template_evolution(self, mock_launch: MagicMock) -> None:

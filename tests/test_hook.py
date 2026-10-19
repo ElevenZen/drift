@@ -985,47 +985,51 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertEqual(probe_res.status, "FAILED")
         self.assertEqual(probe_res.exit_code, 42)
 
-    def test_package_hooks_rollback_on_failure_parsing_and_validation(self) -> None:
-        """Verifies parsing and validation for rollback_on_failure in PackageHooks."""
+    def test_package_hooks_failure_is_fatal_parsing_and_validation(self) -> None:
+        """Verifies parsing and validation for failure_is_fatal in PackageHooks."""
         from drift.config.package_hooks import PackageHooks
         from drift.core.exceptions import ConfigError
 
         # 1. Default is True
         h_default = PackageHooks.from_dict({})
-        self.assertTrue(h_default.should_rollback_on_failure("post_update"))
-        self.assertTrue(h_default.should_rollback_on_failure("pre_install"))
+        self.assertTrue(h_default.is_failure_fatal("post_update"))
+        self.assertTrue(h_default.is_failure_fatal("pre_install"))
 
         # 2. Boolean False
-        h_false = PackageHooks.from_dict({"rollback_on_failure": False})
-        self.assertFalse(h_false.should_rollback_on_failure("post_update"))
-        self.assertFalse(h_false.should_rollback_on_failure("pre_install"))
+        h_false = PackageHooks.from_dict({"failure_is_fatal": False})
+        self.assertFalse(h_false.is_failure_fatal("post_update"))
+        self.assertFalse(h_false.is_failure_fatal("pre_install"))
 
         # 3. List of hook names
-        h_list = PackageHooks.from_dict({"rollback_on_failure": ["pre_install", "post_install"]})
-        self.assertTrue(h_list.should_rollback_on_failure("pre_install"))
-        self.assertTrue(h_list.should_rollback_on_failure("post_install"))
-        self.assertFalse(h_list.should_rollback_on_failure("post_update"))
+        h_list = PackageHooks.from_dict({"failure_is_fatal": ["pre_install", "post_install"]})
+        self.assertTrue(h_list.is_failure_fatal("pre_install"))
+        self.assertTrue(h_list.is_failure_fatal("post_install"))
+        self.assertFalse(h_list.is_failure_fatal("post_update"))
 
         # 4. Invalid hook name in list raises ConfigError
         with self.assertRaises(ConfigError):
-            PackageHooks.from_dict({"rollback_on_failure": ["invalid_hook_name"]})
+            PackageHooks.from_dict({"failure_is_fatal": ["invalid_hook_name"]})
 
         # Non-installation lifecycle hooks (probe, post_render, health, uninstall) raise ConfigError
         for non_install_hook in ("probe", "pre_source", "post_render", "pre_uninstall", "post_uninstall", "health"):
             with self.assertRaises(ConfigError):
-                PackageHooks.from_dict({"rollback_on_failure": [non_install_hook]})
+                PackageHooks.from_dict({"failure_is_fatal": [non_install_hook]})
 
-        # Non-installation hooks always return False for should_rollback_on_failure
-        self.assertFalse(h_default.should_rollback_on_failure("probe"))
-        self.assertFalse(h_default.should_rollback_on_failure("post_render"))
-        self.assertFalse(h_default.should_rollback_on_failure("health"))
+        # Non-installation hooks always return False for is_failure_fatal
+        self.assertFalse(h_default.is_failure_fatal("probe"))
+        self.assertFalse(h_default.is_failure_fatal("post_render"))
+        self.assertFalse(h_default.is_failure_fatal("health"))
 
         # 5. Invalid type raises ConfigError
         with self.assertRaises(ConfigError):
-            PackageHooks.from_dict({"rollback_on_failure": 123})
+            PackageHooks.from_dict({"failure_is_fatal": 123})
 
-    def test_execute_hook_script_raises_hook_execution_error_with_rollback_flag(self) -> None:
-        """Verifies execute_hook_script raises HookExecutionError with requires_rollback matching config."""
+        # 6. Obsolete key rollback_on_failure is rejected
+        with self.assertRaises(ConfigError):
+            PackageHooks.from_dict({"rollback_on_failure": False})
+
+    def test_execute_hook_script_raises_hook_execution_error_with_is_fatal_flag(self) -> None:
+        """Verifies execute_hook_script raises HookExecutionError with is_fatal matching config."""
         from drift.hooks.lifecycle_hooks import HookExecFlags, execute_hook_script
         from drift.config.package_config import PackageConfig
         from drift.config.package_hooks import PackageHooks
@@ -1035,10 +1039,10 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         failing_script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         failing_script.chmod(0o755)
 
-        # 1. Package with rollback_on_failure = False
+        # 1. Package with failure_is_fatal = False
         pkg_no_rb = PackageConfig(
             PackageSectionConfig(name="pkg_hook"),
-            hooks=PackageHooks(rollback_on_failure=False)
+            hooks=PackageHooks(failure_is_fatal=False)
         )
         with self.assertRaises(HookExecutionError) as ctx:
             execute_hook_script(
@@ -1049,14 +1053,14 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 cwd=self.src_pkg_dir,
                 flags=HookExecFlags(streaming=False),
             )
-        self.assertFalse(ctx.exception.requires_rollback)
+        self.assertFalse(ctx.exception.is_fatal)
         self.assertEqual(ctx.exception.hook_name, "post_update")
         self.assertEqual(ctx.exception.package, "pkg_hook")
 
-        # 2. Package with rollback_on_failure = True (default)
+        # 2. Package with failure_is_fatal = True (default)
         pkg_rb = PackageConfig(
             PackageSectionConfig(name="pkg_hook"),
-            hooks=PackageHooks(rollback_on_failure=True)
+            hooks=PackageHooks(failure_is_fatal=True)
         )
         with self.assertRaises(HookExecutionError) as ctx:
             execute_hook_script(
@@ -1067,7 +1071,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 cwd=self.src_pkg_dir,
                 flags=HookExecFlags(streaming=False),
             )
-        self.assertTrue(ctx.exception.requires_rollback)
+        self.assertTrue(ctx.exception.is_fatal)
 
     def test_package_hooks_from_dict_without_base_dir_when_no_relative_hooks(self) -> None:
         """Verifies that base_dir or workspace_config is not required when no relative hooks are configured."""
@@ -1081,11 +1085,11 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertIsNone(hooks_empty.pre_install)
         self.assertEqual(hooks_empty.timeout, DEFAULT_HOOK_TIMEOUT)
 
-        # 2. Options only (timeout, rollback_on_failure) requires no base_dir
-        hooks_opts = PackageHooks.from_dict({"timeout": 45, "rollback_on_failure": False})
+        # 2. Options only (timeout, failure_is_fatal) requires no base_dir
+        hooks_opts = PackageHooks.from_dict({"timeout": 45, "failure_is_fatal": False})
         self.assertIsNone(hooks_opts.pre_install)
         self.assertEqual(hooks_opts.timeout, 45)
-        self.assertFalse(hooks_opts.rollback_on_failure)
+        self.assertFalse(hooks_opts.failure_is_fatal)
 
         # 3. Absolute hook path requires no base_dir
         abs_path = (Path("/opt/scripts/pre_install.sh")).resolve()

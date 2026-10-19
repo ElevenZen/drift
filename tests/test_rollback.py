@@ -843,6 +843,95 @@ class TestRollback(unittest.TestCase):
             self.assertIsNone(reloaded.get_package_state(pkg))
             self.assertFalse((self.install_dir / pkg).exists())
 
+    def test_rollback_uncommitted_installed_package_without_force(self) -> None:
+        """Verifies check_is_package_rollback_eligible and rollback without --force for uncommitted 'installed' packages."""
+        from drift.core.state_registry import (
+            check_is_package_rollback_eligible,
+            check_is_package_uncommitted_in_install,
+        )
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+
+        # 1. Clean committed 'installed' package is NOT rollback-eligible without force
+        self.assertFalse(check_is_package_uncommitted_in_install("pkg_a", registry, self.install_dir))
+        self.assertFalse(check_is_package_rollback_eligible("pkg_a", registry, self.install_dir))
+        with self.assertRaises(RuntimeError):
+            run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+
+        # 2. Simulate pkg_a completing update in a multi-package batch before install-commit:
+        #    state is 'installed', but install/pkg_a/file.txt has uncommitted modifications and WAL exists.
+        pkg_backup_root = self.backup_dir / "pkg_a"
+        (self.pkg_a_install / "file.txt").write_text("v2 uncommitted", encoding="utf-8")
+        exec_ctx = FileActionExecutionContext(sudo=False, wal_dir=pkg_backup_root / "wal")
+        execute_delivery_actions(
+            exec_ctx,
+            [
+                NormalFileAction(
+                    action_type=FileActionType.UPDATE_COPY,
+                    src_path=self.pkg_a_install / "file.txt",
+                    dst_path=self.system_target_dir / "file.txt",
+                )
+            ],
+        )
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installed", last_deployed="2026-10-19T12:00:00Z")
+        save_state_registry(registry)
+
+        self.assertTrue(check_is_package_uncommitted_in_install("pkg_a", registry, self.install_dir))
+        self.assertTrue(check_is_package_rollback_eligible("pkg_a", registry, self.install_dir))
+        self.assertIn(
+            ("pkg_a", "installed"),
+            registry.get_rollback_eligible_packages(install_base=self.install_dir),
+        )
+
+        # Rollback with force=False succeeds and restores pkg_a to committed HEAD
+        res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.restored_packages, ["pkg_a"])
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "clean content")
+        self.assertEqual((self.pkg_a_install / "file.txt").read_text(encoding="utf-8"), "clean content")
+        reloaded_after_a = load_state_registry(state_file)
+        self.assertFalse(check_is_package_uncommitted_in_install("pkg_a", reloaded_after_a, self.install_dir))
+
+        # 3. Simulate a first-time package (not in HEAD:state.toml) that reached 'installed' before batch crash
+        pkg_first = "pkg_first_installed"
+        pkg_first_dir = self.install_dir / pkg_first
+        (pkg_first_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_first_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname = "{pkg_first}"\ninstall_method = "copy"\ntarget_directory = "{self.system_target_dir.as_posix()}"\n',
+            encoding="utf-8",
+        )
+        (pkg_first_dir / "new.txt").write_text("new pkg file", encoding="utf-8")
+        first_backup = self.backup_dir / pkg_first
+        execute_delivery_actions(
+            FileActionExecutionContext(sudo=False, wal_dir=first_backup / "wal"),
+            [
+                NormalFileAction(
+                    action_type=FileActionType.CREATE_COPY,
+                    src_path=pkg_first_dir / "new.txt",
+                    dst_path=self.system_target_dir / "new.txt",
+                )
+            ],
+        )
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg_first, "installed")
+        registry.sync_deployed_files(pkg_first, self.system_target_dir, "copy", ["new.txt"])
+        save_state_registry(registry)
+        self.workspace_config.packages_enable[pkg_first] = True
+
+        self.assertTrue(check_is_package_uncommitted_in_install(pkg_first, registry, self.install_dir))
+        self.assertTrue(check_is_package_rollback_eligible(pkg_first, registry, self.install_dir))
+
+        res_first = run_primitive_8_rollback_recovery(self.workspace_config, [pkg_first], force=False)
+        self.assertEqual(res_first.status, "SUCCESS")
+        self.assertEqual(res_first.restored_packages, [pkg_first])
+        self.assertFalse((self.system_target_dir / "new.txt").exists())
+        self.assertFalse(pkg_first_dir.exists())
+        reloaded = load_state_registry(state_file)
+        self.assertIsNone(reloaded.get_package_state(pkg_first))
+
 
 if __name__ == "__main__":
     unittest.main()
+

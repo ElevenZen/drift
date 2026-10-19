@@ -280,13 +280,13 @@ def _format_hook_error_message(
     return err_msg
 
 
-def _should_rollback_on_hook_failure(
+def _is_hook_failure_fatal(
     metadata: Optional[PackageConfig],
     hook_name: str,
 ) -> bool:
-    """Determines whether hook failure triggers workspace rollback based on package config."""
+    """Determines whether hook failure is fatal to installation based on package config."""
     if metadata is not None:
-        return metadata.hooks.should_rollback_on_failure(hook_name)
+        return metadata.hooks.is_failure_fatal(hook_name)
     return True
 
 
@@ -318,14 +318,14 @@ def handle_hook_execution_failure(
     )
     logger.error(err_msg)
 
-    should_rollback = _should_rollback_on_hook_failure(metadata, hook_name)
+    is_fatal = _is_hook_failure_fatal(metadata, hook_name)
 
     if exec_flags.raise_on_error:
         raise mark_logged(HookExecutionError(
             package=pkg,
             hook_name=hook_name,
             message=err_msg,
-            requires_rollback=should_rollback,
+            is_fatal=is_fatal,
             exit_code=details.exit_code,
         )) from exc
 

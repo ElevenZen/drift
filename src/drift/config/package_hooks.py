@@ -95,7 +95,7 @@ class PackageHooks(AlwaysTruthy):
     post_render: Optional[Path] = None
     health: Optional[Path] = None
     timeout: int = DEFAULT_HOOK_TIMEOUT
-    rollback_on_failure: Union[bool, List[str]] = True
+    failure_is_fatal: Union[bool, List[str]] = True
     _relative_paths: Dict[str, Optional[Path]] = field(default_factory=dict, repr=False)
     _package_config: Optional["PackageConfig"] = field(default=None, repr=False, compare=False)
 
@@ -121,45 +121,52 @@ class PackageHooks(AlwaysTruthy):
     def package_config(self, value: Optional["PackageConfig"]) -> None:
         self._package_config = value
 
-    def should_rollback_on_failure(self, hook_name: str) -> bool:
-        """Returns whether failure of the specified hook requires a system rollback."""
+    def is_failure_fatal(self, hook_name: str) -> bool:
+        """Returns whether failure of the specified hook is fatal to installation."""
         if hook_name not in INSTALLATION_HOOK_NAMES:
             return False
-        if isinstance(self.rollback_on_failure, bool):
-            return self.rollback_on_failure
-        if isinstance(self.rollback_on_failure, (list, tuple, set)):
-            return hook_name in self.rollback_on_failure
+        if isinstance(self.failure_is_fatal, bool):
+            return self.failure_is_fatal
+        if isinstance(self.failure_is_fatal, (list, tuple, set)):
+            return hook_name in self.failure_is_fatal
         return True
+
+    @staticmethod
+    def _validate_failure_is_fatal(
+        val: Any,
+        name_str: str,
+        key_label: str = "failure_is_fatal",
+    ) -> None:
+        """Validates that failure_is_fatal is a boolean or a collection of valid installation hook names."""
+        if isinstance(val, bool):
+            return
+        if not isinstance(val, (list, tuple, set)):
+            raise ConfigError(f"{key_label} must be a boolean or list of hook names{name_str}.")
+        invalid_hook = next((h for h in val if not isinstance(h, str) or h not in INSTALLATION_HOOK_NAMES), None)
+        if invalid_hook is not None:
+            raise ConfigError(
+                f"Invalid hook name '{invalid_hook}' in {key_label}. "
+                f"Allowed installation hooks: {', '.join(INSTALLATION_HOOK_NAMES)}{name_str}."
+            )
 
     def validate(self, package_name: str = "") -> None:
         """Validates hook configurations."""
+        name_str = f" for package '{package_name}'" if package_name else ""
         for hook_name in LIFECYCLE_HOOK_NAMES:
             val = getattr(self, hook_name)
-            if val is not None:
-                if not isinstance(val, Path):
-                    name_str = f" for package '{package_name}'" if package_name else ""
-                    raise ConfigError(f"{hook_name} must be a Path{name_str}.")
-                if not val.is_absolute():
-                    name_str = f" for package '{package_name}'" if package_name else ""
-                    raise ConfigError(f"{hook_name} must be an absolute Path{name_str}.")
+            if val is None:
+                continue
+            if not isinstance(val, Path):
+                raise ConfigError(f"{hook_name} must be a Path{name_str}.")
+            if not val.is_absolute():
+                raise ConfigError(f"{hook_name} must be an absolute Path{name_str}.")
+
         if not isinstance(self.timeout, int):
-            name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"timeout must be an integer{name_str}.")
         if self.timeout <= 0:
-            name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"timeout must be a positive integer{name_str}.")
-        if not isinstance(self.rollback_on_failure, bool):
-            if isinstance(self.rollback_on_failure, (list, tuple, set)):
-                for h in self.rollback_on_failure:
-                    if not isinstance(h, str) or h not in INSTALLATION_HOOK_NAMES:
-                        name_str = f" for package '{package_name}'" if package_name else ""
-                        raise ConfigError(
-                            f"Invalid hook name '{h}' in rollback_on_failure. "
-                            f"Allowed installation hooks: {', '.join(INSTALLATION_HOOK_NAMES)}{name_str}."
-                        )
-            else:
-                name_str = f" for package '{package_name}'" if package_name else ""
-                raise ConfigError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
+
+        self._validate_failure_is_fatal(self.failure_is_fatal, name_str, key_label="failure_is_fatal")
 
     @classmethod
     def _validate_hook_dict(
@@ -185,31 +192,21 @@ class PackageHooks(AlwaysTruthy):
         for hook_name in LIFECYCLE_HOOK_NAMES:
             val = hook_dict.get(hook_name)
             if val is not None and not isinstance(val, (str, Path)):
-                name_str = f" for package '{package_name}'" if package_name else ""
                 raise ConfigError(f"{hook_name} must be a string{name_str}.")
 
-        if "rollback_on_failure" in hook_dict:
-            val = hook_dict["rollback_on_failure"]
-            if not isinstance(val, bool) and not isinstance(val, (list, tuple, set)):
-                name_str = f" for package '{package_name}'" if package_name else ""
-                raise ConfigError(f"'rollback_on_failure' must be a boolean or list of hook names{name_str}.")
-            if isinstance(val, (list, tuple, set)):
-                for h in val:
-                    if not isinstance(h, str) or h not in INSTALLATION_HOOK_NAMES:
-                        name_str = f" for package '{package_name}'" if package_name else ""
-                        raise ConfigError(
-                            f"Invalid hook name '{h}' in 'rollback_on_failure'. "
-                            f"Allowed installation hooks: {', '.join(INSTALLATION_HOOK_NAMES)}{name_str}."
-                        )
+        if "failure_is_fatal" in hook_dict:
+            cls._validate_failure_is_fatal(hook_dict["failure_is_fatal"], name_str, key_label="'failure_is_fatal'")
 
-        if not is_subtable:
-            for alias in WINDOWS_PLATFORM_ALIASES:
-                val = hook_dict.get(alias)
-                if val is not None:
-                    if not isinstance(val, dict):
-                        name_str = f" for package '{package_name}'" if package_name else ""
-                        raise ConfigError(f"'{alias}' hooks sub-table must be a dictionary{name_str}.")
-                    cls._validate_hook_dict(val, package_name=package_name, is_subtable=True)
+        if is_subtable:
+            return
+
+        for alias in WINDOWS_PLATFORM_ALIASES:
+            val = hook_dict.get(alias)
+            if val is None:
+                continue
+            if not isinstance(val, dict):
+                raise ConfigError(f"'{alias}' hooks sub-table must be a dictionary{name_str}.")
+            cls._validate_hook_dict(val, package_name=package_name, is_subtable=True)
 
     @classmethod
     def from_dict(
@@ -270,16 +267,16 @@ class PackageHooks(AlwaysTruthy):
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"timeout must be a positive integer{name_str}.")
 
-        raw_rollback = effective_hooks.get("rollback_on_failure")
-        if raw_rollback is None:
-            resolved_rollback: Union[bool, List[str]] = True
-        elif isinstance(raw_rollback, bool):
-            resolved_rollback = raw_rollback
-        elif isinstance(raw_rollback, (list, tuple, set)):
-            resolved_rollback = [str(x).strip() for x in raw_rollback]
+        raw_fatal = effective_hooks.get("failure_is_fatal")
+        if raw_fatal is None:
+            resolved_fatal: Union[bool, List[str]] = True
+        elif isinstance(raw_fatal, bool):
+            resolved_fatal = raw_fatal
+        elif isinstance(raw_fatal, (list, tuple, set)):
+            resolved_fatal = [str(x).strip() for x in raw_fatal]
         else:
             name_str = f" for package '{package_name}'" if package_name else ""
-            raise ConfigError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
+            raise ConfigError(f"failure_is_fatal must be a boolean or list of hook names{name_str}.")
 
         if workspace_config is not None and package_name:
             package_src_dir = workspace_config.source_path / package_name
@@ -358,7 +355,7 @@ class PackageHooks(AlwaysTruthy):
             post_render=abs_hooks.get("post_render"),
             health=abs_hooks.get("health"),
             timeout=raw_timeout,
-            rollback_on_failure=resolved_rollback,
+            failure_is_fatal=resolved_fatal,
             _relative_paths=rel_hooks,
         )
         hooks.validate(package_name)

@@ -193,6 +193,64 @@ class InstallMethod(str, Enum):
         raise ValueError(f"Unknown install method '{val}'. Valid choices: 'symlink', 'copy'.")
 
 
+class RollbackPolicy(str, Enum):
+    """Controls automatic rollback behavior when a deployment or installation fails midway."""
+    AUTO = "auto"
+    ALWAYS = "always"
+    NEVER = "never"
+
+    def __str__(self) -> str:
+        return self.value
+
+    @classmethod
+    def default(cls) -> "RollbackPolicy":
+        """Returns the default rollback policy (AUTO)."""
+        return cls.AUTO
+
+    @classmethod
+    def _missing_(cls, value):
+        if value is None:
+            return cls.AUTO
+        if isinstance(value, bool):
+            return cls.ALWAYS if value else cls.NEVER
+        if isinstance(value, str):
+            s = value.strip().lower()
+            if s in ("auto", "default"):
+                return cls.AUTO
+            if s in ("always", "yes", "true", "1", "on"):
+                return cls.ALWAYS
+            if s in ("never", "no", "false", "0", "off"):
+                return cls.NEVER
+        return super()._missing_(value)
+
+    @classmethod
+    def from_val(
+        cls,
+        val: Optional[Union[str, bool, "RollbackPolicy"]] = None,
+        context: str = "",
+    ) -> "RollbackPolicy":
+        """Parses a string, boolean, or RollbackPolicy instance into a RollbackPolicy enum member."""
+        if val is None:
+            return cls.AUTO
+        if isinstance(val, cls):
+            return val
+        if isinstance(val, bool):
+            return cls.ALWAYS if val else cls.NEVER
+        if isinstance(val, str):
+            s = val.strip().lower()
+            if s in ("auto", "default"):
+                return cls.AUTO
+            if s in ("always", "yes", "true", "1", "on"):
+                return cls.ALWAYS
+            if s in ("never", "no", "false", "0", "off"):
+                return cls.NEVER
+        ctx_str = f" for {context}" if context else ""
+        raise ValueError(
+            f"Invalid rollback policy {val!r}{ctx_str}. "
+            "Valid choices: 'auto', 'always' ('yes'), 'never' ('no')."
+        )
+
+
 class BackupSubfolder(str, Enum):
     """Subfolders within backup/<pkg>/ for different backup categories."""
     OVERWRITTEN = "overwritten"
@@ -356,7 +414,7 @@ DRY_RUN_ENABLED_HOOKS = (
     "pre_source",
 )
 
-HOOK_CONFIG_OPTIONS = (*LIFECYCLE_HOOK_NAMES, "timeout", "rollback_on_failure")
+HOOK_CONFIG_OPTIONS = (*LIFECYCLE_HOOK_NAMES, "timeout", "failure_is_fatal")
 HOOK_CONFIG_OPTION_SET = set(HOOK_CONFIG_OPTIONS)
 
 DEFAULT_HOOK_TIMEOUT: int = 120

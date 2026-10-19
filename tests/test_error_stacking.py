@@ -18,7 +18,7 @@ from drift.core.exceptions import (
     is_drift_error,
 )
 from drift.config.workspace_config import WorkspaceConfig
-from drift.primitives.deploy_repo import run_primitive_deploy_pipeline
+from drift.primitives.deploy_repo import execute_deploy_pipeline
 from drift.primitives.stage_repo import StagePlan, StageResult
 
 
@@ -93,7 +93,7 @@ class TestErrorStacking(unittest.TestCase):
 
         with self.assertLogs("drift.primitives.deploy_repo", level="ERROR") as cm:
             with self.assertRaises(RuntimeError) as ctx:
-                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         logs = "\n".join(cm.output)
         # 1. Popping path is preserved:
@@ -110,7 +110,7 @@ class TestErrorStacking(unittest.TestCase):
 
         with self.assertLogs("drift.primitives.deploy_repo", level="ERROR") as cm:
             with self.assertRaises(RuntimeError):
-                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         logs = "\n".join(cm.output)
         # For unexpected unlogged error, details are included:
@@ -136,13 +136,13 @@ class TestErrorStacking(unittest.TestCase):
             package="pkg_a",
             hook_name="pre_install",
             message="Hook failed with exit code 127.\nCommand: /bin/false\nStderr: No such file",
-            requires_rollback=False,
+            is_fatal=False,
         )
         mock_execute_deploy.side_effect = hook_err
 
         with self.assertLogs("drift.primitives.deploy_repo", level="ERROR") as cm:
             with self.assertRaises(RuntimeError):
-                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         logs = "\n".join(cm.output)
         # Popping path is logged:
@@ -170,7 +170,7 @@ class TestErrorStacking(unittest.TestCase):
 
         with self.assertLogs("drift.primitives.deploy_repo", level="INFO") as cm:
             with self.assertRaises(RuntimeError) as ctx:
-                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         logs = "\n".join(cm.output)
         self.assertIn("❌ [CRITICAL] Step 3 (Sandbox Staging Pre-flight) failed.", logs)
@@ -195,7 +195,7 @@ class TestErrorStacking(unittest.TestCase):
 
         with self.assertLogs("drift.primitives.deploy_repo", level="INFO"):
             with self.assertRaises(RuntimeError) as ctx:
-                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         self.assertIn("Midway crash: Step 3 (Sandbox Staging) failed.", str(ctx.exception))
         mock_recovery_card.assert_called_once()

@@ -73,6 +73,7 @@ from ..schema import (
     HELP_TOPICS,
     INSTALL_METHODS,
     LIFECYCLE_HOOKS,
+    ROLLBACK_POLICIES,
 )
 
 
@@ -117,6 +118,8 @@ class NushellGenerator:
             self._render_static_completer(f"{cli}-install-methods", INSTALL_METHODS),
             "",
             self._render_static_completer(f"{cli}-lifecycle-hooks", LIFECYCLE_HOOKS),
+            "",
+            self._render_static_completer(f"{cli}-rollback-policies", ROLLBACK_POLICIES),
             "",
             "# =============================================================================",
             "# Root CLI Command",
@@ -182,6 +185,8 @@ class NushellGenerator:
                     type_anno = f': string@"nu-complete {self.schema.cli_name}-help-topics"'
                 elif opt.choices == LIFECYCLE_HOOKS:
                     type_anno = f': string@"nu-complete {self.schema.cli_name}-lifecycle-hooks"'
+                elif opt.choices == ROLLBACK_POLICIES:
+                    type_anno = f': string@"nu-complete {self.schema.cli_name}-rollback-policies"'
                 else:
                     type_anno = ": string"
             else:

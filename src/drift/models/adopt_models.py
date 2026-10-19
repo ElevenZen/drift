@@ -18,6 +18,7 @@ from ..core.serialization import SerializableModel
 
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderEngineRegistry
+    from ..config.workspace_config import SettingsConfig
     from ..hooks.lifecycle_hooks import HookExecFlags
 
 
@@ -73,7 +74,7 @@ class AdoptOptions(SerializableModel, AlwaysTruthy):
     skip_patches: bool = False
     flags: Optional[HookExecFlags] = None
 
-    def get_hook_flags(self, settings: Any = None) -> HookExecFlags:
+    def get_hook_flags(self, settings: Optional[SettingsConfig] = None) -> HookExecFlags:
         """Derives HookExecFlags, assigning dry_run from AdoptOptions to HookExecFlags."""
         from ..hooks.lifecycle_hooks import HookExecFlags
         return HookExecFlags.resolve(

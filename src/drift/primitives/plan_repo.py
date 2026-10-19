@@ -35,7 +35,7 @@ from typing import Dict, Generator, List, Mapping, Optional, Sequence, Set, Tupl
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
-from ..core.constants import STATE_REGISTRY_FILE_NAME
+from ..core.constants import STATE_REGISTRY_FILE_NAME, ROLLBACK_ELIGIBLE_STATES
 from ..core.file_action import NO_CHANGE_ACTION_TYPES, filter_display_actions
 from ..core.state_registry import load_state_registry, StateRegistry
 from ..models import (
@@ -74,7 +74,7 @@ def check_midway_states(
     """Inspects state registry and returns mapping of package name to error message for midway states."""
     if force:
         return {}
-    midway_pkgs = state_registry.get_rollback_eligible_packages(discovered_pkgs)
+    midway_pkgs = state_registry.filter_by_states(ROLLBACK_ELIGIBLE_STATES, target_packages=discovered_pkgs)
     return {
         pkg: (
             f"Package '{pkg}' is in midway transaction state '{state}'. "

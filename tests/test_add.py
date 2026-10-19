@@ -531,7 +531,7 @@ render_command = "bash -c 'cat %i %s'"
             execute_add(
                 drift_root=self.drift_root,
                 package_name=pkg,
-                import_paths=[str(target_file)],
+                import_paths=[target_file],
                 dry_run=True,
             )
 

@@ -24,7 +24,7 @@ from ..core.serialization import SerializableModel
 if TYPE_CHECKING:
     from ..config.package_config import PackageConfig
     from ..config.package_hooks import PackageHooks
-    from ..config.workspace_config import WorkspaceConfig
+    from ..config.workspace_config import SettingsConfig, WorkspaceConfig
     from ..core.state_registry import PackageState, StateRegistry
     from ..hooks.lifecycle_hooks import HookExecFlags
 
@@ -38,7 +38,7 @@ class UninstallOptions(AlwaysTruthy):
     no_deps: bool = False
     flags: Optional[HookExecFlags] = None
 
-    def get_hook_flags(self, settings: Any = None) -> HookExecFlags:
+    def get_hook_flags(self, settings: Optional[SettingsConfig] = None) -> HookExecFlags:
         """Derives HookExecFlags, assigning dry_run from UninstallOptions to HookExecFlags."""
         from ..hooks.lifecycle_hooks import HookExecFlags
         return HookExecFlags.resolve(

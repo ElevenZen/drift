@@ -28,6 +28,7 @@ from .actions import (
     execute_complete,
     execute_install_stub,
 )
+from ..core.constants import InstallMethod, PackageStage, RollbackPolicy
 from ..models import WorkspaceDiffType
 from ..primitives.deploy_repo import DeployOptions
 from ..utils.git_utils import get_drift_root
@@ -136,13 +137,15 @@ def handle_new(
     """Scaffold a new package directory and drift_package.toml."""
     cli_ctx = _extract_cli_context(ctx)
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        target_path = Path(target) if target is not None else None
+        resolved_method = InstallMethod.from_str(method) if method is not None else None
         drift_root = cli_ctx.get_drift_root()
         execute_new_package(
             drift_root,
             package_name,
             force=force,
-            target_directory=target,
-            install_method=method,
+            target_directory=target_path,
+            install_method=resolved_method,
             json_mode=cli_ctx.json_mode
         )
 
@@ -158,7 +161,8 @@ def handle_add(
     cli_ctx = _extract_cli_context(ctx)
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        execute_add(drift_root, package_name, paths, dry_run=dry_run, json_mode=cli_ctx.json_mode, no_hooks=no_hooks, verbose=cli_ctx.verbose)
+        import_paths = [Path(p) for p in paths]
+        execute_add(drift_root, package_name, import_paths, dry_run=dry_run, json_mode=cli_ctx.json_mode, no_hooks=no_hooks, verbose=cli_ctx.verbose)
 
 
 def handle_adopt(
@@ -201,6 +205,7 @@ def handle_deploy(
     no_deps: bool = False,
     no_cache: bool = False,
     dry_run: bool = False,
+    rollback: Optional[str] = None,
 ) -> None:
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
     if dry_run:
@@ -221,6 +226,7 @@ def handle_deploy(
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        resolved_rollback = RollbackPolicy.from_val(rollback) if rollback is not None else None
         drift_root = cli_ctx.get_drift_root()
         execute_deploy(
             drift_root,
@@ -231,6 +237,7 @@ def handle_deploy(
             reinstall=reinstall,
             no_deps=no_deps,
             no_cache=no_cache,
+            rollback=resolved_rollback,
         )
 
 
@@ -284,8 +291,9 @@ def handle_health(
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        resolved_stage = PackageStage.from_str(from_stage)
         drift_root = cli_ctx.get_drift_root()
-        execute_health(drift_root, pkgs, json_mode=cli_ctx.json_mode, verbose=cli_ctx.verbose, timeout=timeout, from_stage=from_stage)
+        execute_health(drift_root, pkgs, json_mode=cli_ctx.json_mode, verbose=cli_ctx.verbose, timeout=timeout, from_stage=resolved_stage)
 
 
 def handle_uninstall(
@@ -503,11 +511,13 @@ def handle_apply(
     no_hooks: bool = False,
     no_deps: bool = False,
     dry_run: bool = False,
+    rollback: Optional[str] = None,
 ) -> None:
     """(Low-Level) Apply configurations from state database to active host system."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        resolved_rollback = RollbackPolicy.from_val(rollback) if rollback is not None else None
         drift_root = cli_ctx.get_drift_root()
         execute_apply(
             drift_root,
@@ -519,6 +529,7 @@ def handle_apply(
             no_deps=no_deps,
             dry_run=dry_run,
             verbose=cli_ctx.verbose,
+            rollback=resolved_rollback,
         )
 
 
@@ -544,8 +555,9 @@ def handle_hook(
     """(Low-Level) Trigger a specific lifecycle hook script for a single package."""
     cli_ctx = _extract_cli_context(ctx)
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        resolved_stage = PackageStage.from_str(from_stage) if from_stage is not None else None
         drift_root = cli_ctx.get_drift_root()
-        execute_hook(drift_root, package, hook_name, json_mode=cli_ctx.json_mode, from_stage=from_stage)
+        execute_hook(drift_root, package, hook_name, json_mode=cli_ctx.json_mode, from_stage=resolved_stage)
 
 
 def handle_install(
