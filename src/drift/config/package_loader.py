@@ -374,4 +374,7 @@ def load_package_config_for_install(
             workspace_config=workspace_config,
         )
     except Exception as e:
-        raise RuntimeError(f"Failed to load package configuration for '{pkg_name}' from install base: {e}")
+        raise RuntimeError(
+            f"Failed to load package configuration for '{pkg_name}' from install base: {e}\n"
+            f"👉 Hint: Update the package configuration in 'src/{pkg_name}/' and run 'drift deploy {pkg_name}' to refresh its staged configuration."
+        ) from e

@@ -666,6 +666,74 @@ class TestPackageAssertions(unittest.TestCase):
         )
         self.assertEqual(res, ["pkg_app"])
 
+    def test_resolve_target_package_order_lazy_expansion_skips_unrelated_invalid_installed(self) -> None:
+        # 1. Unrelated installed package 'mise' with obsolete/invalid config syntax in install/
+        mise_drift_dir = self.install_dir / "mise" / ".drift"
+        mise_drift_dir.mkdir(parents=True, exist_ok=True)
+        (mise_drift_dir / "drift_package.toml").write_text(
+            '[package]\nname = "mise"\nobsolete_removed_key = true\n',
+            encoding="utf-8",
+        )
+
+        # 2. Installed bridge package 'pkg_bridge' with valid config depending on 'pkg_a'
+        bridge_drift_dir = self.install_dir / "pkg_bridge" / ".drift"
+        bridge_drift_dir.mkdir(parents=True, exist_ok=True)
+        (bridge_drift_dir / "drift_package.toml").write_text(
+            '[package]\nname = "pkg_bridge"\ndependencies = ["pkg_a"]\n',
+            encoding="utf-8",
+        )
+
+        registry = StateRegistry()
+        registry.set_package_state("mise", "installed")
+        registry.set_package_state("pkg_bridge", "installed")
+
+        # 3. Target batch: pkg_c -> pkg_bridge (installed) -> pkg_a (target)
+        meta_a = PackageConfig(PackageSectionConfig(name="pkg_a"))
+        meta_c = PackageConfig(
+            PackageSectionConfig(
+                name="pkg_c",
+                dependencies=PackageDependencies(items=[PackageDependency(name="pkg_bridge")]),
+            )
+        )
+
+        # Should expand pkg_c -> pkg_bridge -> pkg_a, order pkg_a before pkg_c, and completely skip 'mise'
+        order = resolve_target_package_order(
+            target_metadata={"pkg_c": meta_c, "pkg_a": meta_a},
+            state_registry=registry,
+            workspace_config=self.workspace_config,
+        )
+        self.assertEqual(order, ["pkg_a", "pkg_c"])
+
+    def test_resolve_target_package_order_referenced_invalid_installed_shows_hint(self) -> None:
+        # Installed package 'mise' with invalid config syntax in install/
+        mise_drift_dir = self.install_dir / "mise" / ".drift"
+        mise_drift_dir.mkdir(parents=True, exist_ok=True)
+        (mise_drift_dir / "drift_package.toml").write_text(
+            '[package]\nname = "mise"\nobsolete_removed_key = true\n',
+            encoding="utf-8",
+        )
+
+        registry = StateRegistry()
+        registry.set_package_state("mise", "installed")
+
+        # Target package explicitly depends on 'mise'
+        meta_app = PackageConfig(
+            PackageSectionConfig(
+                name="pkg_app",
+                dependencies=PackageDependencies(items=[PackageDependency(name="mise")]),
+            )
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            resolve_target_package_order(
+                target_metadata={"pkg_app": meta_app},
+                state_registry=registry,
+                workspace_config=self.workspace_config,
+            )
+        err_msg = str(ctx.exception)
+        self.assertIn("Failed to load package configuration for 'mise' from install base", err_msg)
+        self.assertIn("Update the package configuration in 'src/mise/' and run 'drift deploy mise'", err_msg)
+
 
 if __name__ == "__main__":
     unittest.main()

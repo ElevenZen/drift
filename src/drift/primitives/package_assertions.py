@@ -116,6 +116,7 @@ from ..core.exceptions import (
     PackageInstallDirMissingError,
     TargetPermissionError,
 )
+from ..utils.config_utils import branch, when_none
 from ..utils.git_utils import has_uncommitted_modifications
 from ..utils.path_utils import is_relative_to, encode_dot_prefix
 from ..utils.file_ops import assert_writable
@@ -607,12 +608,12 @@ def resolve_target_package_order(
     workspace_config: WorkspaceConfig,
     no_deps: bool = False,
 ) -> List[str]:
-    """Resolves topologically sorted package order for a targeted batch against the full package universe.
+    """Resolves topologically sorted package order for a targeted batch against its reachable dependency universe.
 
-    Builds the complete dependency universe by combining the targeted packages with all already-installed
-    packages recorded in the StateRegistry. Loads metadata from the install/ base for installed packages
-    not present in target_metadata, runs topological dependency sort over the universe, and filters
-    the resulting sequence to return ordered targeted packages.
+    Expands the dependency graph starting from the targeted packages via a FIFO queue, loading metadata
+    from the install/ base lazily only for already-installed packages recorded in the StateRegistry that
+    are transitively referenced as dependencies. Runs topological dependency sort over the reachable
+    universe and filters the resulting sequence to return ordered targeted packages.
 
     Args:
         target_metadata: Mapping of package name to PackageConfig for targeted packages being staged or deployed.
@@ -631,26 +632,33 @@ def resolve_target_package_order(
     if not target_metadata:
         return []
 
-    canonical_install_base = workspace_config.install_path_mask or workspace_config.install_path
+    canonical_install_base = when_none(workspace_config.install_path_mask, workspace_config.install_path)
     will_install_names = set(target_metadata.keys())
-    already_installed_names = [pkg for pkg, _ in state_registry.filter_by_states(["installed"])]
+    already_installed_names = {pkg for pkg, _ in state_registry.filter_by_states(["installed"])}
+    available_universe_names = will_install_names | already_installed_names
 
-    installed_universe = {
-        pkg: (
-            PackageConfig.from_install_dir(canonical_install_base / pkg, workspace_config)
-            if (canonical_install_base / pkg).is_dir()
-            else PackageConfig(PackageSectionConfig(name=pkg))
-        )
-        for pkg in already_installed_names
-        if pkg not in will_install_names
-    }
+    full_universe: Dict[str, PackageConfig] = dict(target_metadata)
+    queue = collections.deque(target_metadata.keys())
 
-    full_universe = {**installed_universe, **target_metadata}
+    while queue:
+        current_pkg = queue.popleft()
+        for dep in full_universe[current_pkg].package.dependencies:
+            dep_name = dep.name
+            if dep_name in full_universe or dep_name not in already_installed_names:
+                continue
+            install_pkg_dir = canonical_install_base / dep_name
+            full_universe[dep_name] = branch(
+                install_pkg_dir.is_dir(),
+                lambda d=install_pkg_dir: PackageConfig.from_install_dir(d, workspace_config),
+                lambda n=dep_name: PackageConfig(PackageSectionConfig(name=n)),
+            )
+            queue.append(dep_name)
+
     full_deps = {pkg: meta.package.dependencies for pkg, meta in full_universe.items()}
 
     # Check missing required dependencies at the beginning before resolving DAG order
     if not no_deps:
-        assert_required_package_dependencies_exist(full_deps)
+        assert_required_package_dependencies_exist(full_deps, universe_names=available_universe_names)
 
     sorted_universe = resolve_package_install_order(full_deps)
     return list(filter(will_install_names.__contains__, sorted_universe))
