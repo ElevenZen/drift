@@ -7,32 +7,37 @@ This document serves as both a critical review of the project's current state an
 ## Part I: Project Review
 
 ### Strengths
+**1. The 4-tier transactional model (`src/ → render/ → install/ → host`) solves real state-management problems.**
+Most dotfile managers are either "symlink farms" (GNU Stow) or single-stage template appliers (`chezmoi`). By maintaining independent Git repositories at both `render/` (compiled template output) and `install/` (deployed host baseline), Drift establishes a true 3-way merge anchor (`render/` vs. `install/` vs. live host). Rendering before reverse-sync allows Drift to automatically resolve **convergent drift** (when host edits and template updates arrive at identical content) while halting on **divergent drift** so GUI or manual host edits are never silently clobbered. Combined with pre-stage install conflict/permission auditing, append-only Write-Ahead Logging (`backup/<pkg>/wal/actions.json` + `stash/`), and the 3-state `RollbackPolicy` (`auto`, `always`, `never`), failed deployments or fatal `post_install` hooks can be rolled back atomically across an entire multi-package batch.
 
-**The 4-tier transactional model is genuinely novel.**
-Most dotfile managers are either "symlink farm" (stow, chezmoi's apply) or "copy and forget." Drift's `src/ → render/ → install/ → host` pipeline with independent Git repos at tier 2 and tier 3 is a real architectural innovation. The sentinel guard that halts deployment on detected host drift — forcing an explicit `adopt` or `--force` decision — solves the "GUI settings silently overwritten" problem that every other tool ignores.
+**2. Build-system-grade incremental rendering via a 3-Phase Merkle DAG.**
+Instead of wiping and re-rendering package directories on every run, [`src/drift/render/`](../src/drift/render/) models compilation as a 3-phase Merkle DAG (`Phase 1: PackageConfigNode` $\rightarrow$ `Phase 2: PackageHooksNode` $\rightarrow$ `Phase 3: PackagePayloadNode`), backed by a 3-bucket `render_lock.json` and a nanosecond stat-fingerprinted in-memory [`RenderCache`](../src/drift/render/render_cache.py). Unchanged templates and static files incur zero disk writes, preserving file `mtime`s and keeping `render/.git` history clean.
 
-**Clean primitive decomposition.**
-The 16-primitive design with typed `*Result` returns is excellent. Each primitive is a self-contained unit with clear inputs, outputs, and side effects. The layered docstrings at the top of each module make call chains immediately graspable. This is better internal documentation than most production codebases.
+**3. Strict `prepare_*` (read-only planning) vs. `execute_*` (mutation) separation across all 17 primitives.**
+State-transition primitives (`reverse-sync`, `stage`, `apply`, `uninstall`, `add`, `adopt`, and full-cycle `plan`) decouple pure inspection and `FileAction` compilation (`StagePlan`, `InstallPlan`, `UninstallPlan`, `AdoptPlan`) from physical execution (`execute_delivery_actions`). This makes [`drift plan`](features/plan_engine.md) (`drift deploy --dry-run`) a genuine, zero-side-effect simulation of the entire pipeline and guarantees that pre-flight assertion guards (missing hooks, target permission errors, cross-package path collisions, cyclic dependencies) abort before mutating host files or `state.toml`.
 
-**Zero-dependency core is a real asset.**
-Pure stdlib Python with optional `[rich]` is a strong distribution story. The zipapp packaging, shell wrapper installer, and the fact that it works on Python 3.9+ without pulling in Click/Typer/Jinja2 in core mode is rare and valuable for the target audience — power users who are picky about what runs on their machines.
+**4. Expressive 6-tier configuration and environment engine with a zero-dependency core.**
+Drift runs on pure Python 3.9+ stdlib in core mode (including a built-in `internal` `envsubst` engine, stdlib fallback TOML parser, zipapp bundler, and dual Typer/Argparse CLI backends) while still providing a 6-tier `Package > Workspace` environment hierarchy (`override`, `facts`, `ambient`, `secrets`, `default`, `fallback`), clean-room secret isolation and zero-disk-leakage `[secrets]` decryption providers (`[env.secrets]` / `[secrets]` / `config/secrets.env`), `.envst.toml` and `.local.toml` config layering, Python preprocessor hooks (`drift_workspace.py` / `drift_package.py`), declarative host `[requirements]`, and topological inter-package `dependencies`.
 
-**The config system is surprisingly powerful.**
-In-TOML variable stitching with DAG resolution, 6-tier precedence (Package > Workspace across all tiers), declarative `[env.secrets]` & `secrets.env` isolation with transient clean-room scope, Python hooks at both workspace and package level, `.envst.toml` meta-templates — this is a lot of expressive power without requiring users to learn a template language for configuration itself.
-
-**Functional style is consistent and readable.**
-The `filter`/`map`/comprehension-first style with extracted predicates (`is_zombie_package_dir`, `is_valid_file`, etc.) keeps data pipelines declarative. The separation of gathering vs. execution (e.g., `get_pending_delta_worklist` → `run_pending_delta_diff`) is consistently applied throughout.
+**5. Disciplined functional architecture, static type safety, and 3-layer documentation.**
+Strict bottom-up package layering (`utils` $\rightarrow$ `models`/`core` $\rightarrow$ `config`/`hooks`/`render` $\rightarrow$ `primitives` $\rightarrow$ `cli`), strongly-typed result dataclasses, functional control-flow helpers (`branch`, `when_not_none`, `when_none`, `partition`), 3-state cross-platform path validation (`Strictly Relative` / `Partially Anchored` / `Strictly Absolute`), zero `pyright` errors, and the 3-layer documentation hierarchy ([`docs/architecture.md`](architecture.md) $\rightarrow$ `docs/features/*.md` $\rightarrow$ `src/drift/*/AGENT_MODULE.md`) make the codebase unusually verifiable and easy to reason about.
 
 ### Weaknesses & Risks
 
-**Complexity vs. audience mismatch.**
-The mental model required — 4 directory tiers, 16 primitives, 6-tier variable precedence, three diff modes, render engines with DAG piping — is steep. chezmoi succeeds partly because its model is simple: source → target, with templates. Drift asks users to understand *why* there's a `render/` and an `install/` and why they're separate Git repos. The README is thorough but overwhelming; it reads more like a specification than an onboarding guide.
+**1. Cross-tier schema evolution & read-before-write coupling (`src/` vs. `render/` vs. `install/`).**
+Because `render/<pkg>/.drift/drift_package.toml` and `install/<pkg>/.drift/drift_package.toml` persist rendered snapshots of package configs in their own Git repositories, evolving Drift's configuration schema (e.g., renaming or removing a key enforced by `validate_known_keys` in `PackageConfig.from_dict`) creates version skew between `src/` and older committed snapshots in `install/`. While lazy FIFO dependency expansion in [`resolve_target_package_order()`](../src/drift/primitives/package_assertions.py) prevents unrelated installed packages from blocking targeted `stage`/`apply` runs, operations that inspect already-installed packages (`drift status`, `drift gc`, `drift uninstall`, `drift health`, or dependent packages) still parse `install/<pkg>/.drift/drift_package.toml` under the current schema and require re-deploying the affected package to refresh its staged config.
 
-**Git subprocess dependency is deep and implicit.**
-Despite "zero dependencies," the project fundamentally depends on Git being installed and functioning correctly. Every primitive touches `subprocess.run(["git", ...])`. There's no abstraction layer — Git commands are scattered across `git_utils.py`, `workspace_diff.py`, `render_repo.py`, etc. If Git behaves unexpectedly (version differences, partial installs, Windows Git quirks), debugging is hard.
+**2. Steep conceptual surface area for new users.**
+Understanding 4 storage tiers (`src/`, `render/`, `install/`, host), 2 internal Git repositories, 17 primitives, 6-tier variable precedence, and 3 diff modes (`pending`, `staged`, `drift`) requires a significantly larger mental model than single-stage tools like GNU Stow or `chezmoi`. While `drift deploy` and `drift adopt` hide much of this in day-to-day usage, recovering from unusual states or understanding why a package sits in `"staged"` still benefits from a concise quickstart guide and a unified `drift doctor` diagnostic command.
 
-**The `symlink` vs `copy` duality adds cognitive load.**
-Two deployment methods with different event ordering semantics — symlink content visible before `pre_update` vs. not — is a footgun. Users will hit subtle bugs where a hook script works with `copy` but breaks with `symlink` because file contents changed earlier than expected.
+**3. Heavy subprocess coupling to the `git` CLI.**
+Although Drift has zero third-party Python dependencies in core mode, its state engine shells out frequently to `git` (`status --porcelain`, `diff`, `add`, `commit`, `checkout`, `clean`) across `render/.git` and `install/.git`. This adds subprocess spawning overhead across multi-package runs (especially noticeable on Windows) and exposes the pipeline to ambient Git configuration quirks (`core.autocrlf`, commit signing hooks, missing user identity, or stale `.git/index.lock` files).
+
+**4. Lifecycle timing asymmetry between `symlink` and `copy` delivery modes.**
+In `symlink` mode, live host paths point directly into `install/<pkg>/`. As a result, `drift stage` (`render/ → install/`) immediately updates the live file contents seen by the host *before* `drift apply` runs `pre_update` hooks, and in-place host edits immediately dirty the `install/` Git working tree without `reverse-sync`. In `copy` mode, host files only change during `drift apply` (between `pre_update` and `post_update`) and require `reverse-sync` to capture host drift. Hook authors must be aware of this semantic difference when writing `pre_update` scripts.
+
+**5. Custom fallback TOML parser maintenance on Python 3.9–3.10.**
+Supporting Python 3.9 and 3.10 without external `tomli` requires maintaining a custom scanner-based TOML parser in [`toml_utils.py`](../src/drift/utils/toml_utils.py). Although it supports multiline strings, inline tables, and arrays of tables, complex edge cases in nested inline structures or escaping rules remain a maintenance surface compared to Python 3.11+'s standard library `tomllib`.
 
 ---
 
@@ -69,7 +74,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](../AGENTS
   1. **Tier 1 (Override)**: Package `[env.override]` > Workspace `[env.override]`
   2. **Tier 2 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*`)
   3. **Tier 3 (CLI & Ambient)**: Ambient Process Environment (`os.environ`) & CLI Variables
-  4. **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
+  4. **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `[secrets]` provider / `config/secrets.env`
   5. **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
   6. **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
 - **Strongly Typed `EnvConfig`, `EnvImpact` & `EnvResolve`**: `EnvConfig` encapsulates the 4 canonical environment tables (`override`, `secrets`, `default`, `fallback`) with pure serializer `to_env_dict()`. `EnvImpact` models two-phase environment scoping (`full_env`, `scope`, `restricted_env`). `EnvResolve` holds `current: EnvConfig`, `effective: EnvConfig`, and `impact: EnvImpact` with pure DAG resolver `resolve_env_configs()`.
@@ -199,6 +204,11 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](../AGENTS
 - **Pre-Deploy & Pre-Install Stale WAL Cleanup**: [`run_primitive_deploy_pipeline`](../src/drift/primitives/deploy_repo.py) purges stale WAL folders for clean `"installed"` packages after midway state checks, and [`execute_package_install_impl`](../src/drift/primitives/install_repo.py) clears any leftover WAL before transitioning to `"installing"`.
 - **Whole-Batch Auto-Rollback Execution**: When a fatal error occurs in [`execute_install`](../src/drift/primitives/install_repo.py) and the resolved rollback policy triggers auto-rollback, Drift automatically executes [`run_primitive_8_rollback_recovery`](../src/drift/primitives/rollback_repo.py) across the entire attempted + rollback-eligible batch and suppresses the manual `EMERGENCY RECOVERY REQUIRED` card (`DeployFailure.requires_rollback = False`).
 
+### 27. Workspace `[secrets]` Decryption Providers & Unified Config Path/Command Parsers
+- **Dedicated [`secrets_config.py`](../src/drift/config/secrets_config.py) & `SecretsConfig` Model**: Extracted `[secrets]` workspace configuration (`secrets_file`, `key_file`, `decrypt_command`) into [`SecretsConfig`](../src/drift/config/secrets_config.py) (`WorkspaceConfig.secrets_config`), with in-memory secret resolution via [`fetch_workspace_secrets()`](../src/drift/config/secrets_config.py) and [`WorkspaceConfig.fetch_secrets()`](../src/drift/config/workspace_config.py). Empty `[secrets]` sections gracefully collapse to `secrets_config = None` so the default `config/secrets.env` fallback remains active.
+- **Zero-Disk-Leakage In-Memory Decryption & CLI Providers**: Supports external decryption tools (Age, GPG, OpenSSL, SOPS) and password manager CLIs (`op`, `bw`, `pass`) via `decrypt_command` (`List[str]` executed with `shell=False`) and optional `%s` (`secrets_file`) / `%i` (`key_file`) token interpolation (`requires_secrets_file`, `requires_key_file`). Decrypted stdout is validated for strict UTF-8 and `.env` syntax (`parse_env_text(..., strict=True)`) and merged into Tier 4 secrets without writing plaintext to disk; [`read_plain_secrets_file()`](../src/drift/utils/env_utils.py) enforces identical strict validation for unencrypted files.
+- **Unified Configuration Path & Command Token Parsers ([`config_utils.py`](../src/drift/utils/config_utils.py))**: Extracted shared boundary normalizers [`parse_command_tokens()`](../src/drift/utils/config_utils.py), [`parse_config_path()`](../src/drift/utils/config_utils.py), [`parse_optional_config_path()`](../src/drift/utils/config_utils.py), and [`resolve_path_within_base_dir()`](../src/drift/utils/config_utils.py) across [`secrets_config.py`](../src/drift/config/secrets_config.py), [`render_engine_config.py`](../src/drift/config/render_engine_config.py), [`workspace_config.py`](../src/drift/config/workspace_config.py), and [`package_config.py`](../src/drift/config/package_config.py).
+
 ---
 
 ## Part III: Strategic Tier Ranking
@@ -208,14 +218,14 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 ### 🌟 Tier S: Game Changers & Core Value Proposition
 * **[`drift plan`](features/plan_engine.md)** [Completed]: Full dry-run visualization of render, stage, and install actions before modifying host files.
 * **`drift doctor`**: Single diagnostic command validating workspace structure, Git repositories, hook permissions, and dependencies.
-* **Asymmetric In-Repo Secret Encryption (Age / SSH-key)**: Zero-disk-leakage in-memory secret decryption into the compilation sandbox.
+* **Asymmetric In-Repo Secret Encryption (Age / SSH-key)** [Completed]: Zero-disk-leakage in-memory secret decryption into the compilation sandbox via `[secrets]` (`decrypt_command`, `secrets_file`, `key_file`).
 * **Smarter Rollback with WAL (Write-Ahead Log)** [Completed]: Guarantees 100% reversible rollbacks for physical host filesystem side effects and backup stores via append-only `wal_actions.jsonl` and `wal_stash/`.
 * **Unified Layered Import System (`[[imports]]`)**: Layered overlay mounting for package inheritance, file remounting, and external assets.
 
 ### 🚀 Tier A: High Value & Ergonomic Wins  
 
 * **Package Dependency Declaration & Topological Install Ordering** [Completed]: Packages declare explicit `dependencies` in `drift_package.toml` with required/optional semantics, enabling install-order guarantees and pre-flight validation.
-* **Command Hooks & Arguments (`shlex`)**: Inline shell commands in hooks without creating wrapper files.
+* **Command Hooks & Arguments (`shlex`)**: Inline shell commands in hooks without creating wrapper files.  
 * **Passive File Triggers (Pacman-style Hooks)**: Directory-watching triggers executed once in a consolidated batch after deployment.
 * **Audit `check=False` & Error Stacking** [Completed]: Eliminates error masking and redundant multi-line error boxes.
 * **Globbing in `packages.enable`**: Wildcard pattern matching (`desktop_* = false`, `server_* = true`) across machine classes.
@@ -225,7 +235,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 ### ⚖️ Tier B: Solid Improvements & Scale Enhancements
 * **Workspace-Wide Snippets & Partials (`config/partials/`)**: Boilerplate deduplication across Mustache, Jinja2, and shell templates.
 * **Fleet & Server Orchestration Integration**: Non-interactive batch flags, JSON status objects, and Ansible roles for fleet automation.
-* **Dynamic Password Manager CLI Provider**: Declarative integration with 1Password (`op`), Bitwarden (`bw`), and `pass`.
+* **Dynamic Password Manager CLI Provider** [Completed]: Declarative `[secrets]` integration with 1Password (`op`), Bitwarden (`bw`), `pass`, and external decryption tools.
 * **Incremental / Selective Rendering** [Completed]: 3-Phase Merkle DAG with `render_lock.json` and nanosecond stat-fingerprinted `RenderCache`.
 * **Git Abstraction Layer (`GitRepo` class)**: Centralizes Git subprocess calls for clean mocking and unified error translation.
 * **Rendered Output Format Validation**: Verifies syntax of rendered JSON/YAML/TOML before staging.
@@ -354,17 +364,19 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 ### Category 4: Secret Management
 
-- [ ] **Encrypted `secrets.env` for safe repo sync.** Support simple encryption of `secrets.env` so it can be safely committed and synced with the config repository. (from old roadmap)
+- [x] **Encrypted `secrets.env` for safe repo sync.** Support simple encryption of `secrets.env` so it can be safely committed and synced with the config repository via `[secrets]` (`secrets_file`, `key_file`, `decrypt_command`). (from old roadmap)
 
-- [ ] **Asymmetric in-repo secret encryption (Age / SSH-key).** Support encrypted secret files directly in the repository (e.g., `config/secrets.age.env`). Decrypt in-memory using Age keys or existing SSH private keys (`~/.ssh/id_ed25519`). Secrets fed directly into the transient compilation sandbox without ever being written to disk in plain text. (from old roadmap)
+- [x] **Asymmetric in-repo secret encryption (Age / SSH-key).** Support encrypted secret files directly in the repository (e.g., `config/secrets.env.age`). Decrypt in-memory using Age keys or existing SSH private keys (`~/.ssh/id_ed25519`) via `decrypt_command = "age -d -i %i %s"`. Secrets fed directly into the transient compilation sandbox without ever being written to disk in plain text. (from old roadmap)
 
-- [ ] **Dynamic password manager CLI provider.** Add a declarative `[secrets.provider]` hook in `drift_workspace.toml` for dynamic retrieval from 1Password CLI (`op`), Bitwarden CLI (`bw`), `pass`, or OS native keychains:
+- [x] **Dynamic password manager CLI provider.** Declarative `[secrets]` table in `drift_workspace.toml` for encrypted files or dynamic retrieval from 1Password CLI (`op`), Bitwarden CLI (`bw`), `pass`, or OS native keychains:
   ```toml
   [secrets]
-  encrypted_file = "config/secrets.age.env"
-  identity = "~/.ssh/id_ed25519"
+  secrets_file = "secrets.env.age"
+  key_file = "~/.ssh/id_ed25519"
+  decrypt_command = "age -d -i %i %s"
   # Or dynamic provider:
-  # provider_command = "op inject --in-file config/secrets.template.env"
+  # secrets_file = "secrets.template.env"
+  # decrypt_command = "op inject --in-file %s"
   ```
   (from old roadmap)
 

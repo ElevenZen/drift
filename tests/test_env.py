@@ -1454,13 +1454,13 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
                     }
                 }
             }
-            secrets_file = {
+            secrets_file_dict = {
                 "SECRETS_FILE_KEY": "raw_secret",
             }
 
             interpolated_dict, env_res = resolve_and_interpolate_workspace_config(
                 data,
-                secrets_file=secrets_file,
+                secrets_file_dict=secrets_file_dict,
             )
             effective_secrets = env_res.effective.secrets
             current_secrets = env_res.current.secrets
@@ -2502,8 +2502,288 @@ class TestEnvResolveUnit(unittest.TestCase):
         self.assertEqual(res.impact.overrides, {"EXPLICIT": "yes"})
 
 
+class TestWorkspaceSecretsProviderIntegration(unittest.TestCase):
+    """Integration tests for [secrets], fetch_workspace_secrets, WorkspaceConfig.fetch_secrets(), and decryption providers."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.original_environ = dict(os.environ)
+        self.temp_dir = tempfile.mkdtemp()
+        self.drift_root = Path(self.temp_dir).resolve()
+        self.config_dir = self.drift_root / CONFIG_DIR_NAME
+        self.src_dir = self.drift_root / "src"
+        self.render_dir = self.drift_root / "render"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.src_dir.mkdir(parents=True, exist_ok=True)
+        self.render_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_default_fallback_and_plain_secrets_file_validation(self) -> None:
+        """Verifies fallback to config/secrets.env and strict validation of custom plaintext secrets_file."""
+        from drift.config.secrets_config import SecretsConfig, fetch_workspace_secrets
+        from drift.core.exceptions import ConfigError
+        from drift.utils.env_utils import read_plain_secrets_file
+
+        # 1. When [secrets] is omitted or empty and config/secrets.env does not exist -> returns {}
+        self.assertEqual(fetch_workspace_secrets(self.drift_root), {})
+        self.assertEqual(fetch_workspace_secrets(self.drift_root, SecretsConfig.from_dict({})), {})
+
+        # Empty [secrets] table in drift_workspace.toml behaves identically to omitted [secrets]
+        ws_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
+        ws_toml.write_text(
+            "[workspace]\nsource_directory = 'src'\n[packages.enable]\nDEFAULT = true\n[secrets]\n",
+            encoding="utf-8",
+        )
+        ws_no_secrets_file = WorkspaceConfig.from_workspace_dir(self.drift_root, quiet=True)
+        self.assertEqual(ws_no_secrets_file.fetch_secrets(), {})
+        self.assertEqual(ws_no_secrets_file.env_resolve.effective.secrets, {})
+
+        # 2. When config/secrets.env exists and [secrets] is omitted or empty -> loads config/secrets.env
+        (self.config_dir / SECRETS_ENV_FILE_NAME).write_text(
+            "DEFAULT_SECRET = 'from_default_secrets_env'\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            fetch_workspace_secrets(self.drift_root),
+            {"DEFAULT_SECRET": "from_default_secrets_env"},
+        )
+        self.assertEqual(
+            fetch_workspace_secrets(self.drift_root, SecretsConfig.from_dict({})),
+            {"DEFAULT_SECRET": "from_default_secrets_env"},
+        )
+        ws_with_empty_secrets_section = WorkspaceConfig.from_workspace_dir(self.drift_root, quiet=True)
+        self.assertEqual(
+            ws_with_empty_secrets_section.fetch_secrets(),
+            {"DEFAULT_SECRET": "from_default_secrets_env"},
+        )
+        self.assertEqual(
+            ws_with_empty_secrets_section.env_resolve.effective.secrets["DEFAULT_SECRET"],
+            "from_default_secrets_env",
+        )
+
+        # 3. Custom plaintext secrets_file without decrypt_command
+        custom_plain = self.config_dir / "custom_secrets.env"
+        custom_plain.write_text("CUSTOM_SECRET=plain_ok\n", encoding="utf-8")
+        cfg_plain = SecretsConfig(secrets_file="custom_secrets.env")
+        self.assertEqual(
+            fetch_workspace_secrets(self.drift_root, cfg_plain),
+            {"CUSTOM_SECRET": "plain_ok"},
+        )
+
+        # 4. Missing custom secrets_file raises ConfigError
+        with self.assertRaises(ConfigError) as ctx_missing:
+            fetch_workspace_secrets(self.drift_root, SecretsConfig(secrets_file="nonexistent.env"))
+        self.assertIn("Secrets file not found", str(ctx_missing.exception))
+
+        # 5. Binary / non-UTF-8 secrets_file without decrypt_command raises ConfigError
+        binary_file = self.config_dir / "encrypted.bin"
+        binary_file.write_bytes(b"\x80\xfe\xff\x00invalid_utf8")
+        with self.assertRaises(ConfigError) as ctx_bin:
+            fetch_workspace_secrets(self.drift_root, SecretsConfig(secrets_file="encrypted.bin"))
+        self.assertIn("Failed to read or decode secrets file", str(ctx_bin.exception))
+
+        # 6. Malformed line without '=' in plain secrets file raises ConfigError
+        bad_syntax = self.config_dir / "malformed.env"
+        bad_syntax.write_text("VALID_KEY=1\nTHIS_LINE_HAS_NO_EQUALS\n", encoding="utf-8")
+        with self.assertRaises(ConfigError) as ctx_malformed:
+            read_plain_secrets_file(bad_syntax, required=True)
+        self.assertIn("expected 'KEY=VALUE'", str(ctx_malformed.exception))
+
+    def test_decrypt_command_modes_and_workspace_fetch_secrets_method(self) -> None:
+        """Verifies decrypt_command with (%i + %s), (%s only), (%i only), keyless command, and WorkspaceConfig.fetch_secrets()."""
+        import sys
+        from drift.config.secrets_config import SecretsConfig, fetch_workspace_secrets
+        from drift.core.exceptions import ConfigError
+
+        py_exe = Path(sys.executable).as_posix()
+
+        # 1. Both %i (key_file) and %s (secrets_file)
+        key_file = self.config_dir / "master.key"
+        sec_file = self.config_dir / "vault.enc"
+        key_file.write_text("PREFIX_KEY", encoding="utf-8")
+        sec_file.write_text("API_TOKEN=secret_payload\n", encoding="utf-8")
+
+        script_both = self.config_dir / "decrypt_both.py"
+        script_both.write_text(
+            "import pathlib, sys\n"
+            "k = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8').strip()\n"
+            "s = pathlib.Path(sys.argv[2]).read_text(encoding='utf-8').strip()\n"
+            "print(f'KEY_ID={k}')\n"
+            "print(s)\n",
+            encoding="utf-8",
+        )
+        cfg_both = SecretsConfig(
+            decrypt_command=f'"{py_exe}" "{script_both.as_posix()}" %i %s',
+            secrets_file="vault.enc",
+            key_file="master.key",
+        )
+        self.assertEqual(
+            fetch_workspace_secrets(self.drift_root, cfg_both),
+            {"KEY_ID": "PREFIX_KEY", "API_TOKEN": "secret_payload"},
+        )
+
+        # 2. %s only (no key_file)
+        cfg_s_only = SecretsConfig(
+            decrypt_command=[py_exe, "-c", "import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text())", "%s"],
+            secrets_file="vault.enc",
+        )
+        self.assertEqual(
+            fetch_workspace_secrets(self.drift_root, cfg_s_only),
+            {"API_TOKEN": "secret_payload"},
+        )
+
+        # 3. %i only (no secrets_file)
+        cfg_i_only = SecretsConfig(
+            decrypt_command=[py_exe, "-c", "import pathlib, sys; print('LOADED_KEY=' + pathlib.Path(sys.argv[1]).read_text().strip())", "%i"],
+            key_file="master.key",
+        )
+        self.assertEqual(
+            fetch_workspace_secrets(self.drift_root, cfg_i_only),
+            {"LOADED_KEY": "PREFIX_KEY"},
+        )
+
+        # 4. Keyless / fileless command (neither secrets_file nor key_file)
+        cfg_command_only = SecretsConfig(
+            decrypt_command=[py_exe, "-c", "print('DYNAMIC_SECRET=from_agent')"],
+        )
+        self.assertEqual(
+            fetch_workspace_secrets(self.drift_root, cfg_command_only),
+            {"DYNAMIC_SECRET": "from_agent"},
+        )
+
+        # 5. Missing secrets_file or key_file on disk with decrypt_command raises ConfigError
+        with self.assertRaises(ConfigError):
+            fetch_workspace_secrets(
+                self.drift_root,
+                SecretsConfig(decrypt_command=[py_exe, "-c", "pass", "%s"], secrets_file="missing.enc"),
+            )
+        with self.assertRaises(ConfigError):
+            fetch_workspace_secrets(
+                self.drift_root,
+                SecretsConfig(decrypt_command=[py_exe, "-c", "pass", "%i"], key_file="missing.key"),
+            )
+
+        # 6. Failing decrypt_command raises ConfigError
+        with self.assertRaises(ConfigError) as ctx_fail:
+            fetch_workspace_secrets(
+                self.drift_root,
+                SecretsConfig(decrypt_command=[py_exe, "-c", "import sys; sys.stderr.write('bad key\\n'); sys.exit(2)"]),
+            )
+        self.assertIn("bad key", str(ctx_fail.exception))
+
+    def test_end_to_end_workspace_load_single_execution_precedence_and_render(self) -> None:
+        """Verifies single execution during load_workspace_config, 6-tier precedence, fetch_secrets(), and two-pass render."""
+        import sys
+        py_exe = Path(sys.executable).as_posix()
+        counter_file = self.config_dir / "decrypt_count.txt"
+        counter_file.write_text("0", encoding="utf-8")
+
+        key_file = self.config_dir / "id_key.txt"
+        sec_file = self.config_dir / "secrets.enc"
+        key_file.write_text("ok_key", encoding="utf-8")
+        sec_file.write_text(
+            "FROM_PROVIDER=provider_val\n"
+            "OVERRIDDEN_BY_WS=provider_val\n"
+            "OVERRIDDEN_BY_PKG=provider_val\n",
+            encoding="utf-8",
+        )
+
+        decrypt_script = self.config_dir / "provider.py"
+        decrypt_script.write_text(
+            "import pathlib, sys\n"
+            f"c_path = pathlib.Path('{counter_file.as_posix()}')\n"
+            "c_path.write_text(str(int(c_path.read_text()) + 1), encoding='utf-8')\n"
+            "assert pathlib.Path(sys.argv[1]).read_text().strip() == 'ok_key'\n"
+            "print(pathlib.Path(sys.argv[2]).read_text())\n",
+            encoding="utf-8",
+        )
+
+        # Workspace hook that reads context.env['FROM_PROVIDER'] without mutating [secrets]
+        ws_hook = self.config_dir / "drift_workspace.py"
+        ws_hook.write_text(
+            "def configure_workspace(context):\n"
+            "    assert context.env.get('FROM_PROVIDER') == 'provider_val'\n"
+            "    return context.config\n",
+            encoding="utf-8",
+        )
+
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
+        drift_toml.write_text(
+            f"""
+[workspace]
+source_directory = "src"
+render_directory = "render"
+install_directory = "install"
+backup_directory = "backup"
+default_target_directory = "~"
+
+[packages.enable]
+pkg_sec = true
+
+[render.envsubst]
+suffix = "envst"
+render_command = "internal"
+
+[secrets]
+decrypt_command = '"{py_exe}" "{decrypt_script.as_posix()}" %i %s'
+secrets_file = "secrets.enc"
+key_file = "id_key.txt"
+
+[env.secrets]
+OVERRIDDEN_BY_WS = "ws_secret_val"
+OVERRIDDEN_BY_PKG = "ws_secret_val"
+""",
+            encoding="utf-8",
+        )
+
+        pkg_dir = self.src_dir / "pkg_sec"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+            """
+[package]
+name = "pkg_sec"
+
+[env.secrets]
+OVERRIDDEN_BY_PKG = "pkg_secret_val"
+""",
+            encoding="utf-8",
+        )
+        (pkg_dir / "dot-Check.envst").write_text(
+            "P=${FROM_PROVIDER}|W=${OVERRIDDEN_BY_WS}|K=${OVERRIDDEN_BY_PKG}\n",
+            encoding="utf-8",
+        )
+
+        # Load workspace config: decrypt_command should execute ONCE even with workspace hook active
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
+        self.assertEqual(int(counter_file.read_text(encoding="utf-8")), 1)
+
+        # Calling ws_config.fetch_secrets() invokes the provider on demand
+        fetched = ws_config.fetch_secrets()
+        self.assertEqual(fetched["FROM_PROVIDER"], "provider_val")
+        self.assertEqual(int(counter_file.read_text(encoding="utf-8")), 2)
+
+        # Pass 1 (Cold Render): renders template with 6-tier secret precedence
+        res_cold = run_primitive_2_render_packages(ws_config, ["pkg_sec"])
+        self.assertEqual(res_cold.status, "SUCCESS")
+        self.assertEqual(res_cold.packages[0].status, "SUCCESS")
+        self.assertTrue(res_cold.packages[0].has_changes)
+        rendered_out = (self.render_dir / "pkg_sec" / "dot-Check").read_text(encoding="utf-8").strip()
+        self.assertEqual(rendered_out, "P=provider_val|W=ws_secret_val|K=pkg_secret_val")
+
+        # Pass 2 (Warm Idempotent Render): hits cache and returns UP_TO_DATE
+        res_warm = run_primitive_2_render_packages(ws_config, ["pkg_sec"])
+        self.assertEqual(res_warm.status, "SUCCESS")
+        self.assertEqual(res_warm.packages[0].status, "UP_TO_DATE")
+        self.assertFalse(res_warm.packages[0].has_changes)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

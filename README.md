@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-1166%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-1365%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -19,7 +19,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
 * ⚡ **Incremental Merkle DAG Compilation & Caching**: Replaces slow, redundant procedural re-rendering with an AST Directed Acyclic Graph (DAG) backed by cryptographic Merkle hashing and lockfiles (`.drift_lock.json`). Unchanged templates and static assets are skipped instantly (`SKIP_IDENTICAL` / 0ms overhead).
 * 🔍 **Full-Cycle Dry-Run & Planning Engine**: End-to-end deployment simulation across all phases (`drift plan` or `drift deploy -n`) in an ephemeral sandbox without mutating host files or Git state. Inspect planned actions, audit host drift, and detect batch collisions before touching your system.
-* 🧩 **Native In-TOML Variable Stitching**: Define derived and inter-connected variables (`$VAR`, `${VAR}`) directly within your TOML configuration files—no external template wrappers or boilerplate scripts needed to compute variables from one another.
+* 🧩 **Native In-TOML Variable Stitching & Zero-Disk-Leakage `[secrets]`**: Define derived and inter-connected variables (`$VAR`, `${VAR}`) directly within your TOML configuration files, and decrypt in-repo encrypted secrets (`age`, `gpg`, `sops`) or query password manager CLIs (`op`, `bw`, `pass`) directly in memory via `[secrets]`.
 * 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, define declarative host requirements (`[requirements]`), or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift & Visual Diffing**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`), review multi-tab side-by-side visual diffs in your editor (`drift diff -y`), and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
@@ -211,7 +211,7 @@ Unlike monolithic dotfile managers that force you to deploy entire configuration
 A **single, unified dotfiles repository** can effortlessly power everything from minimal cloud servers to high-performance GPU workstations and personal laptops:
 
 > [!TIP]
-> **Fetching Remote Secrets & Dynamic Configs**: Python hooks are the recommended place to securely query secret managers (e.g. 1Password CLI `op`, Bitwarden CLI `bw`, HashiCorp Vault, AWS Secrets Manager, or HTTP endpoints) and inject credentials into `context.config["env"]["secrets"]`, `workspace_context.config["env"]["default"]`, or `package_context.config["env"]["override"]` before downstream templates compile. See `drift help workspace` for more information.  
+> **Declarative `[secrets]` Providers & Dynamic Python Hooks**: For encrypted secret files (`age`, `gpg`, `sops`) or CLI password managers (`op`, `bw`, `pass`), use the declarative `[secrets]` table in `drift_workspace.toml` (see Section 4 below). For custom programmatic secret retrieval (e.g., querying HTTP APIs or injecting dynamic keys per machine), you can also use Python workspace/package hooks to populate `context.config["env"]["secrets"]`, `context.config["env"]["default"]`, or `context.config["env"]["override"]` before downstream templates compile.  
 
 *   **Granular Machine Enablement (`config/drift_workspace.local.toml`)**:
     You can selectively enable or disable packages on each machine using the gitignored `config/drift_workspace.local.toml` override without modifying version-controlled source files:
@@ -336,16 +336,41 @@ Drift provides a strongly typed **6-tier environment variable precedence hierarc
 | **1** | **Override** | `[env.override]` | Explicit high-priority overrides (overwrites all lower tiers including ambient shell/CLI) |
 | **2** | **Facts** | Package & system facts (`drift_*`) | Auto-probed host attributes and paths (authoritative internal metadata) |
 | **3** | **CLI Context** | Ambient process (`os.environ`) & CLI | Command-line environment variables (takes precedence over secrets/defaults/fallbacks) |
-| **4** | **Secrets** | `[env.secrets]`, `secrets.env` | Private credentials and tokens (masked in logs) |
+| **4** | **Secrets** | `[env.secrets]`, `[secrets]`, `secrets.env` | Private credentials and tokens (decrypted in-memory and masked in logs) |
 | **5** | **Default** | `[env.default]` | Standard package/workspace baseline values |
 | **6** | **Fallback** | `[env.fallback]` | Soft floor defaults (evaluated only when unset across all upper tiers) |
 
 #### 🔄 Resolution Cascade (`secret >> fallback >> default >> override`)
 Environment tables are resolved using Kahn's topological DAG algorithm with strict unidirectional evaluation flow:
-1. **`[env.secrets]`**: Evaluated first against host environment and system facts.
+1. **`[env.secrets]`**: Evaluated first against host environment, system facts, and `[secrets]` / `config/secrets.env` values.
 2. **`[env.fallback]`**: Evaluated with access to resolved secrets.
 3. **`[env.default]`**: Evaluated with access to resolved secrets and fallback values.
 4. **`[env.override]`**: Evaluated with full access to all resolved tables.
+
+#### 🔐 Declarative Secret Decryption & CLI Providers (`[secrets]`)
+Instead of storing plaintext credentials on disk, you can commit encrypted secret files (e.g., Age, GPG, OpenSSL, SOPS) directly into your repository or query password manager CLIs (`op`, `bw`, `pass`) via the `[secrets]` table in `config/drift_workspace.toml` (or machine-specific `config/drift_workspace.local.toml`). Secrets are decrypted **strictly in memory** (`shell=False`) and validated as UTF-8 `.env` (`KEY=VALUE`) pairs with zero disk leakage:
+
+```toml
+# config/drift_workspace.toml
+[secrets]
+# Example 1: Asymmetric in-repo encryption with Age & SSH private key
+secrets_file = "secrets.env.age"           # %s: Relative to 'config/' (or absolute / ~/ / $VAR)
+key_file = "~/.ssh/id_ed25519"             # %i: Optional identity/key file
+decrypt_command = "age -d -i %i %s"        # Executed in-memory; stdout parsed as .env
+
+# Example 2: 1Password / Bitwarden CLI provider (no key_file needed)
+# secrets_file = "secrets.template.env"
+# decrypt_command = "op inject --in-file %s"
+
+# Example 3: Standalone command without secrets_file or key_file
+# decrypt_command = "bw get notes drift-workspace-secrets"
+
+# Example 4: Custom plaintext secrets file (when decrypt_command is omitted)
+# secrets_file = "~/private/drift_secrets.env"
+```
+
+*   **Token Placeholders (`%s` & `%i`)**: `%s` expands to the resolved `secrets_file` path and `%i` expands to the resolved `key_file` path (relative paths resolve against `config/`). Each file is only required when its corresponding placeholder appears in `decrypt_command` (or when `decrypt_command` is omitted, in which case `secrets_file` is read directly as a plaintext `.env` file).
+*   **Automatic `config/secrets.env` Fallback**: When `[secrets]` is omitted or left empty, Drift automatically loads `config/secrets.env` if present. Explicit entries in `[env.secrets]` take precedence over values loaded from `[secrets]` or `config/secrets.env`.
 
 #### 📝 Concrete TOML Example
 

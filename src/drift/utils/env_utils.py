@@ -347,25 +347,51 @@ def resolve_env_configs(
     )
 
 
-def parse_env_text(content: str) -> Dict[str, str]:
+def parse_env_text(
+    content: str,
+    strict: bool = False,
+    source_desc: str = "env",
+) -> Dict[str, str]:
     """Parses standard key-value lines (stripping comments and quotes)."""
     parsed: Dict[str, str] = {}
-    for line in content.splitlines():
-        line = line.strip()
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
             line = line[7:].strip()
-        if "=" in line:
-            k, v = line.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-                v = v[1:-1]
-            if (k.startswith('"') and k.endswith('"')) or (k.startswith("'") and k.endswith("'")):
-                k = k[1:-1]
-            parsed[k] = v
+        if "=" not in line:
+            if strict:
+                raise ConfigError(
+                    f"Invalid key-value line {raw_line!r} in {source_desc}: expected 'KEY=VALUE'."
+                )
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+            v = v[1:-1]
+        if (k.startswith('"') and k.endswith('"')) or (k.startswith("'") and k.endswith("'")):
+            k = k[1:-1]
+        if strict and not k:
+            raise ConfigError(f"Empty key name in line {raw_line!r} in {source_desc}.")
+        parsed[k] = v
     return parsed
+
+
+def read_plain_secrets_file(file_path: Path, required: bool = False) -> Dict[str, str]:
+    """Reads and strictly parses a plaintext UTF-8 secrets file into a dictionary."""
+    if not file_path.is_file():
+        if required:
+            raise ConfigError(f"Secrets file not found at '{file_path}'.")
+        return {}
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as e:
+        raise ConfigError(
+            f"Failed to read or decode secrets file '{file_path}' as UTF-8 text: {e}"
+        ) from e
+    return parse_env_text(content, strict=True, source_desc=f"secrets file '{file_path}'")
 
 
 def parse_env_file(file_path: Path) -> Dict[str, str]:

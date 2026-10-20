@@ -68,7 +68,7 @@
 * `topological_sort_env(raw_env: Mapping[str, str], error_cls=ConfigError) -> List[str]`: Sorts environment variable keys by `${VAR}` reference dependencies.
 * `interpolate_config_dict(data: Dict[str, Any], env: Mapping[str, str], skip_sections=...) -> Dict[str, Any]`: Recursively interpolates `${VAR}` across parsed config dictionaries.
 * `python_envsubst(text: str, env: Optional[Mapping[str, str]] = None) -> str`: Pure-Python `envsubst` supporting `$VAR`, `${VAR}`, `${VAR:-default}`, `${VAR:+alt}`, and `\$` escaping.
-* `parse_secrets_env(drift_root: Path) -> Dict[str, str]`, `parse_env_file(file_path: Path) -> Dict[str, str]`, `env_scope(...)`.
+* `read_plain_secrets_file(file_path: Path, required: bool = False) -> Dict[str, str]`, `parse_env_text(content: str, strict: bool = False, source_desc: str = "env") -> Dict[str, str]`, `parse_secrets_env(drift_root: Path) -> Dict[str, str]`, `parse_env_file(file_path: Path) -> Dict[str, str]`, `env_scope(...)`.
 
 ### [`config_utils.py`](config_utils.py) & [`toml_utils.py`](toml_utils.py) — Config Predicates & TOML Engine
 * `partition(pred: Callable[[T], bool], items: Iterable[T]) -> Tuple[List[T], List[T]]`: Splits items into `(truthy_list, falsy_list)`.
@@ -78,6 +78,8 @@
 * `get_first_from(data: Mapping, keys: Sequence[str], default=None) -> Any`: Returns value for the first matching key alias.
 * `get_nested_from(data: dict, keys: Union[str, Sequence[str]], default=None, required=False, is_table=False, context="configuration") -> Any`: Traverses nested dict paths with type/presence validation.
 * `parse_bool_value(val: Any, default: bool = False, strict: bool = False, context: str = "") -> bool`: Coerces boolean values.
+* `parse_command_tokens(raw_cmd: Any, field_name: str = "command", context: str = "") -> List[str]`: Parses a command string (`shlex.split(..., posix=True)`) or sequence of non-empty strings into `List[str]`.
+* `parse_config_path(raw_val: Any, field_name: str = "path", default: Optional[Path] = None, expand: bool = False, context: str = "") -> Path`, `parse_optional_config_path(raw_val: Any, field_name: str = "path", expand: bool = False, dot_as_none: bool = True, base_dir: Optional[Path] = None, must_be_inside_base: bool = False, context: str = "") -> Optional[Path]`, & `resolve_path_within_base_dir(path: Path, base_dir: Path, field_name: str = "path", context: str = "") -> Path`: Coerces `(str, Path)` configuration fields into `Path` or `Optional[Path]` with optional `~` / `$VAR` expansion, `Path(".")` filtering, and strict `base_dir` containment validation.
 * `validate_known_keys(data: Mapping, known_keys: Iterable[str], context: str = "", message_prefix: Optional[str] = None) -> None`: Raises `ConfigError` on unknown keys.
 * `parse_toml(content: str) -> dict`, `dump_toml(data: dict) -> str`, `merge_toml(dict_a: dict, dict_b: dict) -> dict`: Zero-dependency TOML parser (`tomllib` on Python 3.11+ with custom fallback parser), serializer, and deep table merger.
 

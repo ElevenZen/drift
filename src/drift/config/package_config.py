@@ -61,12 +61,15 @@ from ..utils.env_utils import (
     parse_env_dict,
     resolve_env_configs,
 )
-from ..utils.path_utils import expand_path
 from ..utils.file_inspect import check_can_symlink
 from ..utils.config_utils import (
+    branch,
     get_first_from,
     parse_bool_value,
+    parse_config_path,
+    parse_optional_config_path,
     validate_known_keys,
+    when_none,
     when_not_none,
 )
 from .package_hooks import PackageHooks
@@ -207,10 +210,6 @@ class PackageSectionConfig(AlwaysTruthy):
     ) -> None:
         if not isinstance(name, str):
             raise ConfigError(f"Package name must be a string, got {type(name).__name__}")
-        if source_directory is not None and not isinstance(source_directory, (str, Path)):
-            raise ConfigError(f"source_directory must be a Path or str, got {type(source_directory).__name__}")
-        if target_directory is not None and not isinstance(target_directory, (str, Path)):
-            raise ConfigError(f"target_directory must be a Path or str, got {type(target_directory).__name__}")
         if install_method is not None and not isinstance(install_method, InstallMethod):
             raise ConfigError(f"install_method must be an InstallMethod instance, got {type(install_method).__name__}")
         if not isinstance(enable_render, bool):
@@ -221,22 +220,37 @@ class PackageSectionConfig(AlwaysTruthy):
             raise ConfigError(f"sudo must be a boolean, got {type(sudo).__name__}")
         if not isinstance(auto_rollback, bool):
             raise ConfigError(f"auto_rollback must be a boolean, got {type(auto_rollback).__name__}")
-        if hook_file is not None and not isinstance(hook_file, (str, Path)):
-            raise ConfigError(f"hook_file must be a Path or str, got {type(hook_file).__name__}")
         if dependencies is not None and not isinstance(dependencies, PackageDependencies):
             raise ConfigError(f"dependencies must be a PackageDependencies instance, got {type(dependencies).__name__}")
 
+        pkg_ctx = branch(bool(name), lambda: f"for package '{name}'", lambda: "")
         self.name = name
-        self.source_directory = Path(source_directory) if source_directory else Path(".")
+        self.source_directory = parse_config_path(
+            source_directory,
+            "source_directory",
+            default=Path("."),
+            context=pkg_ctx,
+        )
         self.enable_render = enable_render
         self.enable_install = enable_install
         self.install_method = install_method
-        self.target_directory = expand_path(target_directory) if target_directory else None
+        self.target_directory = parse_optional_config_path(
+            target_directory,
+            "target_directory",
+            expand=True,
+            dot_as_none=True,
+            context=pkg_ctx,
+        )
         self.sudo = sudo
         self.auto_rollback = auto_rollback
         self.fully_controlled_dirs = list(fully_controlled_dirs) if fully_controlled_dirs else []
-        self.hook_file = Path(hook_file) if hook_file is not None else None
-        self.dependencies = dependencies if dependencies is not None else PackageDependencies()
+        self.hook_file = parse_optional_config_path(
+            hook_file,
+            "hook_file",
+            dot_as_none=False,
+            context=pkg_ctx,
+        )
+        self.dependencies = when_none(dependencies, PackageDependencies)
 
     def validate(self) -> None:
         """Validates [package] section configuration values."""
@@ -297,6 +311,7 @@ class PackageSectionConfig(AlwaysTruthy):
         )
 
         name = str(data.get("name") or package_name)
+        pkg_ctx = branch(bool(name), lambda: f"for package '{name}'", lambda: "")
 
         raw_deps = data.get("dependencies", [])
         deps = PackageDependencies.from_list(raw_deps, package_name=name)
@@ -309,28 +324,17 @@ class PackageSectionConfig(AlwaysTruthy):
         else:
             raise ConfigError(f"fully_controlled_dirs must be a list of strings for package '{name}'.")
 
-        src_dir_val = data.get("source_directory")
-        if src_dir_val is not None:
-            if not isinstance(src_dir_val, (str, Path)):
-                raise ConfigError(f"source_directory must be a string for package '{name}'.")
-            raw_str = str(src_dir_val).strip()
-            source_dir = Path(raw_str) if len(raw_str) > 0 else Path(".")
-        else:
-            source_dir = Path(".")
-
         target_dir_keys = (
             *((f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES) if sys.platform == "win32" else ()),
             "target_directory",
         )
-        target_dir: Optional[Path] = (val := get_first_from(data, target_dir_keys)) and expand_path(val)
-
-        raw_hook_file = data.get("hook_file")
-        if raw_hook_file is not None:
-            resolved_hook_file = Path(raw_hook_file)
-            if not resolved_hook_file.anchor and base_dir is not None:
-                resolved_hook_file = (base_dir / resolved_hook_file).resolve()
-        else:
-            resolved_hook_file = None
+        resolved_hook_file = parse_optional_config_path(
+            data.get("hook_file"),
+            "hook_file",
+            dot_as_none=False,
+            base_dir=base_dir,
+            context=pkg_ctx,
+        )
 
         raw_install_method = data.get("install_method")
         parsed_install_method: Optional[InstallMethod] = None
@@ -342,11 +346,11 @@ class PackageSectionConfig(AlwaysTruthy):
 
         sec = cls(
             name=name,
-            source_directory=source_dir,
+            source_directory=data.get("source_directory"),
             enable_render=parse_bool_value(data.get("enable_render", True), default=True),
             enable_install=parse_bool_value(data.get("enable_install", True), default=True),
             install_method=parsed_install_method,
-            target_directory=target_dir,
+            target_directory=get_first_from(data, target_dir_keys),
             sudo=parse_bool_value(data.get("sudo", False), default=False),
             auto_rollback=parse_bool_value(
                 data.get("auto_rollback", False),

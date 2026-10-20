@@ -82,7 +82,7 @@ Drift enforces a 6-tier precedence hierarchy. Within each tier, **Package** conf
 | **Tier 1** | **Override** | `[env.override]` (Package > Workspace) | Yes (`overwrite=True`) | Can reference Tiers 2–6 |
 | **Tier 2** | **Facts** | Package Facts > System Facts (`SYSTEM_FACTS`) | Yes (during resolution) | Protected; cannot be overridden by ambient env |
 | **Tier 3** | **Ambient Context** | Host `os.environ` & CLI flags | Existing process state | Read-only during resolution |
-| **Tier 4** | **Secrets** | `[env.secrets]` (Package > Workspace) > `secrets.env` | No (`overwrite=False`) | Can reference Tiers 5–6 |
+| **Tier 4** | **Secrets** | `[env.secrets]` (Package > Workspace) > `[secrets]` / `secrets.env` | No (`overwrite=False`) | Can reference Tiers 5–6 |
 | **Tier 5** | **Default** | `[env.default]` (Package > Workspace) | No (`overwrite=False`) | Can reference Tier 6 |
 | **Tier 6** | **Fallback** | `[env.fallback]` (Package > Workspace) | No (`overwrite=False`) | Leaf fallback values |
 
@@ -120,10 +120,11 @@ The lifecycle spans 6 operational phases:
 3. **In-Memory Storage**: Stored inside `SYSTEM_FACTS: Dict[str, str]`. Ambient `os.environ` remains untouched.
 
 ### Phase 2: Workspace Configuration Resolution
-1. **Dynamic Workspace Hook**: [`apply_workspace_hook()`](../../src/drift/hooks/workspace_config_hook.py) compiles `real_env = {**secrets_file, **ws_secrets, **os.environ, **system_facts, **ws_overrides}` and passes it to [`WorkspaceHookContext`](../../src/drift/hooks/workspace_config_hook.py).
-2. **Workspace Env Parsing**: [`workspace_loader.py`](../../src/drift/config/workspace_loader.py) parses `[env]` into an `EnvConfig`.
-3. **DAG Resolution**: Calls [`resolve_env_configs()`](../../src/drift/utils/env_utils.py) with lower layer secrets from `config/secrets.env`.
-4. **Workspace Interpolation**: Calls [`interpolate_config_dict()`](../../src/drift/utils/env_utils.py) using `resolved_env.impact.full_env()`.
+1. **Secrets Provider Fetch**: [`fetch_workspace_secrets()`](../../src/drift/config/secrets_config.py) parses `[secrets]` (`decrypt_command` with `%i`/`%s`, `secrets_file`, `key_file`) or falls back to `config/secrets.env` via [`read_plain_secrets_file()`](../../src/drift/utils/env_utils.py).
+2. **Dynamic Workspace Hook**: [`apply_workspace_hook()`](../../src/drift/hooks/workspace_config_hook.py) compiles `real_env = {**resolved_secrets, **ws_secrets, **os.environ, **system_facts, **ws_overrides}` and passes it to [`WorkspaceHookContext`](../../src/drift/hooks/workspace_config_hook.py).
+3. **Workspace Env Parsing**: [`workspace_loader.py`](../../src/drift/config/workspace_loader.py) parses `[env]` into an `EnvConfig`.
+4. **DAG Resolution**: Calls [`resolve_env_configs()`](../../src/drift/utils/env_utils.py) with lower layer secrets from `[secrets]` / `config/secrets.env`.
+5. **Workspace Interpolation**: Calls [`interpolate_config_dict()`](../../src/drift/utils/env_utils.py) using `resolved_env.impact.full_env()`.
 
 ### Phase 3: Package Configuration Resolution
 1. **Fact Gathering**: [`PackageConfig.get_drift_package_facts()`](../../src/drift/config/package_config.py) resolves package facts (`drift_package_name`, `drift_package_source_dir`, `drift_package_render_dir`, `drift_package_install_dir`, `drift_package_target_dir`, `drift_package_install_method`).

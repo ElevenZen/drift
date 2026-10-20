@@ -10,7 +10,7 @@
 ---
 
 ## 2. Internal Dependency Order (Bottom-Up)
-1. **Leaf Config Schemas**: [`render_engine_config.py`](render_engine_config.py), [`package_requirements.py`](package_requirements.py), [`package_hooks.py`](package_hooks.py)
+1. **Leaf Config Schemas**: [`render_engine_config.py`](render_engine_config.py), [`secrets_config.py`](secrets_config.py), [`package_requirements.py`](package_requirements.py), [`package_hooks.py`](package_hooks.py)
 2. **Core Config Domain Models**: [`workspace_config.py`](workspace_config.py) $\rightarrow$ [`package_config.py`](package_config.py)
 3. **Layered Ingestion & DAG Loaders**: [`workspace_loader.py`](workspace_loader.py) $\rightarrow$ [`package_loader.py`](package_loader.py)
 
@@ -19,12 +19,18 @@
 ## 3. Module & Public API Catalog
 
 ### [`render_engine_config.py`](render_engine_config.py) — Custom Render Engine Schema & Registry
-* `RenderEngineConfig(name, suffix, render_command, input_file=None)`: Validates engine suffix (no dots `.`, not in reserved keywords) and `%i` / `%s` command placeholders (`requires_input_file`).
-* `RenderSourceMatch(engine_name, engine_config, target_filename)`: Result of matching a template filename against registered engine suffixes.
+* `parse_render_command(raw_cmd, engine_name="") -> List[str]` & `parse_render_input_file(raw_input, base_dir: Path, engine_name="") -> Optional[Path]`: Pure parsers for engine commands and relative/absolute `input_file` validation against `base_dir`.
+* `RenderEngineConfig(name, suffix, render_command, input_file=None)`: Validates engine suffix (no dots `.`, not in reserved keywords) and `%i` / `%s` command placeholders (`requires_input_file`), and constructs instances via `.from_dict(name, config_dict, base_dir)`.
+* `RenderSourceMatch(path, engine, target_name, status="match")`: Result of matching a template filename against registered engine suffixes.
 * `RenderEngineRegistry(engines: Dict[str, RenderEngineConfig])`:
-  * `.from_dict(render_data, base_dir: Path) -> RenderEngineRegistry`: Normalizes relative `input_file` paths against `base_dir` (rejecting partially anchored paths and paths escaping `base_dir`).
+  * `.from_dict(config_dict, base_dir: Path) -> RenderEngineRegistry`: Normalizes relative `input_file` paths against `base_dir` via `RenderEngineConfig.from_dict` (rejecting partially anchored paths and paths escaping `base_dir`).
   * `.overlay(other: RenderEngineRegistry) -> RenderEngineRegistry`: Merges package-level engine definitions over workspace engines with field-level inheritance.
-  * `.match_template_file(filename: str) -> Optional[RenderSourceMatch]`: Matches `[filename].[suffix].[ext]` or `[filename].[suffix]`.
+  * `.find_engine_for_file(filename: str) -> Optional[RenderEngineConfig]`: Matches `[filename].[suffix].[ext]` or `[filename].[suffix]`.
+
+### [`secrets_config.py`](secrets_config.py) — Workspace Secrets Schema & Provider (`[secrets]`)
+* `parse_decrypt_command(raw_cmd) -> List[str]`: Parses `decrypt_command` via `parse_command_tokens`.
+* `SecretsConfig(decrypt_command=[], secrets_file=None, key_file=None)`: Parses `[secrets]` (`decrypt_command`, `secrets_file`, `key_file` with `%i` / `%s` placeholder validation and 3-state hybrid path validation).
+* `fetch_workspace_secrets(drift_root: Path, secrets_config: Optional[SecretsConfig] = None) -> Dict[str, str]`: Fetches/decrypts workspace secrets in-memory (falling back to `config/secrets.env` when omitted).
 
 ### [`package_requirements.py`](package_requirements.py) — Declarative Host Prerequisites (`[requirements]`)
 * `PackageRequirements(os=(), arch=(), distro=(), binaries=(), env=(), ip=())`:
@@ -40,10 +46,11 @@
 ### [`workspace_config.py`](workspace_config.py) & [`workspace_loader.py`](workspace_loader.py) — Workspace Configuration
 * `SettingsConfig(ensure_hooks_executable_in_src=True, hook_inject_non_interactive_envs=True, hook_output_encoding="utf-8", rollback=RollbackPolicy.AUTO)`: Parses `[settings]` with canonical keys and standard aliases.
 * `WorkspaceSectionConfig`: Parses `[workspace]` (`source_directory`, `render_directory`, `install_directory`, `backup_directory` as strictly relative `not p.anchor`; `default_target_directory` as strictly absolute `p.is_absolute()`).
-* `WorkspaceConfig`: Top-level workspace domain object holding `drift_root`, `workspace`, `settings`, `render_engine_configs`, `packages_enable`, `env_resolve: EnvResolve`, `render_cache: RenderCache`, and optional sandbox path masks (`render_path_mask`, `install_path_mask`).
-  * Properties: `.source_path`, `.render_path`, `.install_path`, `.backup_path`, `.config_path`, `.state_file_path`.
-  * Discovery helpers: `.is_package_enabled(pkg) -> bool`, `.discover_source_packages() -> List[str]`, `.filter_source_packages_by_target(target_pkgs=()) -> List[str]`, `.filter_render_packages_by_target(...)`, `.filter_install_packages_by_target(...)`.
-* `load_workspace_config(drift_root: Path, search_parents: bool = True) -> WorkspaceConfig`: Full ingestion pipeline loading `drift_workspace.toml` (or `.envst.toml`), merging `.local.toml`, applying `config/drift_workspace.py` (`apply_workspace_hook`), and resolving `[env]` + `config/secrets.env` via `resolve_and_interpolate_workspace_config`.
+* `WorkspaceConfig`: Top-level workspace domain object holding `drift_root`, `workspace`, `settings`, `render_engine_configs`, `secrets: SecretsConfig`, `packages_enable`, `env_resolve: EnvResolve`, `render_cache: RenderCache`, and optional sandbox path masks (`render_path_mask`, `install_path_mask`).
+  * `.fetch_secrets() -> Dict[str, str]`: Delegates to `fetch_workspace_secrets(self.drift_root, self.secrets)`.
+  * Properties: `.source_path`, `.render_path`, `.install_path`, `.backup_path`, `.default_target_path`.
+  * Discovery helpers: `.is_package_enabled(pkg) -> bool`, `.get_package_names_from_source_dir() -> List[str]`, `.filter_source_packages_by_target(target_pkgs=()) -> List[str]`, `.filter_render_packages_by_target(...)`, `.filter_install_packages_by_target(...)`.
+* `load_workspace_config(drift_root: Path, check_legacy: bool = True, config_files_override=None, quiet: bool = False) -> WorkspaceConfig`: Full ingestion pipeline loading `drift_workspace.toml` (or `.envst.toml`), merging `.local.toml`, fetching workspace secrets via `fetch_workspace_secrets`, applying `config/drift_workspace.py` (`apply_workspace_hook`), and resolving `[env]` via `resolve_and_interpolate_workspace_config`.
 
 ### [`package_config.py`](package_config.py) & [`package_loader.py`](package_loader.py) — Package Configuration
 * `PackageDependency(name: str, optional: bool = False)` & `PackageDependencies(items: List[PackageDependency])` (`.required_names`, `.optional_names`, `.all_names`).

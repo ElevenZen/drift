@@ -24,40 +24,47 @@ Layer 1: Individual Engine Model & Data Structures
 """
 
 import logging
-import shlex
 from collections.abc import MutableMapping, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence
+from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence, cast
 
 from ..core.constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from ..core.exceptions import ConfigError
 from ..core.mixins import AlwaysTruthy
-from ..utils.config_utils import validate_known_keys, when_not_none
-from ..utils.path_utils import is_relative_to
+from ..utils.config_utils import (
+    branch,
+    parse_command_tokens,
+    parse_optional_config_path,
+    validate_known_keys,
+    when_none,
+    when_not_none,
+)
+from ..utils.path_utils import check_is_partially_anchored_path
 
 logger = logging.getLogger(__name__)
 
 
 def parse_render_command(raw_cmd: Any, engine_name: str = "") -> List[str]:
     """Parses a raw render_command value (string or sequence of strings) into a List[str]."""
-    ctx = f" for render engine '{engine_name}'" if engine_name else ""
-    if raw_cmd is None:
-        return []
-    if isinstance(raw_cmd, str):
-        stripped = raw_cmd.strip()
-        if not stripped:
-            return []
-        try:
-            return shlex.split(stripped, posix=True)
-        except ValueError as e:
-            raise ConfigError(f"Invalid render_command syntax{ctx}: {e}") from e
-    if isinstance(raw_cmd, (list, tuple)):
-        if not all(isinstance(token, str) and bool(token) for token in raw_cmd):
-            raise ConfigError(f"render_command list{ctx} must contain only non-empty strings.")
-        return list(raw_cmd)
-    raise ConfigError(
-        f"render_command{ctx} must be a string or list of strings, got {type(raw_cmd).__name__}."
+    ctx = branch(bool(engine_name), lambda: f"for render engine '{engine_name}'", lambda: "")
+    return parse_command_tokens(raw_cmd, field_name="render_command", context=ctx)
+
+
+def parse_render_input_file(
+    raw_input: Any,
+    base_dir: Path,
+    engine_name: str = "",
+) -> Optional[Path]:
+    """Parses, resolves, and validates a render engine's input_file against base_dir."""
+    ctx = branch(bool(engine_name), lambda: f"for render engine '{engine_name}'", lambda: "")
+    return parse_optional_config_path(
+        raw_input,
+        field_name="input_file",
+        dot_as_none=False,
+        base_dir=base_dir,
+        must_be_inside_base=True,
+        context=ctx,
     )
 
 
@@ -72,10 +79,12 @@ class RenderEngineConfig(AlwaysTruthy):
     render_command: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        """Coerces any non-empty input_file string to pathlib.Path object, or None if empty."""
-        if self.input_file is not None:
-            raw_str = str(self.input_file).strip()
-            self.input_file = Path(raw_str) if raw_str not in ("", ".") else None
+        """Normalizes input_file into a non-empty Path object, or None if empty/dot."""
+        self.input_file = parse_optional_config_path(
+            self.input_file,
+            field_name="input_file",
+            dot_as_none=True,
+        )
 
     @property
     def is_internal(self) -> bool:
@@ -107,10 +116,31 @@ class RenderEngineConfig(AlwaysTruthy):
             raise ConfigError("render_command must be a non-empty list of strings.")
         if self.requires_input_file and self.input_file is None:
             raise ConfigError("input_file must be specified for render engine when '%i' is used in render_command.")
-        if self.input_file is not None and self.input_file.anchor and not self.input_file.is_absolute():
+        if self.input_file is not None and check_is_partially_anchored_path(self.input_file):
             raise ConfigError(
                 f"Render engine '{self.name}' input_file '{self.input_file}' must be a relative or valid absolute path."
             )
+
+    @classmethod
+    def from_dict(cls, name: str, config_dict: Any, base_dir: Path) -> "RenderEngineConfig":
+        """Builds a RenderEngineConfig instance from a parsed [render.<name>] TOML dictionary."""
+        if not isinstance(config_dict, dict):
+            raise ConfigError(f"Render engine '{name}' configuration must be a dictionary.")
+        validate_known_keys(
+            config_dict,
+            cls.KNOWN_KEYS,
+            context=f"render.{name}",
+        )
+        return cls(
+            name=name,
+            input_file=parse_render_input_file(
+                config_dict.get("input_file"),
+                base_dir=base_dir,
+                engine_name=name,
+            ),
+            suffix=str(config_dict.get("suffix", "")),
+            render_command=parse_render_command(config_dict.get("render_command"), name),
+        )
 
     def copy(self) -> "RenderEngineConfig":
         """Returns a copy of the RenderEngineConfig."""
@@ -119,15 +149,9 @@ class RenderEngineConfig(AlwaysTruthy):
     def patch(self, override: Union["RenderEngineConfig", Mapping[str, Any]]) -> "RenderEngineConfig":
         """Creates a new RenderEngineConfig by applying non-empty override fields onto this config."""
         if isinstance(override, Mapping):
-            raw_in = override.get("input_file")
-            override_input = (
-                Path(str(raw_in).strip())
-                if raw_in is not None and str(raw_in).strip() not in ("", ".")
-                else None
-            )
             override = RenderEngineConfig(
                 name=self.name,
-                input_file=override_input,
+                input_file=override.get("input_file"),
                 suffix=str(override.get("suffix", "")),
                 render_command=parse_render_command(override.get("render_command"), self.name),
             )
@@ -136,9 +160,13 @@ class RenderEngineConfig(AlwaysTruthy):
 
         return replace(
             self,
-            input_file=override.input_file if override.input_file is not None else self.input_file,
-            suffix=override.suffix if override.suffix else self.suffix,
-            render_command=list(override.render_command) if override.render_command else list(self.render_command),
+            input_file=when_none(override.input_file, self.input_file),
+            suffix=branch(bool(override.suffix), lambda: override.suffix, lambda: self.suffix),
+            render_command=branch(
+                bool(override.render_command),
+                lambda: list(override.render_command),
+                lambda: list(self.render_command),
+            ),
         )
 
     def strip_suffix(self, filename: str) -> str:
@@ -241,25 +269,28 @@ class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]
 
         override_items = dict(overrides)
         merged: Dict[str, RenderEngineConfig] = {
-            name: engine.patch(override_items[name]) if name in override_items else engine.copy()
+            name: branch(
+                name in override_items,
+                lambda: engine.patch(override_items[name]),
+                lambda: engine.copy(),
+            )
             for name, engine in self._engines.items()
         }
 
         # Add new engines from overrides that are not in self
         new_engines: Dict[str, RenderEngineConfig] = {
-            name: (
-                override.copy()
-                if isinstance(override, RenderEngineConfig)
-                else RenderEngineConfig(
+            name: branch(
+                isinstance(override, RenderEngineConfig),
+                lambda: cast(RenderEngineConfig, override).copy(),
+                lambda: RenderEngineConfig(
                     name=name,
-                    input_file=(
-                        Path(str(override["input_file"]).strip())
-                        if override.get("input_file") is not None and str(override["input_file"]).strip() not in ("", ".")
-                        else None
+                    input_file=cast(Mapping[str, Any], override).get("input_file"),
+                    suffix=str(cast(Mapping[str, Any], override).get("suffix", "")),
+                    render_command=parse_render_command(
+                        cast(Mapping[str, Any], override).get("render_command"),
+                        name,
                     ),
-                    suffix=str(override.get("suffix", "")),
-                    render_command=parse_render_command(override.get("render_command"), name),
-                )
+                ),
             )
             for name, override in override_items.items()
             if name not in self._engines
@@ -278,58 +309,20 @@ class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]
             engine.validate()
 
     @classmethod
-    def from_dict(cls, render_data: Any, base_dir: Path) -> "RenderEngineRegistry":
+    def from_dict(cls, config_dict: Any, base_dir: Path) -> "RenderEngineRegistry":
         """Builds a RenderEngineRegistry collection from parsed [render.*] TOML dictionary,
         resolving any relative input_file to base_dir.
         """
-        if not render_data:
+        if not config_dict:
             return cls()
-        if not isinstance(render_data, dict):
+        if not isinstance(config_dict, dict):
             raise ConfigError("'[render]' must be a TOML table.")
-        if not isinstance(base_dir, Path):
-            base_dir = Path(base_dir)
-
-        def build_engine(name: str, config_dict: Any) -> RenderEngineConfig:
-            if not isinstance(config_dict, dict):
-                raise ConfigError(f"Render engine '{name}' configuration must be a dictionary.")
-            validate_known_keys(
-                config_dict, RenderEngineConfig.KNOWN_KEYS, context=f"render.{name}"
-            )
-            raw_input = config_dict.get("input_file", None)
-            input_path: Optional[Path] = None
-            resolved_input: Optional[Path] = None
-            if raw_input is not None:
-                raw_input_str = str(raw_input).strip()
-                raw_path = Path(raw_input_str)
-                if raw_path.anchor and not raw_path.is_absolute():
-                    raise ConfigError(
-                        f"Render engine '{name}' input_file '{raw_input_str}' cannot resolve outside base directory '{base_dir}'."
-                    )
-                input_path = raw_path if raw_path.anchor else (base_dir / raw_path)
-                resolved_base = base_dir.resolve()
-                resolved_input = input_path.resolve()
-
-                if not is_relative_to(resolved_input, resolved_base):
-                    raise ConfigError(
-                        f"Render engine '{name}' input_file '{raw_input_str}' cannot resolve outside base directory '{base_dir}'."
-                    )
-                if resolved_input == resolved_base:
-                    raise ConfigError(
-                        f"Render engine '{name}' input_file '{raw_input_str}' cannot be the base directory itself."
-                    )
-
-            # validation is done in RenderEngineConfig.validate() after construction
-            return RenderEngineConfig(
-                name=name,
-                input_file=when_not_none(raw_input, resolved_input),
-                suffix=str(config_dict.get("suffix", "")),
-                render_command=parse_render_command(config_dict.get("render_command"), name),
-            )
+        base = branch(isinstance(base_dir, Path), lambda: base_dir, lambda: Path(base_dir))
 
         configs = {
-            name: build_engine(name, config_dict)
-            for name, config_dict in render_data.items()
-            if isinstance(config_dict, dict)
+            name: RenderEngineConfig.from_dict(name, engine_dict, base_dir=base)
+            for name, engine_dict in config_dict.items()
+            if isinstance(engine_dict, dict)
         }
         return cls(configs)
 

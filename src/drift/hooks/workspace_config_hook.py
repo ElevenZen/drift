@@ -21,7 +21,7 @@ import os
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Mapping, Optional
 
 from ..core.constants import (
     CONFIG_DIR_NAME,
@@ -29,9 +29,8 @@ from ..core.constants import (
     WORKSPACE_HOOK_FUNCTION_NAME,
 )
 from ..core.exceptions import ConfigError
-from ..utils.env_utils import parse_secrets_env
 from ..utils.python_hook_utils import load_python_module, execute_python_hook
-from ..utils.config_utils import get_nested_from
+from ..utils.config_utils import branch, get_nested_from, when_none
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +160,7 @@ def execute_workspace_hook(hook_path: Path, context: WorkspaceHookContext) -> Di
 def apply_workspace_hook(
     drift_root: Path,
     config_dict: Dict[str, Any],
+    secrets_file_dict: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """Resolves and applies the workspace Python hook if configured or present."""
     custom_hook = get_nested_from(config_dict, "workspace.hook_file")
@@ -176,25 +176,35 @@ def apply_workspace_hook(
             raise ConfigError(
                 f"Configured workspace hook_file '{custom_hook}' must be a relative or valid absolute path."
             )
-        hook_path = custom_path if custom_path.anchor else (drift_root / CONFIG_DIR_NAME / custom_path)
+        hook_path = branch(
+            bool(custom_path.anchor),
+            lambda: custom_path,
+            lambda: drift_root / CONFIG_DIR_NAME / custom_path,
+        )
         if not hook_path.is_file():
             raise ConfigError(
                 f"Configured workspace hook_file '{custom_hook}' not found at '{hook_path}'."
             )
 
     # hook_path is a valid file; execute the hook with context
+    from ..config.secrets_config import SecretsConfig, fetch_workspace_secrets
     from ..config.workspace_config import WorkspaceConfig
-
     from ..utils.host_facts import get_cached_system_facts
 
     system_facts = get_cached_system_facts()
-    secrets_file = parse_secrets_env(drift_root)
+    resolved_secrets = when_none(
+        secrets_file_dict,
+        lambda: fetch_workspace_secrets(
+            drift_root,
+            SecretsConfig.from_dict(config_dict.get("secrets", {})),
+        ),
+    )
     raw_secrets = get_nested_from(config_dict, "env.secrets", default={})
     ws_secrets = {str(k): str(v) for k, v in raw_secrets.items()}
     raw_overrides = get_nested_from(config_dict, "env.override", default={})
     ws_overrides = {str(k): str(v) for k, v in raw_overrides.items()}
     # 6-Tier Precedence: Tier 1 overrides > Tier 2 facts > Tier 3 ambient os.environ > Tier 4 secrets
-    real_env = {**secrets_file, **ws_secrets, **os.environ, **system_facts, **ws_overrides}
+    real_env = {**resolved_secrets, **ws_secrets, **os.environ, **system_facts, **ws_overrides}
 
     source_dir_name = get_nested_from(config_dict, "workspace.source_directory", default="src")
     source_path = drift_root / source_dir_name

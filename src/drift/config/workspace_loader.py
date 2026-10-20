@@ -16,6 +16,7 @@ Layer 1: Low-Level Template Rendering & Migration Guards
 ===============================================================================
 """
 
+import copy
 import logging
 import sys
 from pathlib import Path
@@ -35,15 +36,19 @@ from ..core.constants import (
     add_envst_path,
 )
 from ..core.exceptions import ConfigError
+from ..utils.config_utils import branch
 from ..utils.env_utils import (
     EnvConfig,
     EnvResolve,
     interpolate_config_dict,
     parse_env_dict,
-    parse_secrets_env,
     resolve_env_configs,
 )
 from ..utils.toml_utils import merge_toml, parse_toml
+from .secrets_config import (
+    SecretsConfig,
+    fetch_workspace_secrets,
+)
 from .workspace_config import WorkspaceConfig
 
 logger = logging.getLogger(__name__)
@@ -151,7 +156,7 @@ def load_workspace_config_files_layered(rendered_config_path_list: Sequence[Path
 
 def resolve_and_interpolate_workspace_config(
     data: Dict[str, Any],
-    secrets_file: Optional[Mapping[str, str]] = None,
+    secrets_file_dict: Optional[Mapping[str, str]] = None,
 ) -> Tuple[Dict[str, Any], EnvResolve]:
     """Resolves environment variables, secrets, and interpolates references across a workspace config dictionary.
 
@@ -159,13 +164,13 @@ def resolve_and_interpolate_workspace_config(
     - Tier 1 (Override): Workspace [env.override]
     - Tier 2 (Facts): Protected drift_* system facts
     - Tier 3 (CLI & Ambient): Ambient Process Environment (os.environ) & CLI Overrides
-    - Tier 4 (Secrets): Workspace [env.secrets] > config/secrets.env
+    - Tier 4 (Secrets): Workspace [env.secrets] > [secrets] provider / config/secrets.env
     - Tier 5 (Default): Workspace [env.default]
     - Tier 6 (Fallback): Workspace [env.fallback]
 
     Args:
         data: Parsed TOML dictionary of the workspace configuration.
-        secrets_file: Optional secrets mapping loaded from config/secrets.env.
+        secrets_file_dict: Optional secrets mapping loaded from [secrets] provider or config/secrets.env.
 
     Returns:
         A tuple of (interpolated_dict, resolved_env_resolve).
@@ -174,7 +179,11 @@ def resolve_and_interpolate_workspace_config(
     env_config = parse_env_dict(raw_env, context_desc="workspace configuration")
     resolved_env = resolve_env_configs(
         env_config,
-        lower_layer=EnvConfig(secrets=dict(secrets_file)) if secrets_file else None,
+        lower_layer=branch(
+            bool(secrets_file_dict),
+            lambda: EnvConfig(secrets=dict(secrets_file_dict or {})),
+            lambda: None,
+        ),
     )
 
     interpolated_data = interpolate_config_dict(
@@ -203,13 +212,15 @@ def load_workspace_config(
     Configuration Pipeline Execution Order:
     1. Multi-File Discovery & Merging: Loads base and override TOML files (or .envst.toml templates)
        via load_workspace_config_files_layered.
-    2. Dynamic Python Workspace Hook: Executes configure_workspace(context) from config/drift_workspace.py
+    2. Secrets Provider Resolution: Parses [secrets] into SecretsConfig and fetches workspace secrets
+       via fetch_workspace_secrets (falling back to config/secrets.env when omitted).
+    3. Dynamic Python Workspace Hook: Executes configure_workspace(context) from config/drift_workspace.py
        (or custom hook_file). The hook operates as a preprocessor on the raw dictionary with access to
        resolved context facts and environment.
-    3. Variable Stitching & Topological Sort: Resolves inter-variable references in [env.default]
+    4. Variable Stitching & Topological Sort: Resolves inter-variable references in [env.default]
        and [env.secrets] using Kahn's topological sort algorithm with cycle detection.
-    4. Cross-Section Interpolation: Interpolates ${VAR} references across all non-env sections.
-    5. Schema Validation & Model Construction: Instantiates strongly-typed WorkspaceConfig.
+    5. Cross-Section Interpolation: Interpolates ${VAR} references across all non-env sections.
+    6. Schema Validation & Model Construction: Instantiates strongly-typed WorkspaceConfig.
 
     Args:
         drift_root: Path to the drift workspace repository root.
@@ -224,24 +235,34 @@ def load_workspace_config(
     if check_legacy:
         assert_no_legacy_workspace_config(root)
 
-    load_configs_from = list(config_files_override) if config_files_override else [
-        root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME,
-        root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_LOCAL_FILE_NAME,
-    ]
-
-    secrets_file = parse_secrets_env(root)
+    load_configs_from = branch(
+        bool(config_files_override),
+        lambda: list(config_files_override or ()),
+        lambda: [
+            root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME,
+            root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_LOCAL_FILE_NAME,
+        ],
+    )
 
     try:
         combined_dict = load_workspace_config_files_layered(load_configs_from)
 
+        initial_secrets_raw = copy.deepcopy(combined_dict.get("secrets", {}))
+        secrets_cfg = SecretsConfig.from_dict(initial_secrets_raw)
+        secrets_file_dict = fetch_workspace_secrets(root, secrets_cfg)
+
         # Apply dynamic workspace hook (config/drift_workspace.py or custom hook_file)
         from ..hooks.workspace_config_hook import apply_workspace_hook
-        combined_dict = apply_workspace_hook(root, combined_dict)
+        combined_dict = apply_workspace_hook(root, combined_dict, secrets_file_dict=secrets_file_dict)
+
+        if combined_dict.get("secrets", {}) != initial_secrets_raw:
+            secrets_cfg = SecretsConfig.from_dict(combined_dict.get("secrets", {}))
+            secrets_file_dict = fetch_workspace_secrets(root, secrets_cfg)
 
         # Pure in-memory topological resolution and section interpolation
         interpolated_dict, env_res = resolve_and_interpolate_workspace_config(
             combined_dict,
-            secrets_file=secrets_file,
+            secrets_file_dict=secrets_file_dict,
         )
 
         return WorkspaceConfig.from_dict(

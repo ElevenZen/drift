@@ -9,6 +9,7 @@ Layer 2: Top-Level Workspace Model Container
         - validate(): Comprehensive workspace layout & engine validation
         - from_dict(): Factory constructor from parsed TOML table
         - from_workspace_dir(): Factory loader delegating to workspace_loader
+        - fetch_secrets(): Fetches and decrypts workspace secrets via SecretsConfig
         - Discovery & Filter: get_package_names_from_source_dir(), filter_*_packages_by_target()
         - Properties: source_path, render_path, install_path, backup_path, default_target_path
 
@@ -42,6 +43,7 @@ from typing import (
     Tuple,
     Union,
     TYPE_CHECKING,
+    cast,
 )
 
 from ..core.constants import (
@@ -58,22 +60,33 @@ from ..utils.env_utils import (
     EnvConfig,
     EnvResolve,
     parse_env_dict,
-    parse_secrets_env,
     resolve_env_configs,
 )
-from ..utils.path_utils import expand_path
+from ..utils.path_utils import (
+    check_is_partially_anchored_path,
+    expand_path,
+)
 from ..utils.file_inspect import check_can_symlink
 from ..utils.config_utils import (
+    branch,
     partition,
     get_first_from,
     get_nested_from,
     parse_bool_value,
+    parse_config_path,
+    parse_optional_config_path,
     validate_known_keys,
+    when_none,
+    when_not_none,
 )
 from .render_engine_config import (
     RenderEngineConfig,
     RenderEngineRegistry,
     RenderSourceMatch,
+)
+from .secrets_config import (
+    SecretsConfig,
+    fetch_workspace_secrets,
 )
 from ..render.render_cache import RenderCache
 
@@ -257,35 +270,30 @@ class WorkspaceSectionConfig(AlwaysTruthy):
 
     def __init__(
         self,
-        source_directory: Union[Path, str] = Path("src"),
-        render_directory: Union[Path, str] = Path("render"),
-        install_directory: Union[Path, str] = Path("install"),
-        backup_directory: Union[Path, str] = Path("backup"),
-        default_target_directory: Union[Path, str] = Path("~"),
+        source_directory: Optional[Union[Path, str]] = None,
+        render_directory: Optional[Union[Path, str]] = None,
+        install_directory: Optional[Union[Path, str]] = None,
+        backup_directory: Optional[Union[Path, str]] = None,
+        default_target_directory: Optional[Union[Path, str]] = None,
         default_install_method: InstallMethod = InstallMethod.DEFAULT,
         hook_file: Optional[Union[Path, str]] = None,
     ) -> None:
-        if not isinstance(source_directory, (str, Path)):
-            raise ConfigError(f"source_directory must be a Path or str, got {type(source_directory).__name__}")
-        if not isinstance(render_directory, (str, Path)):
-            raise ConfigError(f"render_directory must be a Path or str, got {type(render_directory).__name__}")
-        if not isinstance(install_directory, (str, Path)):
-            raise ConfigError(f"install_directory must be a Path or str, got {type(install_directory).__name__}")
-        if not isinstance(backup_directory, (str, Path)):
-            raise ConfigError(f"backup_directory must be a Path or str, got {type(backup_directory).__name__}")
-        if not isinstance(default_target_directory, (str, Path)):
-            raise ConfigError(f"default_target_directory must be a Path or str, got {type(default_target_directory).__name__}")
         if not isinstance(default_install_method, InstallMethod):
-            raise ConfigError(f"default_install_method must be an InstallMethod instance, got {type(default_install_method).__name__}")
-        if hook_file is not None and not isinstance(hook_file, (str, Path)):
-            raise ConfigError(f"hook_file must be a Path or str, got {type(hook_file).__name__}")
-        self.source_directory = Path(source_directory)
-        self.render_directory = Path(render_directory)
-        self.install_directory = Path(install_directory)
-        self.backup_directory = Path(backup_directory)
-        self.default_target_directory = expand_path(Path(default_target_directory))
+            raise ConfigError(
+                f"default_install_method must be an InstallMethod instance, got {type(default_install_method).__name__}"
+            )
+        self.source_directory = parse_config_path(source_directory, "source_directory", default=Path("src"))
+        self.render_directory = parse_config_path(render_directory, "render_directory", default=Path("render"))
+        self.install_directory = parse_config_path(install_directory, "install_directory", default=Path("install"))
+        self.backup_directory = parse_config_path(backup_directory, "backup_directory", default=Path("backup"))
+        self.default_target_directory = parse_config_path(
+            default_target_directory,
+            "default_target_directory",
+            default=Path("~"),
+            expand=True,
+        )
         self.default_install_method = default_install_method
-        self.hook_file = Path(hook_file) if hook_file is not None else None
+        self.hook_file = parse_optional_config_path(hook_file, "hook_file", dot_as_none=False)
 
     def validate(self) -> None:
         """Validates [workspace] section configuration values."""
@@ -335,11 +343,11 @@ class WorkspaceSectionConfig(AlwaysTruthy):
             raise ConfigError(f"default_install_method must be 'symlink' or 'copy', got '{raw_install_method}'") from e
 
         return cls(
-            source_directory=data.get("source_directory", "src"),
-            render_directory=data.get("render_directory", "render"),
-            install_directory=data.get("install_directory", "install"),
-            backup_directory=data.get("backup_directory", "backup"),
-            default_target_directory=data.get("default_target_directory", "~"),
+            source_directory=data.get("source_directory"),
+            render_directory=data.get("render_directory"),
+            install_directory=data.get("install_directory"),
+            backup_directory=data.get("backup_directory"),
+            default_target_directory=data.get("default_target_directory"),
             default_install_method=default_install_method,
             hook_file=data.get("hook_file"),
         )
@@ -354,6 +362,7 @@ class WorkspaceConfig(AlwaysTruthy):
         "workspace",
         "packages",
         "render",
+        "secrets",
         "env",
         "settings",
     )
@@ -363,6 +372,7 @@ class WorkspaceConfig(AlwaysTruthy):
     packages_enable: Dict[str, bool] = field(default_factory=dict)
     packages_enable_default: bool = False
     render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
+    secrets: SecretsConfig = field(default_factory=SecretsConfig)
     env_resolve: EnvResolve = field(default_factory=EnvResolve)
     settings: SettingsConfig = field(default_factory=SettingsConfig)
     render_cache: RenderCache = field(default_factory=RenderCache)
@@ -386,20 +396,21 @@ class WorkspaceConfig(AlwaysTruthy):
         packages_enable: Mapping[str, bool] = {},
         packages_enable_default: bool = False,
         render_engine_configs: Optional[RenderEngineRegistry] = None,
+        secrets: Optional[SecretsConfig] = None,
         env_resolve: Optional[EnvResolve] = None,
         settings: Optional[SettingsConfig] = None,
         render_cache: Optional[RenderCache] = None,
         render_path_mask: Optional[Union[Path, str]] = None,
         install_path_mask: Optional[Union[Path, str]] = None,
     ) -> None:
-        if not isinstance(drift_root, (str, Path)):
-            raise ConfigError(f"drift_root must be a Path or str, got {type(drift_root).__name__}")
         if workspace is not None and not isinstance(workspace, WorkspaceSectionConfig):
             raise ConfigError(f"workspace must be a WorkspaceSectionConfig instance, got {type(workspace).__name__}")
         if settings is not None and not isinstance(settings, SettingsConfig):
             raise ConfigError(f"settings must be a SettingsConfig instance, got {type(settings).__name__}")
         if render_engine_configs is not None and not isinstance(render_engine_configs, RenderEngineRegistry):
             raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry instance, got {type(render_engine_configs).__name__}")
+        if secrets is not None and not isinstance(secrets, SecretsConfig):
+            raise ConfigError(f"secrets must be a SecretsConfig instance, got {type(secrets).__name__}")
         if not isinstance(packages_enable, (dict, Mapping)):
             raise ConfigError("packages_enable must be a dictionary.")
         if env_resolve is not None and not isinstance(env_resolve, EnvResolve):
@@ -407,16 +418,17 @@ class WorkspaceConfig(AlwaysTruthy):
         if render_cache is not None and not isinstance(render_cache, RenderCache):
             raise ConfigError(f"render_cache must be a RenderCache instance, got {type(render_cache).__name__}")
 
-        self.drift_root = Path(drift_root).resolve()
-        self.workspace = workspace or WorkspaceSectionConfig()
+        self.drift_root = parse_config_path(drift_root, "drift_root").resolve()
+        self.workspace = when_none(workspace, WorkspaceSectionConfig)
         self.packages_enable = dict(packages_enable)
         self.packages_enable_default = packages_enable_default
-        self.render_engine_configs = render_engine_configs or RenderEngineRegistry()
-        self.env_resolve = env_resolve or EnvResolve()
-        self.settings = settings or SettingsConfig()
-        self.render_cache = render_cache or RenderCache()
-        self.render_path_mask = Path(render_path_mask) if render_path_mask is not None else None
-        self.install_path_mask = Path(install_path_mask) if install_path_mask is not None else None
+        self.render_engine_configs = when_none(render_engine_configs, RenderEngineRegistry)
+        self.secrets = when_none(secrets, SecretsConfig)
+        self.env_resolve = when_none(env_resolve, EnvResolve)
+        self.settings = when_none(settings, SettingsConfig)
+        self.render_cache = when_none(render_cache, RenderCache)
+        self.render_path_mask = parse_optional_config_path(render_path_mask, "render_path_mask", dot_as_none=False)
+        self.install_path_mask = parse_optional_config_path(install_path_mask, "install_path_mask", dot_as_none=False)
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
@@ -432,6 +444,9 @@ class WorkspaceConfig(AlwaysTruthy):
         if not isinstance(self.render_engine_configs, RenderEngineRegistry):
             raise ConfigError("render_engine_configs must be a RenderEngineRegistry instance.")
         self.render_engine_configs.validate()
+        if not isinstance(self.secrets, SecretsConfig):
+            raise ConfigError("secrets must be a SecretsConfig instance.")
+        self.secrets.validate()
         if not isinstance(self.env_resolve, EnvResolve):
             raise ConfigError("env_resolve must be an EnvResolve instance.")
         if not isinstance(self.settings, SettingsConfig):
@@ -439,6 +454,10 @@ class WorkspaceConfig(AlwaysTruthy):
         self.settings.validate()
         if not isinstance(self.render_cache, RenderCache):
             raise ConfigError("render_cache must be a RenderCache instance.")
+
+    def fetch_secrets(self) -> Dict[str, str]:
+        """Fetches and decrypts workspace secrets using this workspace's drift_root and secrets config."""
+        return fetch_workspace_secrets(self.drift_root, self.secrets)
 
     @property
     def source_path(self) -> Path:
@@ -719,15 +738,22 @@ class WorkspaceConfig(AlwaysTruthy):
             base_dir=root.resolve() / CONFIG_DIR_NAME
         )
 
+        # Parse [secrets]
+        secrets = SecretsConfig.from_dict(data.get("secrets", {}))
+
         # Parse [env]
         if env_resolve is not None:
             env_res = env_resolve
         else:
             parsed_env = parse_env_dict(data.get("env", {}), context_desc="workspace configuration")
-            secrets_file = parse_secrets_env(root)
+            secrets_file_dict = fetch_workspace_secrets(root.resolve(), secrets)
             env_res = resolve_env_configs(
                 parsed_env,
-                lower_layer=EnvConfig(secrets=dict(secrets_file)) if secrets_file else None,
+                lower_layer=branch(
+                    bool(secrets_file_dict),
+                    lambda: EnvConfig(secrets=dict(secrets_file_dict)),
+                    lambda: None,
+                ),
             )
 
         # Parse [settings]
@@ -740,6 +766,7 @@ class WorkspaceConfig(AlwaysTruthy):
             packages_enable=packages,
             packages_enable_default=packages_enable_default,
             render_engine_configs=render_engine_configs,
+            secrets=secrets,
             env_resolve=env_res,
             settings=settings,
         )

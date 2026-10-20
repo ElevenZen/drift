@@ -1739,6 +1739,31 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         )
         self.assertEqual(valid_reg["test"].input_file, (dummy_base / "sub/input.json").resolve())
 
+        # Direct RenderEngineConfig.from_dict and parse_render_input_file
+        from drift.config.render_engine_config import parse_render_input_file
+        self.assertIsNone(parse_render_input_file(None, base_dir=dummy_base, engine_name="test"))
+        self.assertEqual(
+            parse_render_input_file("sub/input.json", base_dir=dummy_base, engine_name="test"),
+            (dummy_base / "sub/input.json").resolve(),
+        )
+        direct_eng = RenderEngineConfig.from_dict(
+            "direct",
+            {"suffix": "d", "render_command": "cmd %i %s", "input_file": "sub/in.json"},
+            base_dir=dummy_base,
+        )
+        self.assertEqual(direct_eng.name, "direct")
+        self.assertEqual(direct_eng.input_file, (dummy_base / "sub/in.json").resolve())
+        with self.assertRaises(ConfigError):
+            RenderEngineConfig.from_dict("bad", "not_a_dict", base_dir=dummy_base)
+
+        # RenderEngineConfig.__post_init__ preserves Path identity and normalizes empty/dot to None
+        explicit_path = Path("input.env")
+        eng_with_path = RenderEngineConfig(name="p", input_file=explicit_path, suffix="p", render_command=["cmd"])
+        self.assertIs(eng_with_path.input_file, explicit_path)
+        self.assertIsNone(RenderEngineConfig(name="p", input_file=Path("."), suffix="p", render_command=["cmd"]).input_file)
+        self.assertIsNone(RenderEngineConfig(name="p", input_file="", suffix="p", render_command=["cmd"]).input_file)  # type: ignore[arg-type]
+        self.assertIsNone(RenderEngineConfig(name="p", input_file="  .  ", suffix="p", render_command=["cmd"]).input_file)  # type: ignore[arg-type]
+
 
         # Test valid instantiation and mapping operations
         engine = RenderEngineConfig(
@@ -3616,6 +3641,162 @@ class TestAnchoredPathValidationEdgeCases(unittest.TestCase):
         )
 
 
+class TestSecretsConfig(unittest.TestCase):
+    """Unit tests for SecretsConfig, parse_decrypt_command, and [secrets] validation."""
+
+    def test_secrets_config_defaults_and_parsing(self) -> None:
+        from drift.config.secrets_config import SecretsConfig, parse_decrypt_command
+
+        # 1. Default and empty [secrets] section (None, {}, or blank fields)
+        default_cfg = SecretsConfig()
+        self.assertEqual(default_cfg.decrypt_command, [])
+        self.assertIsNone(default_cfg.secrets_file)
+        self.assertIsNone(default_cfg.key_file)
+        self.assertFalse(default_cfg.requires_secrets_file)
+        self.assertFalse(default_cfg.requires_key_file)
+        default_cfg.validate()
+        self.assertEqual(SecretsConfig.from_dict(None), default_cfg)
+        self.assertEqual(SecretsConfig.from_dict({}), default_cfg)
+        self.assertEqual(
+            SecretsConfig.from_dict({"decrypt_command": "  ", "secrets_file": "", "key_file": "."}),
+            default_cfg,
+        )
+
+        # 2. String and list decrypt_command parsing
+        self.assertEqual(parse_decrypt_command(None), [])
+        self.assertEqual(parse_decrypt_command("   "), [])
+        self.assertEqual(
+            parse_decrypt_command("age --decrypt -i %i %s"),
+            ["age", "--decrypt", "-i", "%i", "%s"],
+        )
+        self.assertEqual(
+            parse_decrypt_command(["sops", "-d", "%s"]),
+            ["sops", "-d", "%s"],
+        )
+
+        # 3. SecretsConfig.from_dict with placeholders and path resolution
+        cfg = SecretsConfig.from_dict({
+            "decrypt_command": "age --decrypt -i %i %s",
+            "secrets_file": "secrets.env.age",
+            "key_file": "~/keys/age.key",
+        })
+        self.assertTrue(cfg.requires_secrets_file)
+        self.assertTrue(cfg.requires_key_file)
+        self.assertEqual(cfg.secrets_file, Path("secrets.env.age"))
+        self.assertEqual(cfg.key_file, Path("~/keys/age.key").expanduser())
+
+        drift_root = Path("/tmp/test_drift_ws").resolve()
+        self.assertEqual(
+            cfg.resolve_secrets_file(drift_root),
+            drift_root / "config" / "secrets.env.age",
+        )
+        self.assertEqual(
+            cfg.resolve_key_file(drift_root),
+            Path("~/keys/age.key").expanduser(),
+        )
+
+    def test_secrets_config_validation_errors(self) -> None:
+        from drift.config.secrets_config import SecretsConfig, fetch_workspace_secrets
+
+        # 1. Missing secrets_file when %s is used
+        with self.assertRaises(ConfigError) as ctx_s:
+            SecretsConfig.from_dict({"decrypt_command": "sops -d %s"})
+        self.assertIn("secrets_file must be specified", str(ctx_s.exception))
+
+        # 2. Missing key_file when %i is used
+        with self.assertRaises(ConfigError) as ctx_i:
+            SecretsConfig.from_dict({
+                "decrypt_command": "age -d -i %i %s",
+                "secrets_file": "secrets.env.age",
+            })
+        self.assertIn("key_file must be specified", str(ctx_i.exception))
+
+        # 3. Unknown key in [secrets]
+        with self.assertRaises(ConfigError) as ctx_unk:
+            SecretsConfig.from_dict({"unknown_option": "val"})
+        self.assertIn("Unknown option under [secrets]", str(ctx_unk.exception))
+
+        # 4. Non-dict [secrets] (including empty non-dict like [] or "")
+        for non_dict in ("not_a_table", [], ""):
+            with self.assertRaises(ConfigError):
+                SecretsConfig.from_dict(non_dict)
+
+        # 5. Invalid types for fields
+        with self.assertRaises(ConfigError):
+            SecretsConfig.from_dict({"decrypt_command": 123})
+        with self.assertRaises(ConfigError):
+            SecretsConfig.from_dict({"decrypt_command": ["valid", ""]})
+        with self.assertRaises(ConfigError):
+            SecretsConfig.from_dict({"decrypt_command": "unclosed 'quote"})
+        with self.assertRaises(ConfigError):
+            SecretsConfig.from_dict({"secrets_file": 123})
+        with self.assertRaises(ConfigError):
+            SecretsConfig.from_dict({"key_file": 123})
+
+        # 6. Strict Optional[SecretsConfig] type check on fetch_workspace_secrets and WorkspaceConfig
+        with self.assertRaises(ConfigError):
+            fetch_workspace_secrets(Path("/tmp"), {"secrets_file": "a.env"})  # type: ignore[arg-type]
+        with self.assertRaises(ConfigError):
+            WorkspaceConfig(drift_root=Path("/tmp"), secrets={"secrets_file": "a.env"})  # type: ignore[arg-type]
+
+    def test_parse_config_path_and_optional_config_path_helpers(self) -> None:
+        from drift.utils.config_utils import (
+            parse_command_tokens,
+            parse_config_path,
+            parse_optional_config_path,
+        )
+
+        # 1. parse_config_path with defaults, expansion, and errors
+        self.assertEqual(parse_config_path(None, "src_dir", default=Path("src")), Path("src"))
+        self.assertEqual(parse_config_path("  custom/dir  ", "src_dir"), Path("custom/dir"))
+        self.assertEqual(
+            parse_config_path("~/my_dir", "target_dir", expand=True),
+            Path("~/my_dir").expanduser(),
+        )
+        with self.assertRaises(ConfigError):
+            parse_config_path(None, "required_path")
+        with self.assertRaises(ConfigError):
+            parse_config_path(123, "bad_path")
+
+        # 2. parse_optional_config_path with dot_as_none, expansion, and base_dir containment
+        self.assertIsNone(parse_optional_config_path(None, "opt_path"))
+        self.assertIsNone(parse_optional_config_path("", "opt_path", dot_as_none=True))
+        self.assertIsNone(parse_optional_config_path(".", "opt_path", dot_as_none=True))
+        self.assertEqual(parse_optional_config_path(".", "opt_path", dot_as_none=False), Path("."))
+
+        base = Path("/tmp/drift_base_test").resolve()
+        self.assertEqual(
+            parse_optional_config_path(
+                "sub/file.txt",
+                "input_file",
+                base_dir=base,
+                must_be_inside_base=True,
+            ),
+            (base / "sub/file.txt").resolve(),
+        )
+        with self.assertRaises(ConfigError):
+            parse_optional_config_path(
+                "../outside.txt",
+                "input_file",
+                base_dir=base,
+                must_be_inside_base=True,
+            )
+        with self.assertRaises(ConfigError):
+            parse_optional_config_path(
+                ".",
+                "input_file",
+                dot_as_none=False,
+                base_dir=base,
+                must_be_inside_base=True,
+            )
+
+        # 3. parse_command_tokens
+        self.assertEqual(parse_command_tokens("cmd -a 'hello world'"), ["cmd", "-a", "hello world"])
+        self.assertEqual(parse_command_tokens(("a", "b")), ["a", "b"])
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
 

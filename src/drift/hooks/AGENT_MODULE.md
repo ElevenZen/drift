@@ -20,7 +20,7 @@
 
 ### [`workspace_config_hook.py`](workspace_config_hook.py) — Dynamic Python Workspace Preprocessor (`config/drift_workspace.py`)
 * `WorkspaceHookContext(config, drift_root, env, facts, discovered_packages=())`: Clean-room context passed to `configure_workspace(context) -> Dict[str, Any]` with convenience properties `.os`, `.arch`, `.distro`, `.hostname`, `.user`.
-* `apply_workspace_hook(drift_root: Path, config_dict: Dict[str, Any], secrets_file: Optional[Path] = None) -> Dict[str, Any]`: Resolves `[workspace] hook_file` (or default `config/drift_workspace.py`), builds an in-memory `real_env` snapshot without touching `os.environ`, and returns the transformed workspace config dictionary.
+* `apply_workspace_hook(drift_root: Path, config_dict: Dict[str, Any], secrets_file_dict: Optional[Mapping[str, str]] = None) -> Dict[str, Any]`: Resolves `[workspace] hook_file` (or default `config/drift_workspace.py`), builds an in-memory `real_env` snapshot without touching `os.environ`, and returns the transformed workspace config dictionary.
 
 ### [`package_config_hook.py`](package_config_hook.py) — Dynamic Python Package Preprocessor (`src/<pkg>/drift_package.py`)
 * `PackageHookContext(config, package_name, package_dir, drift_root=None, workspace_config=None, env=..., facts=..., package_facts=...)`: Clean-room context passed to `configure_package(context) -> Dict[str, Any]`.

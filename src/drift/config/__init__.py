@@ -12,6 +12,11 @@ from .workspace_config import (
     WorkspaceSectionConfig,
     SettingsConfig,
 )
+from .secrets_config import (
+    SecretsConfig,
+    fetch_workspace_secrets,
+    parse_decrypt_command,
+)
 from .workspace_loader import (
     load_workspace_config,
     render_workspace_config,
@@ -47,6 +52,7 @@ from .render_engine_config import (
     RenderEngineRegistry,
     RenderSourceMatch,
     parse_render_command,
+    parse_render_input_file,
 )
 
 __all__ = [
@@ -57,7 +63,10 @@ __all__ = [
     "resolve_env_configs",
     "WorkspaceConfig",
     "WorkspaceSectionConfig",
+    "SecretsConfig",
     "SettingsConfig",
+    "fetch_workspace_secrets",
+    "parse_decrypt_command",
     "assert_no_legacy_workspace_config",
     "resolve_and_interpolate_workspace_config",
     "load_workspace_config",
@@ -82,4 +91,5 @@ __all__ = [
     "RenderEngineRegistry",
     "RenderSourceMatch",
     "parse_render_command",
+    "parse_render_input_file",
 ]
