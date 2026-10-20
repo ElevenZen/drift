@@ -1,877 +1,161 @@
-# 🌀 Drift: Next-Gen Transactional Dotfile Manager
+# 🌀 Drift
+
+**Two-way, transactional configuration management for the machines you actually use.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-1365%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-1393%20passed-brightgreen)](tests/)
 
-**Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
-
-Unlike traditional dotfile managers that directly symlink mutable directories or run opaque installation scripts, Drift implements a **two-stage, Git-backed compilation and deployment pipeline**. It isolates templates, compiles them in a secure sandbox, audits active system drifts, and executes deployments using atomic, transactional workflows.  
-
-> **WARNING: Drift is still very glitchy and in early development stage, it's for experimental usage only. Backward compatibility is not considered. File syntax, deployment rules, function signatures may change at any time.** 
+> **WARNING: Drift is still very glitchy and in early development stage, it's for experimental usage only. Backward compatibility is not considered. File syntax, deployment rules, function signatures may change at any time.**
 
 ---
 
-## ⚡ TL;DR
+## Binaries don't drift. Configuration does.
 
-> **Drift is a transactional, two-stage Git-backed dotfile engine that isolates template compilation in a sandbox and seamlessly audits, protects, and bidirectionally synchronizes live system edits without lost updates.**
+Tools like [mise](https://mise.jdx.dev), [Nix](https://nixos.org), or pkgit pin and install software reproducibly: a given version is the same bytes on every machine, and nothing rewrites it at runtime.
 
-* 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
-* ⚡ **Incremental Merkle DAG Compilation & Caching**: Replaces slow, redundant procedural re-rendering with an AST Directed Acyclic Graph (DAG) backed by cryptographic Merkle hashing and lockfiles (`.drift_lock.json`). Unchanged templates and static assets are skipped instantly (`SKIP_IDENTICAL` / 0ms overhead).
-* 🔍 **Full-Cycle Dry-Run & Planning Engine**: End-to-end deployment simulation across all phases (`drift plan` or `drift deploy -n`) in an ephemeral sandbox without mutating host files or Git state. Inspect planned actions, audit host drift, and detect batch collisions before touching your system.
-* 🧩 **Native In-TOML Variable Stitching & Zero-Disk-Leakage `[secrets]`**: Define derived and inter-connected variables (`$VAR`, `${VAR}`) directly within your TOML configuration files, and decrypt in-repo encrypted secrets (`age`, `gpg`, `sops`) or query password manager CLIs (`op`, `bw`, `pass`) directly in memory via `[secrets]`.
-* 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, define declarative host requirements (`[requirements]`), or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
-* 🔄 **Embraces System Drift & Visual Diffing**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`), review multi-tab side-by-side visual diffs in your editor (`drift diff -y`), and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
-* 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
-* 🔗 **Topological Package Dependencies**: Declare explicit inter-package dependencies (`dependencies = ["pkg_a", "pkg_b"]`) in `drift_package.toml`. Drift automatically constructs a dependency DAG, prevents cycles, orders compilation/deployment topologically, and uninstalls safely in reverse topological order.
-* 🐚 **Interactive Tab-Completions**: Zero-latency native tab-completion for **Bash, Zsh, Fish, and Nushell** with rich inline documentation hints and dynamic workspace package discovery.
-* 📦 **Modular & Pluggable**: Pure standard-library core, customizable render engines with DAG dependency piping, structured machine-readable `--json` output, and zero mandatory external Python dependencies.
+Configuration is different. It varies per machine, embeds secrets, and is edited in place all the time by GUI apps, IDEs, installers, and you. **That mutable layer is what Drift manages.**
+
+Drift treats configuration as **packages** compiled from templates. It previews every change before it happens, deploys transactionally with rollback, and when something edits a deployed file, it detects the drift and lets you **adopt the change back into source** instead of silently overwriting it.
+
+Dotfiles are where most people start, but Drift equally handles:
+
+* Application settings (`~/.config/...`, `~/Library/Application Support/...`)
+* System configuration under `/etc` (per-package `sudo = true`)
+* Service configs that must be stopped, reloaded, or health-checked around updates (lifecycle hooks)
 
 ---
 
-## 📦 Installation & Packaging
+## ⚡ The Three Pillars
 
-Drift requires **Python 3.9+** and has **zero mandatory third-party dependencies** in its core mode (with optional `[rich]` terminal UI support).
+### 1. Compile safely
+* Templates, layered variables, and secrets compile into an isolated `render/` Git sandbox. A failed render never touches your system.
+* 6-tier environment model with in-TOML `${VAR}` stitching and Python workspace/package hooks.
+* `[secrets]` are decrypted in memory only (`age`, `gpg`, `sops`, `op`, `bw`, `pass`).
+* Incremental Merkle-DAG caching skips unchanged templates instantly.
 
-### 1. ⚡ Shell Wrapper Installer (**Strongly Recommended**)
+### 2. Deploy transactionally
+* `drift plan` simulates the full render → stage → deliver cycle in an ephemeral sandbox.
+* `drift deploy` delivers symlinks or copies with collision guards, automatic backups, dependency ordering, and lifecycle hooks.
+* A write-ahead log powers automatic or manual `drift rollback` after a mid-deploy failure.
 
-> [!TIP]
-> **Why the Shell Wrapper is the Best Way to Install Drift**:  
-> Drift is currently under rapid active development. Because development builds do not constantly bump the version number in `pyproject.toml`, package managers like `pipx` or `uv tool` will cache previous builds and refuse to update or re-install when pointing to an unbumped version number.  
->  
-> The **Shell Wrapper** sets up a lightweight executable launcher in `~/.local/bin/drift` that directly delegates to your local repository source code (`src/`). Any `git pull` updates, bug fixes, or new features are **immediately active without requiring reinstallation or manual version bumps!**
+### 3. Reconcile drift, both ways
+* Live edits are reverse-synced into a local state repo (`install/`); a sentinel halts deploys before they would overwrite them.
+* Inspect with `drift status` and `drift diff -s` (side-by-side in your editor with `-y`).
+* Keep changes with `drift adopt` (patched back into `src/`), or discard them with `drift deploy --force` (a snapshot stays in history).
 
-To install the wrapper, clone the repository and run:
+👉 Full details: **[Feature Guide](docs/features.md)**
+
+---
+
+## 🧭 How It Works
+
+Drift keeps four tiers, each with a single responsibility:
+
+1. **Source** (`src/<pkg>/`, `config/`): templates and package metadata, tracked in your own Git repo.
+2. **Render** (`render/`): compiled output, in an isolated local Git repo.
+3. **Install** (`install/`): last known-good deployed state, plus live drift pulled back from the host.
+4. **Host** (`~`, `~/.config`, `/etc`, …): where applications read their configuration.
+
+`drift deploy` moves changes forward (1 → 4). Reverse-sync and `drift adopt` carry live edits backward (4 → 3 → 1). See [Architecture](docs/architecture.md) for the full model.
+
+---
+
+## 🚀 Five-Minute Tour
+
+```bash
+# 1. Create a workspace (an empty directory, or a subfolder of an existing repo)
+mkdir my-config && cd my-config
+drift init
+
+# 2. Package an existing config file
+drift new git -t '~'
+drift add git ~/.gitconfig              # -> src/git/dot-gitconfig
+
+# 3. Enable the package on this machine: add `git = true` under [packages.enable]
+$EDITOR config/drift_workspace.local.toml
+
+# 4. Commit your source, preview, then deploy
+git add -A && git commit -m "Add git package"
+drift plan
+drift deploy                            # original file is backed up to backup/git/overwritten/
+
+# 5. Something edits the live file...
+printf '[alias]\n\tst = status\n' >> ~/.gitconfig
+
+# 6. ...Drift notices, and you decide
+drift status                            # [B] System: DRIFTED
+drift diff -s git                       # exactly what changed on the host
+drift deploy                            # halts: system drift detected
+drift adopt git                         # keep it: patched into src/git/dot-gitconfig
+drift deploy                            # clean again
+```
+
+More end-to-end flows (bootstrapping a new machine, migrating a legacy dotfiles repo, rollback) are in [Feature Guide → Workflows](docs/features.md#part-v--workflows).
+
+---
+
+## 📦 Installation
+
+Drift requires **Python 3.9+** and has **zero mandatory third-party dependencies** (optional `[rich]` terminal UI).
+
+The recommended install is the shell wrapper, which runs Drift directly from your clone so `git pull` updates take effect immediately:
+
 ```bash
 git clone https://github.com/ElevenZen/drift.git
 cd drift
-./script/shell_wrapper_installer.bash
+./script/shell_wrapper_installer.bash   # also installs tab-completions
 ```
-*   Pass `--force` (`-f`) to overwrite an existing wrapper.
-*   Pass `--dir <path>` (`-d`) to install into a custom directory.
+
+Standalone `zipapp` binaries, wheels, `pipx` / `uv tool`, and manual completion setup for Bash, Zsh, Fish, and Nushell are covered in **[Installation & Packaging](docs/installation.md)**.
 
 ---
 
-### 2. 📦 Standalone Executable (`zipapp`) & Release Artifacts
-Because Drift is self-contained with pure standard library support, it can be packaged into a single portable binary file with Python's built-in `zipapp`:
+## 🛠️ Everyday Commands
 
-#### Automated Build & Verification Pipeline
-Use the built-in pipeline script to build both the standalone Zipapp and Python Wheel (`.whl`), with automated isolated verification tests:
-```bash
-# Build all release artifacts (Wheel + Zipapp) and execute verification tests
-./script/build_artifacts.bash
-
-# Clean previous build artifacts and exit
-./script/build_artifacts.bash --clean
-
-# Clean first, then rebuild all artifacts
-./script/build_artifacts.bash --rebuild
-
-# Or build standalone zipapp only:
-./script/build_artifacts.bash --zipapp-only
-```
-Generated artifacts are placed in `dist/`:
-*   `dist/drift`: Standalone zero-dependency executable binary (ready to copy to `~/.local/bin` or remote servers).
-*   `dist/drift-0.1.0-py3-none-any.whl`: Standard Python distribution wheel.
-
-#### Manual Zipapp Build
-```bash
-# Build standalone executable manually
-python3 -m zipapp src -m "drift.cli:main" -o drift -p "/usr/bin/env python3"
-chmod +x drift
-
-# Move to your PATH or copy to remote servers
-mv drift ~/.local/bin/
-```
-
----
-
-### 3. 🐍 Python Package Managers (`pipx`, `uv`, or `pip`)
-
-> [!NOTE]
-> When using `pipx`, note that `pipx upgrade` or reinstalling will skip processing if the package version has not changed. Use `pipx install --force ...` to force updates if needed.
-
-#### A. Isolated Global CLI via `pipx` or `uv tool`
-Install Drift into an isolated environment and place it directly into your `$PATH`:
-```bash
-# Core standard-library mode (zero external dependencies)
-pipx install --force git+https://github.com/ElevenZen/drift.git
-
-# Or with uv:
-uv tool install --force git+https://github.com/ElevenZen/drift.git
-
-# With enhanced Rich console UI:
-pipx install --force "git+https://github.com/ElevenZen/drift.git#egg=drift[rich]"
-```
-
-#### B. Standard `pip install`
-Install locally or from a Git repository via `pip`:
-```bash
-pip install --user git+https://github.com/ElevenZen/drift.git
-
-# Or from a cloned local repository:
-pip install --user .
-```
-
----
-
-### 4. 🐚 Interactive Shell Tab-Completion (`drift complete`)
- 
-Drift features built-in, zero-latency tab-completion generators for **Bash**, **Zsh**, **Fish**, and **Nushell** with rich inline documentation hints and dynamic package discovery.
-
-#### Automatic Installation (Standard User Directories)
-Run `drift complete --install` to automatically install completion scripts for all supported shells into standard user directories (`~/.local/share/bash-completion/completions/drift`, `~/.local/share/zsh/site-functions/_drift`, `~/.config/fish/completions/drift.fish`, `~/.config/nushell/completions/drift.nu`), or specify a single shell (e.g. `drift complete nu --install`):
-```bash
-drift complete --install
-```
-*(Note: If you used `./script/shell_wrapper_installer.bash`, tab-completions are installed automatically during setup!)*
-
-#### Dynamic Startup Evaluation (Shell RC / Config)
-Alternatively, evaluate or source completions in your shell configuration:
-*   **Bash** (`~/.bashrc`):
-    ```bash
-    eval "$(drift complete bash)"
-    ```
-*   **Zsh** (`~/.zshrc`):
-    ```zsh
-    eval "$(drift complete zsh)"
-    ```
-*   **Fish** (`~/.config/fish/config.fish`):
-    ```fish
-    drift complete fish | source
-    ```
-*   **Nushell** (`~/.config/nushell/config.nu`):
-    ```nu
-    use ~/.config/nushell/completions/drift.nu *
-    ```
-
----
-
-## ✨ Why Drift? (The Killer Selling Points)
-
-### 🛡️ 1. Absolute Sandbox Isolation (Dual-Git Architecture)
-Dotfile templating shouldn't put your live home directory at risk. Drift operates with **four decoupled layers**:
-*   **Layer 1: Declarative Source (`src/`)**: Your raw, templated package dotfiles.
-*   **Layer 2: Compilation Workspace (`render/`)**: An isolated Git database. Templates are compiled here on-the-fly. If a template render fails, **compilation halts instantly with zero impact on your system**.
-*   **Layer 3: Local State Database (`install/`)**: A dedicated Git repository tracking your "last known good" state, backed by an explicit metadata database (`state.toml`).
-*   **Layer 4: Active System Host (e.g. `~/`)**: The physical target paths.
-
-Because Layer 2 and Layer 3 are isolated Git repositories, Drift can diff, stage, and transactionalize your configurations before a single symlink is modified on your host.
-
-### 🔄 2. Capture & Adopt GUI/System Tool Settings (Intelligent Reverse-Sync)
-Modern desktop environments, IDEs, and system utilities frequently write configuration modifications directly to your active files (e.g., when you adjust settings in a GUI preferences dialog, alter theme colors in a desktop control panel, or customize keybindings through an application UI).
-
-In traditional dotfile managers, **these GUI-driven updates are silently lost—either completely ignored or blindly wiped away and overwritten during your next template deployment pass**.
-
-Drift fundamentally resolves this mismatch by treating configuration as a **continuous, two-way loop with built-in safety sentinels**:
-
-```
-[Active Host System] (GUI tweaks / runtime edits)
-  └── [System Drift Detected] (e.g. drift deploy trips Sentinel guard)
-        │
-        ├── 1. Inspect Changes
-        │     ├── drift status          (overview: [B] System: DRIFTED)
-        │     └── drift diff -s [-y]    (line-by-line diff; -y for visual editor)
-        │
-        └── 2. Reconcile Decision
-              ├── Keep Changes:
-              │     └── drift adopt <pkg> [-i]      -> backports patch to src/
-              └── Discard Changes:
-                    └── drift deploy <pkg> --force  -> overwrites host from src/
-```
-
-#### 🛡️ The Real-World Workflow:
-1. **Trigger (Sentinel Alert or Background Tweaks)**:
-   - When you make changes through a GUI application, tweak tools, or edit files directly in `$HOME`, Drift automatically tracks these live adjustments.
-   - If you run `drift deploy`, Drift's **Stage 1 Sentinel Guard** audits host alignment. If uncommitted system modifications exist, deployment safely **halts immediately with exit code `3` (`DRIFT_DETECTED`)** to prevent accidental lost updates.
-
-2. **Audit & Inspection**:
-   - **High-Level Overview (`drift status`)**: Run `drift status` to see an overview of which package(s) have drifted on the host (`[B] System: DRIFTED`).
-   - **Terminal Diff (`drift diff -s`)**: Run `drift diff -s` (or `drift diff -s <pkg>`) to inspect exact line-by-line differences between the live host system and the state database.
-   - **Visual Side-by-Side Review (`drift diff -s -y`)**: Pass `-y` (or `--side-by-side`) to launch an interactive visual side-by-side session in your configured editor (`$VISUAL` / `$EDITOR`, such as Neovim, Vim, VS Code, or GNU Emacs) across multi-tab split viewports.
-
-3. **Reconciliation Decision**:
-   - **Option A: Adopt Changes into Templates (`drift adopt <pkg>`)**:
-     If you want to keep the GUI/system adjustments, run:
-     ```bash
-     drift adopt <pkg>               # Automatically backports patches to src/<pkg>/
-     drift adopt <pkg> --interactive # Interactively review each modified/added file
-     ```
-     Drift extracts the live edits as clean Git patches, translates dotfile prefixes, safely backports changes into your declarative templates in `src/`, and marks the state database as clean. You can then run `drift deploy` normally.
-   - **Option B: Discard & Force-Restore Templates (`drift deploy <pkg> --force`)**:
-     If you want to reject the GUI changes and restore the pristine templated configuration declared in `src/`, run:
-     ```bash
-     drift deploy <pkg> --force      # Bypasses Sentinel guard and overwrites host files
-     ```
-     Drift overrides the active drift and reinstalls clean files compiled from your source templates.
-
-### 💻 3. Modular "Config-as-a-Package" (One Unified Repo from Servers to Laptops)
-Unlike monolithic dotfile managers that force you to deploy entire configurations wholesale or maintain separate git branches per machine, Drift structures every tool as an **independent, self-contained package** under `src/<pkg>/` (with its own `drift_package.toml`, target paths, deployment methods, and lifecycle hooks).
-
-A **single, unified dotfiles repository** can effortlessly power everything from minimal cloud servers to high-performance GPU workstations and personal laptops:
-
-> [!TIP]
-> **Declarative `[secrets]` Providers & Dynamic Python Hooks**: For encrypted secret files (`age`, `gpg`, `sops`) or CLI password managers (`op`, `bw`, `pass`), use the declarative `[secrets]` table in `drift_workspace.toml` (see Section 4 below). For custom programmatic secret retrieval (e.g., querying HTTP APIs or injecting dynamic keys per machine), you can also use Python workspace/package hooks to populate `context.config["env"]["secrets"]`, `context.config["env"]["default"]`, or `context.config["env"]["override"]` before downstream templates compile.  
-
-*   **Granular Machine Enablement (`config/drift_workspace.local.toml`)**:
-    You can selectively enable or disable packages on each machine using the gitignored `config/drift_workspace.local.toml` override without modifying version-controlled source files:
-    ```toml
-    # config/drift_workspace.local.toml (Machine-specific override)
-    [packages.enable]
-    DEFAULT = false
-    shell = true            # Enabled on all machines
-    nvim = true             # Enabled on all machines
-    cuda_toolkit = true     # Enabled only on high-performance GPU compute nodes
-    desktop_hyprland = false# Disabled on headless servers, enabled on laptops
-    ```
-
-*   **Declarative Host Requirements & Platform Filtering (`[requirements]`)**:
-    Instead of writing defensive shell scripts to check operating systems or installed binaries, packages can declaratively define host platform prerequisites in `drift_package.toml` via `[requirements]` (or `[package.requirements]`):
-    ```toml
-    # src/sway/drift_package.toml
-    [package]
-    name = "sway"
-    install_method = "symlink"
-
-    [requirements]
-    os = ["linux"]                     # Target OS: "linux", "darwin", "windows"
-    arch = ["x86_64", "aarch64"]        # CPU architectures
-    distro = ["arch", "fedora"]         # Linux distributions
-    binaries = ["sway", "waybar"]       # Executables required in host $PATH
-    env = ["WAYLAND_DISPLAY"]           # Required non-empty environment variables
-    ip = ["192.168.1.*", "10.0.0.0/8"]  # LAN IP match (exact, wildcard, or CIDR)
-    ```
-    *   **Executed Before Rendering (Zero-Cost Pre-Flight Skip)**: Requirement evaluation happens strictly **before template rendering begins** in Primitive 2. If any condition is not met, Drift **gracefully skips the package** (`status="SKIPPED"`) with an informative log message without executing template engines, compiling intermediate input files, writing to the `render/<pkg>/` sandbox, or interrupting the deployment of remaining packages.
-    *   **Dynamic Complement with `probe` Hook**: For custom requirements that cannot be expressed declaratively (e.g. checking GPU vendor or hardware features), pair `[requirements]` with a dynamic `probe` lifecycle hook (`[hooks] probe = "drift_hooks/check_gpu.sh"`).
-
-*   **Dynamic Python Workspace Hook (`config/drift_workspace.py`)**:
-    For complete programmatic control, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."` relative to `config/`). Automatically scaffolded during `drift init`, this hook executes dynamically during configuration pre-processing without requiring external wrapper scripts, providing direct access to detected system facts (`drift_os`, `drift_hostname`, `drift_distro`, `drift_arch`, `drift_user`), hardware attributes, and discovered packages:
-    ```python
-    # config/drift_workspace.py
-    from __future__ import annotations
-    from typing import TYPE_CHECKING, Any, Dict
-
-    if TYPE_CHECKING:
-        from drift.hooks import WorkspaceHookContext
-
-    def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
-        """Dynamically configure workspace packages and environment on the fly."""
-        cfg = context.config
-        facts = context.facts
-        os_name = facts.get("drift_os", "")
-        hostname = facts.get("drift_hostname", "")
-
-        # 1. Dynamically compute enabled package roster
-        enable = cfg.setdefault("packages", {}).setdefault("enable", {})
-        enable["shell"] = True
-        enable["nvim"] = True
-        enable["cuda_toolkit"] = (os_name == "linux" and "gpu" in hostname)
-        enable["desktop_hyprland"] = (os_name == "linux" and "laptop" in hostname)
-        enable["macos_settings"] = (os_name == "darwin")
-
-        # 2. Dynamically inject workspace-level environment variables / remote secrets
-        env_default = cfg.setdefault("env", {}).setdefault("default", {})
-        if os_name == "darwin":
-            env_default["HOMEBREW_PREFIX"] = "/opt/homebrew"
-
-        # (Optional) Download secrets or global tokens from remote vaults / APIs
-        # env_secrets = cfg.setdefault("env", {}).setdefault("secrets", {})
-        # env_secrets["GITHUB_TOKEN"] = fetch_vault_secret("github_token")
-
-        return cfg
-    ```
-
-*   **Dynamic Python Package Hook (`src/<pkg>/drift_package.py` or `drift_hooks/`)**:
-    Individual packages can also define a native Python hook (`src/<pkg>/drift_package.py` or configured via `[package] hook_file = "..."`), auto-scaffolded during `drift new <pkg>`. Defining `configure_package(context: PackageHookContext)` allows you to procedurally customize package behavior based on host facts, workspace context, and environment. You can dynamically adjust `target_directory`, inject custom environment overrides or remote secrets, or set `enable_install = False` to strictly disable a package on incompatible machines, OS families, or architectures:
-    ```python
-    # src/my_app/drift_package.py (or src/my_app/drift_hooks/drift_package.py)
-    from __future__ import annotations
-    from typing import TYPE_CHECKING, Any, Dict
-
-    if TYPE_CHECKING:
-        from drift.hooks import PackageHookContext
-
-    def configure_package(context: PackageHookContext) -> Dict[str, Any]:
-        """Dynamically configure package and disable installation on incompatible machines."""
-        cfg = context.config
-        pkg = cfg.setdefault("package", {})
-
-        # Strictly disable package deployment on incompatible systems or architectures
-        if context.os not in ("linux", "darwin") or context.arch == "arm64":
-            pkg["enable_install"] = False
-            return cfg
-
-        # Dynamically customize target destination based on OS
-        if context.os == "darwin":
-            pkg["target_directory"] = "~/Library/Application Support/my_app"
-        else:
-            pkg["target_directory"] = "~/.config/my_app"
-
-        # (Optional) Dynamically fetch package-specific secrets or configuration
-        # env_override = cfg.setdefault("env", {}).setdefault("override", {})
-        # env_override["APP_LICENSE_KEY"] = fetch_package_license("my_app")
-
-        return cfg
-    ```
-    > **Isolation in `drift_hooks/`**: If you prefer keeping the package root clean or want the Python configuration hook stored alongside other lifecycle scripts and automatically excluded from host deployment, you can place it inside `drift_hooks/` (e.g. `src/<pkg>/drift_hooks/drift_package.py` with `hook_file = "drift_hooks/drift_package.py"`). Anything inside `drift_hooks/` is compiled into `.drift/hooks/` and is permanently ignored during deployment.
-
-*   **Dynamic Host Profiling via Meta-Config Templating (`config/drift_workspace.local.envst.toml`)**:
-    For automated fleet deployments across servers and laptops using shell environments, you can author a local configuration template:
-    ```toml
-    # config/drift_workspace.local.envst.toml (Template rendered on-the-fly)
-    [packages.enable]
-    DEFAULT = false
-    ${DRIFT_PACKAGES}
-    ```
-    When Drift runs, `load_workspace_config_file_with_render` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs, giving you dynamic, zero-touch machine provisioning!
-
-### 🧩 4. Multi-Tier Environment Hierarchy & In-TOML Variable Stitching
-
-Drift provides a strongly typed **6-tier environment variable precedence hierarchy** (Package > Workspace within each macro tier) with native topological DAG resolution (`$VAR`, `${VAR}`) directly within any TOML configuration file (`drift_workspace.toml`, `drift_package.toml`, and their `.local.toml` counterparts).
-
-#### 📊 6-Tier Environment Precedence
-
-| Tier | Name | Source | Description |
-| :---: | :--- | :--- | :--- |
-| **1** | **Override** | `[env.override]` | Explicit high-priority overrides (overwrites all lower tiers including ambient shell/CLI) |
-| **2** | **Facts** | Package & system facts (`drift_*`) | Auto-probed host attributes and paths (authoritative internal metadata) |
-| **3** | **CLI Context** | Ambient process (`os.environ`) & CLI | Command-line environment variables (takes precedence over secrets/defaults/fallbacks) |
-| **4** | **Secrets** | `[env.secrets]`, `[secrets]`, `secrets.env` | Private credentials and tokens (decrypted in-memory and masked in logs) |
-| **5** | **Default** | `[env.default]` | Standard package/workspace baseline values |
-| **6** | **Fallback** | `[env.fallback]` | Soft floor defaults (evaluated only when unset across all upper tiers) |
-
-#### 🔄 Resolution Cascade (`secret >> fallback >> default >> override`)
-Environment tables are resolved using Kahn's topological DAG algorithm with strict unidirectional evaluation flow:
-1. **`[env.secrets]`**: Evaluated first against host environment, system facts, and `[secrets]` / `config/secrets.env` values.
-2. **`[env.fallback]`**: Evaluated with access to resolved secrets.
-3. **`[env.default]`**: Evaluated with access to resolved secrets and fallback values.
-4. **`[env.override]`**: Evaluated with full access to all resolved tables.
-
-#### 🔐 Declarative Secret Decryption & CLI Providers (`[secrets]`)
-Instead of storing plaintext credentials on disk, you can commit encrypted secret files (e.g., Age, GPG, OpenSSL, SOPS) directly into your repository or query password manager CLIs (`op`, `bw`, `pass`) via the `[secrets]` table in `config/drift_workspace.toml` (or machine-specific `config/drift_workspace.local.toml`). Secrets are decrypted **strictly in memory** (`shell=False`) and validated as UTF-8 `.env` (`KEY=VALUE`) pairs with zero disk leakage:
-
-```toml
-# config/drift_workspace.toml
-[secrets]
-# Example 1: Asymmetric in-repo encryption with Age & SSH private key
-secrets_file = "secrets.env.age"           # %s: Relative to 'config/' (or absolute / ~/ / $VAR)
-key_file = "~/.ssh/id_ed25519"             # %i: Optional identity/key file
-decrypt_command = "age -d -i %i %s"        # Executed in-memory; stdout parsed as .env
-
-# Example 2: 1Password / Bitwarden CLI provider (no key_file needed)
-# secrets_file = "secrets.template.env"
-# decrypt_command = "op inject --in-file %s"
-
-# Example 3: Standalone command without secrets_file or key_file
-# decrypt_command = "bw get notes drift-workspace-secrets"
-
-# Example 4: Custom plaintext secrets file (when decrypt_command is omitted)
-# secrets_file = "~/private/drift_secrets.env"
-```
-
-*   **Token Placeholders (`%s` & `%i`)**: `%s` expands to the resolved `secrets_file` path and `%i` expands to the resolved `key_file` path (relative paths resolve against `config/`). Each file is only required when its corresponding placeholder appears in `decrypt_command` (or when `decrypt_command` is omitted, in which case `secrets_file` is read directly as a plaintext `.env` file).
-*   **Automatic `config/secrets.env` Fallback**: When `[secrets]` is omitted or left empty, Drift automatically loads `config/secrets.env` if present. Explicit entries in `[env.secrets]` take precedence over values loaded from `[secrets]` or `config/secrets.env`.
-
-#### 📝 Concrete TOML Example
-
-```toml
-# config/drift_workspace.toml
-[workspace]
-default_target_directory = "${DRIFT_BASE_CONFIG}/drift"
-
-[env.secrets]
-# Tier 4: Private credentials (log-masked and transient)
-VAULT_API_TOKEN = "${SECRETS_FILE_TOKEN:-token_123}"
-
-[env.default]
-# Tier 5: Standard topological variable stitching
-DRIFT_HOST = "127.0.0.1"
-DRIFT_PORT = "8080"
-DRIFT_API_URL = "http://${DRIFT_HOST}:${DRIFT_PORT}/api"
-DRIFT_BASE_CONFIG = "~/.config"
-
-[env.fallback]
-# Tier 6: Soft fallback baseline (used only if not defined in outer environment)
-EDITOR = "nano"
-```
-
-```toml
-# src/my_daemon/drift_package.toml
-[package]
-name = "my_daemon"
-target_directory = "${DAEMON_HOME}/${drift_package_name}"
-
-[env.override]
-# Tier 1: Forced package-level override
-DAEMON_DEBUG = "1"
-DAEMON_SERVICE_URL = "${DAEMON_HOST}:${DAEMON_PORT}"
-
-[env.default]
-# Tier 5: Package-scoped defaults referencing package facts
-DAEMON_HOST = "localhost"
-DAEMON_PORT = "9090"
-DAEMON_HOME = "${HOME}/services"
-
-[env.fallback]
-# Tier 6: Soft fallback
-DAEMON_LOG_LEVEL = "info"
-```
-
-*   **Derived Variables**: Define inter-connected variables (e.g. `DRIFT_API_URL = "http://${DRIFT_HOST}:${DRIFT_PORT}/api"`) with automatic cycle detection.
-*   **Cross-Section References**: Non-env sections (`target_directory`, `hooks`, etc.) dynamically reference any resolved variable without circular dependencies.
-*   **Values-Only Scope**: Variable stitching operates **strictly within configuration field values** (strings, arrays, and numbers), never in TOML keys, table names, or section headers. (For dynamic keys or sections, use Python workspace hooks or `.envst.toml` templates).
-*   **Package Fact Injections**: Automatically reference dynamic package and host facts (`${drift_package_name}`, `${drift_package_source_dir}`, `${drift_os}`, `${drift_arch}`) directly in your package configuration.
-*   **Literal Escaping**: Use `\$VAR` or `\${VAR}` to preserve literal text when needed.
-*   **Dynamic Programmatic Generation via Python Hooks (Preprocessor Stage)**: If in-TOML variable stitching doesn't cover your dynamic generation needs and you want to calculate configurations programmatically (e.g., executing Python logic, querying host hardware/APIs, or generating dynamic section tables), you can use native **Python workspace hooks** (`config/drift_workspace.py`) and **Python package hooks** (`src/<pkg>/drift_package.py`).
-    > **Pipeline Execution Order**:
-    > 1. **Multi-File Merge**: Candidate files (`drift_workspace.toml`, `drift_workspace.local.toml`, or custom layers) and templates are sequentially loaded and merged (`load_workspace_config_files_layered` / `render_load_package_config_dict`).
-    > 2. **Dynamic Python Hook (Preprocessor)**: Executes *before* variable stitching, receiving the raw configuration dictionary with full access to resolved host facts and environment variables via `context`.
-    > 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all environment tables (`[env.secrets]`, `[env.fallback]`, `[env.default]`, `[env.override]`) and interpolates `${VAR}` across all non-env fields.
-    > 4. **Validation & Model Instantiation**: Builds validated, strongly-typed configuration objects.
-
-### 🔗 5. Custom Render Engines & DAG Pipeline Piping
-
-Drift lets you declare custom render engines in `drift_workspace.toml` to compile any template format (e.g. `envsubst`, `mustache`, `jinja2`) into your `render/` sandbox:
-
-#### A. Defining a Custom Render Engine
-Register an engine by specifying its target file suffix, optional input variables file, and execution shell command:
-```toml
-# config/drift_workspace.toml
-[render.envsubst]
-suffix = "envst"                                         # Compiles any file ending with .envst
-input_file = "envsubst.bash"                              # Injected environment script from config/
-render_command = "bash -c 'source %i && envsubst < %s'"  # %i=input_file, %s=template
-```
-*   `%s`: Automatically replaced by the path to the template file being compiled.
-*   `%i`: Automatically replaced by the resolved path to `input_file`.
-*   `render_command = "internal"`: Built-in zero-dependency variable replacement engine (`[render.var]`).
-
-#### B. Piping Engines Together (DAG Dependency Pipelines)
-When an engine's `input_file` is itself a template (e.g. `mustache` needing a JSON configuration generated from environment variables), Drift automatically builds a dependency graph and pipes them in order:
-```toml
-[render.mustache]
-suffix = "mustache"
-input_file = "mustache.envst.json"                       # This .envst.json template is compiled by envsubst first!
-render_command = "mustache %i %s"
-```
-*   **Automatic Dependency Ordering**: Drift compiles `config/mustache.envst.json` into `mustache.json` using the `envsubst` engine first, then passes the compiled JSON file as `%i` to `mustache`.
-*   **Cycle Detection**: Drift validates the engine dependency graph to prevent infinite compilation loops, raising a clear `CyclicDependencyError` if circular references occur.
-*   **Deferred Compilation**: Compilation is only performed when an enabled package in your workspace actually relies on the template engine, preventing unnecessary bottlenecks.
-
-#### C. Package-Level Render Engines (Self-Contained Config Space & Portable Media)
-In addition to workspace-level engines, packages can define custom render engines or override workspace engines directly in `drift_package.toml` via `[render.<name>]` tables:
-```toml
-# src/nvim/drift_package.toml
-[render.custom_lua]
-suffix = "tmpl"
-input_file = "theme_vars.json"                             # Resolved relative to src/nvim/
-render_command = "python3 render_template.py %i %s"
-```
-*   **Self-Contained Portable Media**: By declaring custom template engines, rules, and localized input data (e.g. `src/<pkg>/theme_vars.json` or `src/<pkg>/env.sh`) directly inside the package boundary, each Drift package becomes a **self-contained, fully portable configuration medium**. Packages can be freely shared, copied, or migrated across different repositories without requiring global engine definitions in `drift_workspace.toml`.
-*   **Compilation Scope & Engine Rules**:
-    *   **Global Engines Only for Package Config**: Only global workspace engines defined in `drift_workspace.toml` can compile dynamic package configuration templates (e.g. `src/<pkg>/drift_package.envst.toml`). This is because package configuration must be compiled during workspace bootstrap *before* package-level `[render.<name>]` definitions can be discovered or parsed.
-    *   **Package-Level Engines Scope**: Render engines defined inside `drift_package.toml` (`[render.<name>]`) operate strictly during package source compilation on **package source dotfiles and templates** (under `src/<pkg>/`) and cannot be used to compile `drift_package.toml` itself.
-*   **Field-Level Inheritance**: When overriding a workspace engine, unspecified attributes (`suffix`, `render_command`) are inherited automatically from the workspace engine, allowing you to override only `input_file` for that specific package.
-*   **Intermediate Sandboxing (`.drift/render/`)**: Package-specific input templates compile into `render/<pkg>/.drift/render/`, keeping control plane compilation cleanly isolated from deployable dotfiles.
-*   **Two-Way Synchronization**: Downstream commands (`drift reverse-sync`, `drift adopt`, `drift add`) seamlessly resolve template suffixes against these package-level engines.
-
-### ⚡ 6. Incremental Merkle DAG Compilation & Caching
-
-Instead of relying on slow, procedural loops that blindly re-render templates and copy files on every run, Drift models the entire rendering subsystem as an **Abstract Syntax Tree (AST) Directed Acyclic Graph (DAG)** governed by **mathematical change invariance**:
-
-*   **Cryptographic Merkle Invariance**: Every compilable entity computes a SHA-256 hash incorporating raw file bytes, POSIX file permissions mode (`0o755` vs `0o644`), destination paths, engine configuration, and deterministic scoped environment variables. If inputs, templates, environments, and engine rules haven't changed:
-
-    ```text
-    (ΔI = ∅) ∧ (ΔT = ∅) ∧ (ΔV = ∅) ∧ (ΔE = ∅) ⟹ (ΔO = ∅)
-    ```
-
-    where:
-    *   $I$: Render engine input file (optional auxiliary asset or parent template output).
-    *   $T$: Template source leaf file ($T : []$).
-    *   $V$: Deterministic environment variable dictionary in the current scope.
-    *   $E$: Render engine definition (suffix pattern, render command template).
-    *   $O$: Compiled destination artifact in the `render/` sandbox ($O : [I, T, V, E]$).
-
-    Drift binds each node to its direct prerequisites through dual-component Merkle cryptographic hashing:
-
-    ```text
-    own_hash(F)      = SHA256(path || mode || bytes)
-    children_hash(N) = join(merkle_hash(D) for D in depends_on)
-    merkle_hash(N)   = SHA256(NodeType || own_hash(N) || children_hash(N))
-    ```
-
-    If `merkle_hash(N)` matches the stored lockfile proof, compilation is bypassed instantly ($\mathcal{O}(1)$ cache hit / `SKIP_IDENTICAL` / 0ms overhead), avoiding redundant filesystem I/O and costly subprocess template engines.
-*   **3-Phase AST Compilation Pipeline**:
-    *   **Phase 1: Package Config & Environment AST**: Resolves inheritance, dynamic Python preprocessor hooks, and variable stitching into immutable, validated configuration objects.
-    *   **Phase 2: Lifecycle Hooks AST**: Compiles `src/<pkg>/drift_hooks/` into `render/<pkg>/.drift/hooks/` and enforces executable `0o755` permissions across both source and sandbox files.
-    *   **Phase 3: Payload Dotfiles AST**: Resolves engine dependencies, compiles templates, copies static assets, and automatically prunes obsolete rendered files while strictly protecting internal control plane metadata (`.drift/`).
-*   **Lockfile Persistence (`.drift_lock.json`)**: Drift tracks digested cryptographic hashes in `render/<pkg>/.drift/render/.drift_lock.json`. Even across terminal sessions, repeated runs verify lockfile hashes for lightning-fast incremental synchronization. Force a clean re-compilation anytime with `-c / --clean / --no-cache`.
-*   **Inspectable Dry-Run & Simulation (`--dry-run` & `--with-hooks`)**:
-    *   **Pure Simulation (`drift render --dry-run`)**: Traverses the Merkle DAG and produces a complete execution plan of strongly typed `FileAction`s (`RENDER_ITEM`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, `ENSURE_DIR`, `DELETE_FILE`, `PRUNE_DIR`) without modifying the filesystem or Git state.
-    *   **Accurate Planning with Pre-Flight Hooks (`--with-hooks`)**: In pure dry-run, lifecycle hooks are bypassed by default for zero-mutation safety. Pass `--with-hooks` (`drift render --dry-run --with-hooks`) to execute pre-flight requirement probes (`probe`) and dynamic source generators (`pre_source`) inside isolated temporary sandboxes, giving you a 100% accurate deployment plan while keeping `render/` 100% clean and untouched.
-
-### 🛑 7. Proactive Collision Guard & Safeguards
-Drift values your data integrity. Before any physical stage or deployment execution, the **Collision Guard** runs a multi-category safety audit:
-*   **Zero Overwrite of Manual Files**: Any conflicting manual file on the host system is safely backed up to `backup/<package>/overwritten/` before deployment.
-*   **Pruned Files Swept**: Deleted files are cleanly swept to `backup/<package>/deleted/`.
-*   **Symlink Nesting Block**: Drift blocks deployments if the target directory written in configurations is equal to or nested inside the Drift workspace root directory.
-
-> [!IMPORTANT]
-> **Transient `backup/` Policy & User Responsibility**: The `backup/` folder stores displaced original files and pruned artifacts created during deployment collisions. **`backup/` is a local, unversioned directory that is neither tracked nor saved in Git by Drift.** Users are responsible for inspecting `backup/`, preserving critical historical assets, or committing them to private archival storage as needed.
-
-### 🕵️ 8. PCRE-Based Ignorance Rules
-Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package ignore files (`.drift_ignore`). Its pattern matching syntax is derived from GNU Stow's ignore file specification (matching both relative path prefixes and basenames), with the sole architectural exception that Drift's internal control plane (`.drift/`) is always automatically ignored and never deployed to the host.
-*   **Single Ignore File Restriction**: Drift strictly enforces exactly one `.drift_ignore` per package root, preventing fragmented and hard-to-audit nested ignore rules.
-*   **Match Timing Guard**: Patterns are matched against native repository filenames *before* prefix expansion (e.g., matching `dot-bashrc` instead of `.bashrc`), eliminating translation bypasses.
-
-### 🧹 9. Autonomous Garbage Collection (Self-Cleaning)  
-Garbage collection is triggered automatically at the end of a bulk `drift deploy` (when deploying all packages across the workspace) or executed on demand using the explicit `drift gc` command (with optional `--dry-run` inspection).
-
-When you toggle packages to `false` in `drift_workspace.toml` or delete package source folders, Drift's **Garbage Collection** automatically uninstalls the orphaned host files, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
-*   **Automatic Trigger on Global Deploy**: Running `drift deploy` without package arguments automatically sweeps and purges stale database packages at the end of the deployment cycle.
-*   **Manual Trigger**: Run `drift gc` anytime to clean orphaned state or `drift gc --dry-run` to preview purges safely.
-*   **Isolated Commit Scoping**: The GC process only commits the specific directories it purges, ensuring unrelated system modifications are left untouched and auditable.
-
-### 🔌 10. Decouple & Eject Packages on Demand (Detach Mode)
-Sometimes, you want to stop managing a configuration through a dotfile manager but keep the configurations permanently active on your host system. 
-*   **Keep Active Configurations**: Drift supports a dedicated **Detach Mode (`drift uninstall <pkg> --detach`)** that unregisters the package without deleting any files on your system.
-*   **Symlink to Copy Conversion**: If the package was installed via symlinks, the detach engine automatically replaces every system-level symlink with its actual, physical file copy. Your configuration is "frozen" as an independent file on your host target.
-*   **Backups Untouched**: Your historical original system backups inside `backup/<package>/overwritten/` are kept completely intact (not restored or deleted).
-*   **Decoupled Registry**: Cleanly deletes database directories and unregisters the package from `state.toml`, safely letting you "eject" a package on demand.
-
-### 🔗 11. Inter-Package Dependencies & Topological Lifecycle Ordering
-Packages can declare explicit runtime and staging dependencies on other packages using the `dependencies` array in `drift_package.toml`:
-```toml
-# src/zsh/drift_package.toml
-[package]
-name = "zsh"
-dependencies = ["git", "starship", "fzf"]
-```
-*   **Automatic Topological Staging & Deployment**: Drift constructs a directed acyclic graph (DAG) across all enabled packages and sorts them topologically using Kahn's algorithm. Base dependencies are guaranteed to be compiled, staged, and deployed *before* dependent configurations.
-*   **Cycle Detection & Missing Safeguards**: Circular dependencies (`CyclicDependencyError`) and missing prerequisite packages are caught upfront before any filesystem state is altered. When deploying, staging, or applying packages with missing dependencies, pass `--ignore-missing-dependencies` (or `--allow-missing-dependencies`) to bypass the check.
-*   **Reverse Topological Uninstallation**: During package uninstallation (`drift uninstall`), packages are safely decoupled and removed in **reverse topological order**, ensuring dependent packages are dismantled before their underlying requirements.
-*   **Downstream Protection**: Drift verifies that uninstalling a package will not break other installed packages that still depend on it, halting with an actionable error unless `--force` or `--ignore-missing-dependencies` is explicitly provided.
-
-### 🔍 12. Full-Cycle Dry-Run & Transactional Planning Engine (`drift plan`)
-Drift eliminates blind deployments through an end-to-end, multi-stage dry-run engine (`drift plan` or `drift deploy -n / --dry-run`). Rather than merely verifying that symlinks can be created, Drift simulates the **complete compilation, staging, and deployment lifecycle** in an ephemeral sandbox without touching the host filesystem, intermediate databases, or Git repositories:
-
-*   **Four Simulation Phases**:
-    1.  **Phase 0: Host Drift Audit**: Non-destructively audits live host configurations against `install/` state via `prepare_reverse_sync`.
-    2.  **Phase 1: Ephemeral Sandbox Template Compilation**: Compiles templates in a disposable temporary directory, verifying Merkle DAG cache hits while keeping `render/` 100% clean.
-    3.  **Phase 2: Sandbox Staging Planning**: Compiles staging diff plans from sandbox render outputs to canonical `install/`.
-    4.  **Phase 3: Physical Delivery Planning**: Audits cross-package collisions, checks directory writability, and compiles concrete host delivery actions (`CREATE_SYMLINK`, `UPDATE_COPY`, `BACKUP_OVERWRITE`, etc.).
-*   **Symlink Path Masking**: Bridges the path divergence between ephemeral sandbox paths and canonical `install/` locations, ensuring existing host symlinks evaluate as `SKIP_IDENTICAL` rather than triggering false overwrite warnings.
-*   **Fault Isolation & Downstream Blocking**: Traps errors per-package across render, stage, and install phases. A single broken package never obscures healthy sibling packages, while downstream dependents are cleanly marked as blocked.
-*   **Pre-Flight Batch Conflict Audit & Failure Guidance**: Detects intra-batch collisions upfront (two packages targeting the same host destination) and displays prominent failure warnings if a real deployment would fail.
-*   **Safe Hook Execution (`--with-hooks`)**: In pure dry-run, lifecycle hooks are bypassed by default for zero-mutation safety. Pass `--with-hooks` (`drift plan --with-hooks`) to execute pre-flight requirement probes (`probe`) and dynamic source generators (`pre_source`) in isolated scratch directories for 100% accurate dynamic template planning.
-*   **Automated Tooling (`--json`)**: Serializes typed `WorkspaceDeployPreview` models containing global errors, per-package plans, and drift flags for CI/CD pipelines.
-
-For full mathematical proofs, path mask algebra, and call chain specifications, consult the [Dry-Run Architecture Specification](docs/features/plan_engine.md).
-
----
-
-## 🔄 The Drift Data-Flow Loop
-
-Rather than running isolated commands, Drift operates as a continuous, closed-loop state machine:
-
-```
-[1. Declarative Source]      src/ & config/
-  │
-  ▼  drift deploy (compile)
-[2. Sandbox Render Zone]     render/ (isolated Git repo)
-  │
-  ▼  Stage delta (Diff Δ)
-[3. Local State Database]    install/ (tracking Git repo)
-  │ ▲
-  │ │  Reverse-sync (Diff B) / drift adopt
-  ▼ │  Apply (symlink / copy)
-[4. Active Host System]      ~/* or /etc/*
-```
-
----
-
-## 🚀 High-Level Usage Scenarios
-
-### Scenario A: Declaring & Deploying a New Configuration (One-Way Forward Flow)
-*When you want to manage a new configuration file (e.g., Neovim config) with declarative templates.*
-
-1.  **Scaffold**: Run `drift new nvim -t ~/.config/nvim` to create a package directory.
-    *   **Folder Structure Relieved**: By setting `target_directory = "~/.config/nvim"` inside `src/nvim/drift_package.toml`, you no longer need nested directories like `dot-config/nvim/` on disk. Files are put directly inside `src/nvim/`.
-2.  **Author**: Add template or files into `src/nvim/` (e.g., `src/nvim/init.envst.lua` containing `${ENV_VAR}`).
-3.  **Plan & Verify**: Run `drift plan` (or `drift deploy -n`) to preview the complete multi-stage execution plan (template compilation, staging diffs, host symlink/copy actions, drift audits, and collision checks) in an ephemeral sandbox without altering any system or Git state.
-4.  **Deploy**: Run `drift deploy` (which triggers the functions: Render $\rightarrow$ Commit Render $\rightarrow$ Stage $\rightarrow$ Install Deployment $\rightarrow$ Commit Install).
-    *   All templates are compiled inside the sandbox, changes staged into the local state database, and configurations safely copied/linked onto your target active host target path (`~/.config/nvim/init.lua`).
-
-### Scenario B: Adopting GUI/System Utility Changes (Reverse-Sync & Backport Flow)
-*When a GUI app (like qBittorrent, VSCode, or system themes) writes settings directly on disk, and you want to merge them back into your source templates.*
-
-1.  **Detect**: Run `drift status` or `drift diff -s` to inspect active system drifts.
-2.  **Reverse-Sync**: Drift automatically reverse-syncs system adjustments into your local state repository (`install/`).
-3.  **Adopt & Merge**: Run `drift adopt nvim --interactive`.
-    *   Drift pre-stages all changes in `install/` to activate Git's rename detection.
-    *   It extracts system edits as a programmatic patch and cleanly applies them onto your templates in `src/`, avoiding placeholder collisions.
-    *   If you choose to **Skip** a file, it is selectively unstaged (`git restore --staged`) to remain as uncommitted local drift, preserving unresolved issues.
-
-### Scenario C: Midway Deployment Recovery (Rollback Flow)
-*When a deployment template compilation, file permission error, or hook script crashes midway, leaving your host system in an inconsistent, half-written state.*
-
-1.  **Rollback**: Run `drift rollback nvim`.
-    *   Drift resets the package's local state database directory to the last committed clean HEAD, purges half-written/untracked files via `git checkout HEAD` and `git clean -fd`.
-    *   It then performs a full redeploy fallback to safely restore system files to the last committed stable state.
-
-### Scenario D: Bootstrapping a New Machine or Migrating Legacy Dotfiles (Clone Flow)
-*When you set up a fresh machine and want to replicate your existing Drift configuration repository in one command, or migrate an old plain dotfiles repository.*
-
-1.  **Clone Drift Workspace**: Run `drift clone git@github.com:username/dotfiles.git`.
-    *   Drift fetches the remote repository and automatically executes a non-destructive repair (`drift repair`) to reconstruct the excluded `render/` and `install/` databases, `.gitignore` rules, and machine-specific local configuration templates (`config/drift_workspace.local.toml`, `config/secrets.env`).
-2.  **Migrate Legacy Plain Dotfiles Repo**: Run `drift clone https://github.com/username/legacy-dotfiles.git`.
-    *   Drift detects that the repository is a traditional plain dotfiles repository, isolates existing dotfiles into `src/legacy-dotfiles/`, generates `drift_package.toml` and `.drift_ignore`, and scaffolds the full Drift workspace infrastructure automatically.
-3.  **Review & Deploy**: Navigate into the directory (`cd dotfiles`), configure machine-specific overrides in `config/drift_workspace.local.toml` / `config/secrets.env`, and run `drift deploy`.
-
----
-
-## 🛠️ Operational Commands & Functions
-
-Drift's actions are cleanly categorized into **High-Level User Commands** (frequently used workflows) and **Low-Level Control Commands** (under-the-hood troubleshooting & continuous integration). All commands support `--json` for machine-readable automation.
-
-### 🌐 Global & Movable Options
-Global options can be specified before or after subcommands (e.g. `drift -v deploy` or `drift deploy -v`):
-*   `-C, --directory <DIR>`: Run as if drift was started in `<DIR>` instead of the current working directory.
-*   **Workspace discovery**: Drift walks upward from the current (or `-C`) directory and uses the nearest directory containing `config/drift_workspace.toml` (or its `.envst` / `.local` variants) as the workspace root. The enclosing Git toplevel is irrelevant, so workspaces nested inside other repositories (e.g. `samples/<name>/`) work out of the box. `drift init` always initializes the current (or `-C`) directory literally.
-*   `-v, --verbose`: Enable verbose (DEBUG) logging output.
-*   `--json`: Output results in structured machine-readable JSON format using typed result models.
-*   `--raw-errors`: Bypass CLI error boundary to print raw exceptions and full Python stack traces without verbose log output.
-*   `--trace`: Full diagnostic tracing: enables verbose/debug logging output *and* prints raw Python stack traces on exceptions.
-
-### 🚀 High-Level User Commands (Frequently Used)
-
-| Command | Description |
+| Command | Purpose |
 | :--- | :--- |
-| `drift clone <url> [dir]` | Clone repository and bootstrap workspace |
-| `drift init` | Initialize new Git-backed Drift workspace |
-| `drift new <pkg>` | Scaffold package directory and config |
-| `drift add <pkg> <paths>` | Import host configs into package source |
-| `drift adopt [pkgs]` | Backport host drift into package templates |
-| `drift deploy [pkgs]` | Compile, stage, and deploy packages |
-| `drift plan [pkgs]` | Preview full-cycle deployment plan without modifying state |
-| `drift health [pkgs]` | Run package health check hooks |
-| `drift uninstall <pkgs>` | Remove deployed files and restore backups |
-| `drift rollback [pkgs]` | Revert failed transaction to stable state |
-| `drift status [pkgs]` | Inspect template, stage, and drift status |
-| `drift diff [pkgs]` | Compare template, system, or staged layers |
-| `drift gc` | Purge orphan packages and stale state |
-| `drift repair` | Audit and self-heal workspace state |
-| `drift complete [<shell>]` | Generate shell tab-completion scripts |
-| `drift help [topic]` | Display manual and topic documentation |
+| `drift init` / `drift clone <url>` | Create or bootstrap a workspace |
+| `drift new <pkg>` / `drift add <pkg> <paths>` | Scaffold a package / import host files |
+| `drift plan [pkgs]` | Preview the full deployment |
+| `drift deploy [pkgs]` | Compile, stage, and deliver |
+| `drift status [pkgs]` / `drift diff [pkgs]` | Inspect template, pending, and host drift |
+| `drift adopt [pkgs]` | Backport host drift into source |
+| `drift rollback [pkgs]` | Recover from a failed transaction |
+| `drift uninstall <pkgs>` | Remove deployed files, restore backups |
+| `drift gc` / `drift repair` | Purge orphans / self-heal the workspace |
+| `drift help [topic]` | Built-in manual |
 
-### 🔧 Low-Level Control Commands (Troubleshooting & Automation)
-
-| Command | Description |
-| :--- | :--- |
-| `drift reverse-sync` | Sync host files back to `install/` state |
-| `drift render` | Incremental Merkle DAG compilation |
-| `drift render-commit` | Commit sandbox changes to `render/` repo |
-| `drift stage` | Stage sandbox files to `install/` base |
-| `drift apply` | Deploy files from `install/` to host |
-| `drift install-commit` | Commit deployment state in `install/` |
-| `drift hook <pkg> <hook>` | Trigger specific lifecycle hook script |
+* Drift finds the workspace by walking up from the current directory (or `-C <dir>`) to the nearest folder containing `config/drift_workspace.toml`.
+* Every command supports `--json`. Low-level primitives (`render`, `stage`, `apply`, `reverse-sync`, …) and all flags are documented in the **[CLI Reference](docs/cli.md)**.
 
 ---
 
-## 📦 Deployment Methods (`symlink` vs. `copy`) & Event Ordering
+## 🎯 Where Drift Fits
 
-Drift supports two deployment mechanisms declared in `drift_package.toml` (or defaulted via `default_install_method` in `drift_workspace.toml`):
-
-| Feature | `symlink` (POSIX Default) | `copy` (Windows Default) |
+| Layer | Nature | Best tool |
 | :--- | :--- | :--- |
-| **Mechanism** | Relative symlink to `install/<pkg>/` | Atomic physical file copy |
-| **Dot Translation** | `dot-` $\rightarrow$ `.` | `dot-` $\rightarrow$ `.` |
-| **Storage Overhead** | Zero (symlink pointer) | Duplicate physical file |
-| **Hot-Edits & Inotify** | Instant via symlink | Managed via deploy passes |
-| **Windows Behavior** | Falls back to copy | Native file copy |
-| **Lifecycle Ordering** | Content live at Staging | Strict (`pre_update` $\rightarrow$ copy $\rightarrow$ `post_update`) |
+| Tools, runtimes, binaries | Immutable, versioned | mise / Nix / pkgit |
+| Configuration on your machines | Per-host, mutable | **Drift** |
+| Remote fleet orchestration | Push-based, multi-host | Ansible and friends |
 
-### ⚠️ Event Ordering & Lifecycle Hook Semantics
-
-Because Drift decouples template staging (Primitive 4: `render/` $\rightarrow$ `install/`) from host delivery (Primitive 5: `install/` $\rightarrow$ host), the timing of file updates relative to hook scripts differs:
-
-*   **`symlink` (Symlink Pointers)**:
-    Since the host file is a symlink directly targeting `install/<pkg>/`, updating file contents in `install/` during Staging (Primitive 4) makes those modifications immediately visible to the host **before** `pre_update` executes in Primitive 5. New file symlinks and deleted symlinks are still processed after `pre_update`.
-*   **`copy` (Discrete Physical Files — Recommended for Daemons)**:
-    Host files remain completely untouched at their previous version until Primitive 5 copies them over. This guarantees that `pre_update` runs while host files are **strictly in their old state**, followed by atomic physical file delivery, and finally `post_update`.
-
-> [!TIP]
-> **When to use `copy`**: If you are managing background services or daemons (e.g. `systemd` services with `inotify` watchers) that must be cleanly stopped in `pre_update` *before* configuration contents change on disk, configure the package with **`install_method = "copy"`**.
+* Drift is **local-first**: it runs on the machine it configures and does not orchestrate remote hosts.
+* Drift is **not hermetic**: it manages files on a live system rather than building isolated environments.
 
 ---
 
-## 🪝 Robust Lifecycle Hook Integration
-Packages can declare automated hook scripts inside `drift_package.toml` to integrate with external packages:
-```toml
-[package]
-install_method = "symlink"
+## 📚 Documentation
 
-[requirements]
-os = ["linux", "darwin"]
-binaries = ["curl", "systemctl"]
-
-[hooks]
-probe = "drift_hooks/check_gpu.sh"
-pre_source = "drift_hooks/generate_dynamic_templates.sh"
-pre_install = "drift_hooks/bootstrap.sh"
-post_update = "drift_hooks/reload_plugins.sh"
-pre_uninstall = "drift_hooks/stop_daemon.sh"
-health = "drift_hooks/health_check.sh"
-timeout = 60
-```
-
-### 🛡️ Pre-Flight Gatekeeper: Declarative Requirements & Dynamic Probe (Evaluated Before Rendering)
-Requirement validation is performed strictly **before template rendering begins** (in Primitive 2). Drift evaluates a two-tier pre-flight gatekeeper:
-1. **Declarative Host Requirements (`[requirements]`)**: Validates host criteria (`os`, `arch`, `distro`, `binaries`, `env`, `ip`) against automatically probed system facts without spawning subprocesses.
-2. **Dynamic Probe Hook (`probe`)**: If declarative checks pass, executes the custom script defined in `probe = "drift_hooks/check_gpu.sh"`.
-
-Because this evaluation occurs **prior to template compilation**:
-* **Zero Unnecessary Rendering**: Template engines are never invoked, intermediate input files are not compiled, and no files are written to the `render/<pkg>/` sandbox for skipped packages.
-* **Graceful Skipping**: If either check fails, Drift **gracefully skips the package** (`status="SKIPPED"`) with an informative reason in logs and summary outputs.
-* **Uninterrupted Workflow**: Remaining active packages continue to compile, stage, and deploy without failure.
-
-### Hook Reference & Unified Working Directory (`cwd`)
-Drift executes all lifecycle hooks with **unified working directories** (`cwd = hook_path.parent`, the directory containing the executed script) and automatic 6-tier environment variable injection (including host facts and package configs). The host target directory is accessible via `$drift_package_target_dir`.
-
-| Hook | Trigger Timing | Commands |
-| :--- | :--- | :--- |
-| `probe` | Pre-flight requirement check | `deploy`, `render`, `status` |
-| `pre_source` | Before reading or writing templates | `deploy`, `render`, `adopt`, `add` |
-| `post_render` | After sandbox compilation | `deploy`, `render` |
-| `pre_install` | Before initial package installation | `deploy`, `apply`, `rollback` |
-| `post_install` | After initial package installation | `deploy`, `apply`, `rollback` |
-| `pre_update` | Before updating installed package | `deploy`, `apply`, `rollback` |
-| `post_update` | After updating installed package | `deploy`, `apply`, `rollback` |
-| `pre_uninstall` | Before unlinking or deleting files | `deploy`, `uninstall`, `gc` |
-| `post_uninstall` | After unlinking or deleting files | `deploy`, `uninstall`, `gc` |
-| `health` | Runtime service health verification | `health` |
-
-> [!IMPORTANT]
-> **Unified Hook Working Directory (`cwd`)**: Across all lifecycle hooks, the execution working directory defaults to `hook_path.parent` (the directory containing the executed script). This allows sibling helper scripts (e.g., `. ./helper.sh` or `. ./lib/utils.sh`) to be sourced naturally relative to the script regardless of execution stage. The destination target directory is accessible via `$drift_package_target_dir`.
-
-> [!TIP]
-> **Strict `drift_hooks/` Placement, Dependencies & Symlinks**:
-> * **Dedicated Placement**: All package lifecycle scripts and auxiliary helper dependencies MUST reside within `src/<pkg>/drift_hooks/` (e.g., `src/<pkg>/drift_hooks/bootstrap.sh`, `src/<pkg>/drift_hooks/lib/helper.sh`). Any relative hook path outside `drift_hooks/` is rejected with a `ConfigError`.
-> * **Automatic Host Isolation**: Drift compiles `drift_hooks/` into `render/<pkg>/.drift/hooks/` and stages it into `install/<pkg>/.drift/hooks/`. Because `.drift/` is an internal Drift metadata directory, hook scripts, Python configuration hooks, and helper libraries are completely isolated from deployment and never deployed or symlinked to the host target directory.
-> * **Deploying Hook Files or Sharing Dependencies**: If a hook script or a file needed by a hook also needs to be deployed to the host (e.g. a CLI tool under `bin/`), or if sharing hook scripts across packages, create a symlink inside `src/<pkg>/drift_hooks/` (e.g. `ln -s ../bin/my_cli src/<pkg>/drift_hooks/my_cli`).
-
-> [!NOTE]
-> **Privilege & Environment Model**: All lifecycle hooks execute **in user space without `sudo`**, preserving all 6 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`). If elevated root privileges are required for a specific command (e.g., restarting a system daemon), write `sudo` explicitly within the hook script. Note: `$drift_package_src_dir` is an alias for `$drift_package_source_dir`.
-
-*   **Bypassing Hooks**: Pass `--no-hooks` (or `--no-hook`) to skip lifecycle hooks on any deployment command (`deploy`, `apply`, `render`, `adopt`, `add`, `uninstall`, `rollback`, `gc`).
-*   **Dry-Run Hook Execution (`--with-hooks`)**: In simulation mode (`drift render --dry-run`), lifecycle hooks default to disabled (`--no-hooks` is active). Passing `--with-hooks` authorizes execution of pre-flight preparation hooks (`probe` and `pre_source`) in isolated temporary sandboxes without mutating `render/`, resolving requirements and dynamic templates for an accurate render plan.
-*   **Direct Hook Execution**: Trigger any hook in isolation via `drift hook <pkg> <hook> [--from source|install]` (where stage is `source` or `install`).
-
----
-
-## 💡 Troubleshooting & Practical FAQ
-
-### 1. Discarding System Drift Pollution & Overwriting Host Files
-* **Q**: How do I discard all host system modifications and force-reset host files back to the declarative templates?
-* **A**: Run **`drift deploy --force`** (or `drift deploy <pkg> -f`). Drift bypasses system drift sentinel safeguards and forces the target files to match the freshly compiled templates from `src/`.
-
-### 2. Resetting a Stuck or Problematic Package
-* **Q**: What should I do if a package's installation state is corrupted, out of sync, or encountering unexpected file collisions?
-* **A**: **Uninstall and redeploy**:
-  ```bash
-  drift uninstall <pkg> --force   # Remove host mappings and reset state tracking
-  # (Optional: verify and clean any unmanaged leftovers in target directory)
-  drift deploy <pkg>              # Cleanly compile, stage, and redeploy
-  ```
-
-### 3. Recovering from Corrupted Files in `render/` or `install/`
-* **Q**: What if a file inside internal sandbox `render/` or local state database `install/` was accidentally deleted or broken?
-* **A**: In Drift, **`src/` is the single source of truth**. Simply run **`drift render <pkg>`** or **`drift deploy <pkg>`**; Drift will automatically re-compile and re-stage clean files from `src/`.
-
-### 4. Self-Healing Missing Workspace Databases & Templates
-* **Q**: My Git databases (`render/.git`, `install/.git`), `.gitignore` rules, or local config templates (`config/drift_workspace.local.toml`, `config/secrets.env`) are missing.
-* **A**: Run **`drift repair`** to audit and reconstruct missing workspace databases, `.gitignore` rules, and template files non-destructively.
-
-### 5. Recovering from Midway Deployment Failures
-* **Q**: A deployment script or hook crashed midway and left files in a half-written state.
-* **A**: Run **`drift rollback <pkg>`** to revert `install/` to the last committed clean HEAD and redeploy the last stable state.
-
-### 6. Deploying Files Without Hooks & Debugging Broken Scripts
-* **Q**: How do I deploy a package's configuration files without executing its lifecycle hooks, or debug a broken hook script?
-* **A**: Deploy with **`--no-hooks`** to install the package's configuration files directly to disk without running any lifecycle hooks (`pre_install`, `post_update`, etc.). You can then test and debug any hook script in isolation using **`drift hook --from src <pkg> <hook> -v`**:
-  ```bash
-  # 1. Deploy the package's configuration files safely without running any hooks:
-  drift deploy <pkg> --no-hooks
-
-  # 2. Iterate and debug the hook script live from source with all injected variables & verbose output:
-  drift hook <pkg> <hook> --from src -v
-  ```
-  This allows you to safely place your configuration files on disk while iterating on hook scripts in `src/<pkg>/` with full 6-tier environment variables and host facts injected.
-
-### 7. Forcing Full Reinstallation (`-r` / `--reinstall`)
-* **Q**: Why was package deployment skipped, and how do I force reinstallation of all packages and lifecycle hooks?
-* **A**: Drift optimizes deploy cycles by inspecting staging outputs (`installed_files`, hook scripts, and `drift_package.toml`). If a package has no stage changes, Drift skips deploying it. To force a full reinstallation of all packages and execute their lifecycle hooks regardless of changes, pass **`-r`** or **`--reinstall`**:
-  ```bash
-  drift deploy -r
-  ```
-
-### 8. Inspecting Full Exception Stack Traces (`--trace` vs `--raw-errors`)
-* **Q**: How do I see raw Python tracebacks and full stack traces when troubleshooting an error?
-* **A**: Use **`--trace`** for full diagnostic mode (debug logs + stack traces) or **`--raw-errors`** to only unmask exceptions without debug log output:
-  ```bash
-  # Full debug logs + unmasked traceback on error:
-  drift --trace deploy
-  # Or as a movable flag after the subcommand:
-  drift deploy --trace
-
-  # Raw exception traceback only (standard logging):
-  drift deploy --raw-errors
-  ```
-
-### 9. Deploy Reports System Drift but `drift diff` Outputs Nothing (`install-commit`)
-* **Q**: What should I do when `drift deploy` halts with a "System drift detected" warning, but `drift diff` (or `drift diff -s`) outputs no differences?
-* **A**: This indicates that the `install/` local state database repository contains uncommitted Git changes that match the compiled `render/` output (most commonly caused by an interrupted deployment or a failed commit step). Because the working tree files in `install/` already match `render/` and the host system, `drift diff` detects no delta, but the underlying `install/.git` repository is dirty.
-  To resolve this cleanly, manually commit the staged changes in `install/`:
-  ```bash
-  # Commit uncommitted changes in the install state database:
-  drift install-commit -m "chore: sync uncommitted install state" [packages...]
-
-  # Then resume normal deployment:
-  drift deploy
-  ```
-
-### 10. Launching Visual Side-by-Side Diffs in Your Editor
-* **Q**: How do I review diffs side-by-side in my terminal editor or GUI editor (like Neovim, Vim, VS Code, or GNU Emacs)?
-* **A**: Pass **`-y`** or **`--side-by-side`** to `drift diff`:
-  ```bash
-  # Side-by-side visual diff of pending deployments:
-  drift diff -y
-
-  # Visual diff of active system drift:
-  drift diff -s -y nvim
-  ```
-  Drift automatically detects `$VISUAL` / `$EDITOR` (or finds `nvim`, `vim`, `code`, `emacs`) and opens changed file pairs in side-by-side split viewports across multiple tabs/windows.
-
-### 11. Configuring Git User Identity Without Global Git Config
-* **Q**: What should I do if `drift deploy` fails with "Git configuration error: 'user.name' is not configured", and I don't want to set global Git config (e.g. on CI runners or headless servers)?
-* **A**: Define `git_user_name` and `git_user_email` under `[settings]` in `config/drift_workspace.toml` (or machine-specific `config/drift_workspace.local.toml`):
-  ```toml
-  [settings]
-  git_user_name = "Drift Bot"
-  git_user_email = "drift@localhost"
-  ```
-  Then run **`drift repair`** to apply it locally to the `render/` and `install/` repositories.
-
-👉 Run `drift help faq` for more tips and topic manuals.
-
----
-
-## 📚 Further Reading & In-Depth Documentation
-
-*   **Interactive Built-in Manual (`drift help`)**: After reading this README, explore Drift's built-in manual pages directly from your terminal by running `drift help` or `drift help <topic>` (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift_workspace.toml`, `workspace`, `health`, `clone`, `faq`).
-*   **Architecture Model & Feature Specifications ([`docs/architecture.md`](docs/architecture.md))**: To understand the 4-tier Git-backed mental model, the 17 atomic primitives, domain invariants, and subsystem deep-dives (`docs/features/`), read [docs/architecture.md](docs/architecture.md).
+* **[Feature Guide](docs/features.md)**: everything Drift can do, organized by pillar, plus end-to-end workflows.
+* **[Installation & Packaging](docs/installation.md)**: all install methods and shell completions.
+* **[CLI Reference](docs/cli.md)**: every command and flag.
+* **[Troubleshooting & FAQ](docs/troubleshooting.md)**: recovering from common situations.
+* **[Architecture](docs/architecture.md)**: the 4-tier model, primitives, invariants, and subsystem specs.
+* **[Roadmap](docs/roadmap.md)**: what's next.
+* **Built-in manual**: `drift help` or `drift help <topic>` (`package`, `workspace`, `drift_package.toml`, `faq`, …).
 
 ---
 
 ## 📜 License
+
 Drift is released under the **MIT License**. See [LICENSE](LICENSE) for details.

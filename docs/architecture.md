@@ -206,7 +206,11 @@ The codebase under `src/drift/` is organized into 8 subpackages ordered strictly
 | **CLI & Tab-Completion** | [`tab_completion.md`](features/tab_completion.md) | Declarative `schema.py`, Argparse/Typer backends, shell compilers |
 
 ### 6.2 Top-Level Reference & Project Documents (`docs/`)
+* **Product Overview & Five-Minute Tour**: [`README.md`](../README.md)
+* **User Feature Guide (by pillar, with workflows)**: [`docs/features.md`](features.md)
+* **Installation & Packaging**: [`docs/installation.md`](installation.md)
 * **CLI Command & Flag Manual**: [`docs/cli.md`](cli.md)
+* **Troubleshooting & FAQ**: [`docs/troubleshooting.md`](troubleshooting.md)
 * **Strategic Roadmap & Project Review**: [`docs/roadmap.md`](roadmap.md)
 * **Domain Knowledge Base**: `docs/knowledge/` (OS packaging mechanisms, file permissions, hook designs, cloud config studies)
 

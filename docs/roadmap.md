@@ -242,7 +242,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 * **Progress Meters & Batch Worklist Summaries**: Step-by-step progress counters (`[3/10]`) and upfront target discovery logs across CLI subcommands.
 
 ### 🔧 Tier C: Advanced & Specialized Patterns
-* **Binary Deployment Strategy (drift + mise)**: Alternative binary management scheme with mise / nix home-manager.
+* **Binary Deployment Strategy (drift + mise)**: Alternative binary management scheme with mise / pkgit / nix home-manager.
 * **Auto-Rollback for Critical Services** [Completed]: Automatic revert on deployment failure across `deploy` and `apply` with 3-state `RollbackPolicy` (`auto`, `always`, `never`).
 * **Reorder Render Before Reverse-Sync** [Completed]: Resolves converged template updates directly in git history and pre-plans installation before staging.
 * **`drift revert`**: Fast undo of last deployment commit in the install repository.
@@ -279,12 +279,13 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
   - Prepend step indexes `[i/N]` to starting and completion log messages for each package.
   - In Rich console mode, provide clean animated progress meters while preserving full detailed logs in `--debug` and non-interactive pipelines.  
 
-- [ ] **Onboarding-first documentation restructuring.** Split the README into:
+- [x] **Onboarding-first documentation restructuring.** Split the README into:
   - A 2-minute quickstart (`drift init`, add a file, `drift deploy`, see it work)
   - A concepts page (the 4 tiers, explained with one concrete example)
   - The current README content as a full reference
 
   The current README tries to do all three and ends up being 675 lines that feel like a spec sheet.
+  - **Done**: `README.md` is now a product overview ("binaries don't drift, configuration does") with a verified five-minute tour and the 4-tier model; the long-form reference lives in [`features.md`](features.md), [`installation.md`](installation.md), and [`troubleshooting.md`](troubleshooting.md).
 
 - [ ] **Sample workspace repository.** Add a `samples/` directory with real-world examples: frp config (networks among machines), package manager configs (mise / nix home-manager / linuxbrew), common shell setups. (from old roadmap)  
 
