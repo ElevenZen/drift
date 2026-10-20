@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, TYPE_CHECKING
 
-from ..core.constants import RollbackPolicy
+from ..core.constants import ExitCode, RollbackPolicy
 from ..core.file_action import (
     FileAction,
     filter_display_actions,
@@ -88,6 +88,7 @@ class DeployFailure(SerializableModel):
     alternative_command: Optional[str] = None
     remedy_instructions: Optional[str] = None
     drifted_files: List[str] = field(default_factory=list)
+    exit_code: int = ExitCode.GENERAL_ERROR  # Process exit code of the underlying exception (DriftError.exit_code)
 
 
 @dataclass

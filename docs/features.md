@@ -345,6 +345,7 @@ Instead of relying on slow, procedural loops that blindly re-render templates an
 Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package ignore files (`.drift_ignore`). Its pattern matching syntax is derived from GNU Stow's ignore file specification (matching both relative path prefixes and basenames), with the sole architectural exception that Drift's internal control plane (`.drift/`) is always automatically ignored and never deployed to the host.
 *   **Single Ignore File Restriction**: Drift strictly enforces exactly one `.drift_ignore` per package root, preventing fragmented and hard-to-audit nested ignore rules.
 *   **Match Timing Guard**: Patterns are matched against native repository filenames *before* prefix expansion (e.g., matching `dot-bashrc` instead of `.bashrc`), eliminating translation bypasses.
+*   **Render-Time Junk Filtering**: Machine-generated junk from the default list (Python `__pycache__/` and `*.pyc` written by package hooks, tool caches, VCS metadata, editor swap/backup files, `.DS_Store`) is skipped while compiling `src/` into `render/`, so it never reaches `render/` or `install/`. Deploy-policy defaults such as `^/README.*` and `^/LICENSE.*` are *not* enforced at render time and remain fully controlled by each package's `.drift_ignore`.
 
 ---
 

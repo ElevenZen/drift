@@ -3,8 +3,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, List, Tuple, Union, Set
-from .constants import DirMode
-from .ignore import IgnoreHandler
+from .constants import DEFAULT_JUNK_IGNORE_PATTERNS, DirMode
+from .ignore import DriftIgnore, IgnoreHandler
 from ..utils.path_utils import decode_dot_prefix, is_relative_to
 
 logger = logging.getLogger(__name__)
@@ -351,6 +351,26 @@ class FolderListingContext:
     translate_mode: Optional[str] = None
     dir_mode: DirMode = DirMode.ALL_DIRS
     dest_dir: Optional[Path] = None
+    junk_handler: Optional[IgnoreHandler] = None
+
+
+def build_junk_ignore_handler() -> DriftIgnore:
+    """Returns an ignore handler matching only DEFAULT_JUNK_IGNORE_PATTERNS (keeps '.drift_keep' stubs)."""
+    return DriftIgnore(patterns=DEFAULT_JUNK_IGNORE_PATTERNS, ignore_keep_file=False)
+
+
+def strip_root_rel_prefix(current_rel: Path, root_rel_prefix: Path) -> Path:
+    """Returns current_rel relative to the listing root, so ignore patterns see package-relative paths."""
+    if root_rel_prefix == Path("") or not is_relative_to(current_rel, root_rel_prefix):
+        return current_rel
+    return current_rel.relative_to(root_rel_prefix)
+
+
+def check_is_junk_entry(current_rel: Path, is_dir: bool, context: "FolderListingContext") -> bool:
+    """Returns True if the entry matches the junk handler (the listing root itself is never junk)."""
+    if context.junk_handler is None or current_rel == context.root_rel_prefix:
+        return False
+    return context.junk_handler.match_path(strip_root_rel_prefix(current_rel, context.root_rel_prefix), is_dir=is_dir)
 
 
 def check_circular_dest_symlink(
@@ -449,6 +469,9 @@ def _walk_folder_entry(
     ):
         return
 
+    if check_is_junk_entry(current_rel, is_dir=current_path.is_dir(), context=context):
+        return
+
     if current_path.is_symlink() and not context.resolve_symlinks:
         collected_paths.append(current_rel)
         return
@@ -491,6 +514,7 @@ def list_folder_paths(
     translate_mode: Optional[str] = None,
     dir_mode: Union[str, DirMode] = DirMode.ALL_DIRS,
     dest_dir: Optional[Path] = None,
+    ignore_junk_files: bool = False,
 ) -> List[Path]:
     """
     Recursively lists all relative paths within src_dir.
@@ -511,6 +535,13 @@ def list_folder_paths(
         it represents an anomalous circular reference (e.g. host subfolder linking back to repo).
         A prominent warning is logged and recursive traversal is skipped to prevent infinite duplicate
         nesting across repeated sync operations.
+
+    ignore_junk_files (optional, default False):
+      When True, entries matching DEFAULT_JUNK_IGNORE_PATTERNS (Python bytecode / __pycache__, tool
+      caches, VCS metadata, editor temp files, OS metadata) are skipped and junk directories are not
+      descended into. Patterns are matched against paths relative to src_dir (independent of base_rel),
+      and are applied in addition to ignore_handler. Deploy-policy patterns (e.g. ^/README.*) are
+      deliberately excluded so packages keep control of them via .drift_ignore.
     """
     context = FolderListingContext(
         root_rel_prefix=base_rel if base_rel is not None else Path(""),
@@ -519,6 +550,7 @@ def list_folder_paths(
         translate_mode=translate_mode,
         dir_mode=DirMode.from_str(dir_mode),
         dest_dir=dest_dir,
+        junk_handler=build_junk_ignore_handler() if ignore_junk_files else None,
     )
 
     collected_paths: List[Path] = []

@@ -607,6 +607,14 @@ def execute_rollback(
         print(res.to_json())
 
 
+def build_deploy_failure_error(res: Any) -> DriftError:
+    """Converts a failed DeployResult into a DriftError carrying the original exception's exit code."""
+    failure = res.failure
+    err = DriftError(failure.error_message if failure else "Deployment failed.", packages=res.target_packages)
+    err.exit_code = failure.exit_code if failure else ExitCode.GENERAL_ERROR
+    return err
+
+
 def execute_deploy(
     drift_root: Path,
     package_names: Sequence[str] = (),
@@ -642,13 +650,10 @@ def execute_deploy(
     )
     if json_mode:
         print(res.to_json())
-        if res.status == "ABORTED_DRIFT":
-            sys.exit(ExitCode.DRIFT_DETECTED)
-        elif res.status != "SUCCESS":
-            sys.exit(ExitCode.GENERAL_ERROR)
+        if res.status != "SUCCESS":
+            sys.exit(res.failure.exit_code if res.failure else ExitCode.GENERAL_ERROR)
     elif res.status != "SUCCESS":
-        error_msg = res.failure.error_message if res.failure else "Deployment failed."
-        raise RuntimeError(error_msg)
+        raise build_deploy_failure_error(res)
 
 
 def execute_plan(

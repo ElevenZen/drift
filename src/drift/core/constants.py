@@ -303,7 +303,7 @@ class ExitCode(IntEnum):
     HEALTH_CHECK_FAILED = 6
     HOOK_SKIPPED = 7
 
-DEFAULT_DRIFT_IGNORE_CONTENT = (
+_DEFAULT_DRIFT_IGNORE_HEADER = (
     "# =====================================================================\n"
     "# .drift_ignore - PCRE Regex Package Ignore Patterns\n"
     "# =====================================================================\n"
@@ -328,6 +328,12 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "# ---------------------------------------------------------------------\n"
     "# Default Drift Ignore List\n"
     "# ---------------------------------------------------------------------\n"
+)
+
+# Machine-generated junk (bytecode, tool caches, VCS metadata, editor temp files, OS metadata).
+# Never meaningful configuration payload, so it is also filtered at render time
+# (see list_folder_paths(ignore_junk_files=True)), not just at deploy time.
+DEFAULT_DRIFT_IGNORE_JUNK_CONTENT = (
     "# Python bytecode and cache files\n"
     "__pycache__\n"
     "/__pycache__/\n"
@@ -369,6 +375,12 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "^\\.DS_Store$\n"
     "^Thumbs\\.db$\n"
     "\n"
+)
+
+# Deploy policy: package docs stay in render/ and install/ but are not delivered to the host.
+# Users may remove these from a package .drift_ignore to deploy such files, so they must
+# never be enforced at render time.
+_DEFAULT_DRIFT_IGNORE_POLICY_CONTENT = (
     "# Package documentation and licenses\n"
     "^/README.*\n"
     "^/LICENSE.*\n"
@@ -379,12 +391,21 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "^/\\.drift$\n"
 )
 
+DEFAULT_DRIFT_IGNORE_CONTENT = (
+    _DEFAULT_DRIFT_IGNORE_HEADER + DEFAULT_DRIFT_IGNORE_JUNK_CONTENT + _DEFAULT_DRIFT_IGNORE_POLICY_CONTENT
+)
+
+
+def parse_ignore_pattern_lines(content: str) -> List[str]:
+    """Returns the non-empty, non-comment lines of ignore file content as patterns."""
+    return [line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
+
+
 # Default list of ignore patterns generated from DEFAULT_DRIFT_IGNORE_CONTENT
-DEFAULT_IGNORE_PATTERNS: List[str] = [
-    line.strip()
-    for line in DEFAULT_DRIFT_IGNORE_CONTENT.splitlines()
-    if line.strip() and not line.strip().startswith("#")
-]
+DEFAULT_IGNORE_PATTERNS: List[str] = parse_ignore_pattern_lines(DEFAULT_DRIFT_IGNORE_CONTENT)
+
+# Junk-only subset of DEFAULT_IGNORE_PATTERNS, safe to enforce at render time
+DEFAULT_JUNK_IGNORE_PATTERNS: List[str] = parse_ignore_pattern_lines(DEFAULT_DRIFT_IGNORE_JUNK_CONTENT)
 
 # Supported package lifecycle hook event names
 LIFECYCLE_HOOK_NAMES = (

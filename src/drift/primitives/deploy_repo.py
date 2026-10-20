@@ -30,8 +30,16 @@ from .install_repo import (
 )
 from .workspace_gc import run_primitive_9_purge_workspace_garbage, purge_redundant_wal_folders
 from ..hooks.lifecycle_hooks import HookExecFlags
-from ..core.exceptions import HookExecutionError, DriftError, is_drift_error, is_logged, mark_logged
-from ..core.constants import STATE_REGISTRY_FILE_NAME, InstallMethod, RollbackPolicy
+from ..core.exceptions import (
+    DriftDetectedError,
+    DriftError,
+    HookExecutionError,
+    MidwayTransactionError,
+    is_drift_error,
+    is_logged,
+    mark_logged,
+)
+from ..core.constants import STATE_REGISTRY_FILE_NAME, ExitCode, InstallMethod, RollbackPolicy
 from ..core.state_registry import load_state_registry
 from ..models import (
     NextActionType,
@@ -70,7 +78,7 @@ def assert_no_midway_deploy_state(
         f"👉 Run 'drift rollback {pkg_cmd_str}' to safely restore your system to the last known good configuration.\n"
         f"👉 Run 'drift deploy {pkg_cmd_str} --force' to bypass this safeguard and proceed anyway."
     )
-    raise RuntimeError(err_msg)
+    raise MidwayTransactionError(err_msg, packages=pkg_names)
 
 
 def check_and_prevent_system_drifts(
@@ -125,7 +133,7 @@ def check_and_prevent_system_drifts(
                 f"👉 Run 'drift adopt {pkg_cmd_str}' to incorporate these modifications into your template.\n"
                 f"👉 Run 'drift deploy {pkg_cmd_str} --force' to discard system drifts and overwrite."
             )
-            raise RuntimeError(err_msg)
+            raise DriftDetectedError(err_msg, packages=drifted_packages)
 
         logger.info(f"💾 Capturing host drift snapshot in install/ repository for: {', '.join(drifted_packages)}")
         run_primitive_6_commit_install_repo(
@@ -616,15 +624,15 @@ def run_primitive_deploy_pipeline(
         )
     except Exception as e:
         err_str = str(e)
-        is_drift = "System drift detected" in err_str
-        is_midway = "midway transaction state" in err_str or "Safety Abort: Package" in err_str
+        is_drift = isinstance(e, DriftDetectedError)
+        is_midway = isinstance(e, MidwayTransactionError)
         requires_rollback = "Midway crash" in err_str or is_midway
         if is_drift:
             next_action = NextActionType.ADOPT_OR_FORCE
             rec_cmd = "drift adopt"
         elif requires_rollback:
             next_action = NextActionType.ROLLBACK
-            rollback_pkgs = packages_to_deploy
+            rollback_pkgs = list(getattr(e, "packages", None) or packages_to_deploy or ())
             rec_cmd = f"drift rollback {shlex.join(rollback_pkgs)}".strip()
         else:
             next_action = NextActionType.FIX_TEMPLATE
@@ -638,13 +646,14 @@ def run_primitive_deploy_pipeline(
             error_type=type(e).__name__,
             requires_rollback=requires_rollback,
             next_action_type=next_action,
-            recommended_command=rec_cmd
+            recommended_command=rec_cmd,
+            exit_code=getattr(e, "exit_code", ExitCode.GENERAL_ERROR),
         )
         return DeployResult(
             command="deploy",
             status="ABORTED_DRIFT" if is_drift else "FAILED",
             is_global_deploy=(packages_to_deploy is None),
-            target_packages=list(packages_to_deploy),
+            target_packages=list(packages_to_deploy or ()),
             failure=fail
         )
 

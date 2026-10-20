@@ -14,7 +14,8 @@ Layer 2: Single-Package Pipeline Orchestration
 
 Layer 1: DAG Construction & Candidate Filtering
     - build_phase3_payload_dag(workspace_config, pkg_config, package_dir, effective_engines) -> PackagePayloadNode
-        Discovers payload candidates, excludes control plane files, and expands AST Merkle DAG.
+        Discovers payload candidates (skipping DEFAULT_JUNK_IGNORE_PATTERNS junk such as __pycache__),
+        excludes control plane files, and expands AST Merkle DAG.
 ===============================================================================
 """
 
@@ -91,6 +92,7 @@ def build_phase3_payload_dag(
         base_rel=src_dir_to_render,
         resolve_symlinks=True,
         dir_mode=DirMode.ONLY_EMPTY_DIR,
+        ignore_junk_files=True,
     )
 
     initial_nodes: list[Node] = []

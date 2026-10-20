@@ -68,6 +68,7 @@
 1. **3-Bucket Lockfile Isolation**: Phase 1 (`RenderBucket.CONFIG`), Phase 2 (`RenderBucket.HOOKS`), and Phase 3 (`RenderBucket.PAYLOAD`) must only read/write/prune their own bucket in `RenderLockfile`.
 2. **Control-Plane Shielding in Phase 3**: `prune_obsolete_payload_files` must strictly shield `render/<pkg>/.drift/` (`is_drift_internal_path`) so Phase 1 configs, Phase 2 hooks, and `.drift/render_lock.json` are never deleted during payload pruning.
 3. **Restricted Environment Hashing**: `ExpansionContext.env_node` must always be constructed from `JsonNode(pkg_config.env_resolve.impact.restricted_env())`, never raw `os.environ`.
+4. **Junk-Free Candidate Discovery**: Phase 2 and Phase 3 candidate listing must call `list_folder_paths(..., ignore_junk_files=True)` so machine-generated junk (e.g. `__pycache__/` written by Python package hooks) never enters `render/` or `install/`. Only `DEFAULT_JUNK_IGNORE_PATTERNS` may be enforced here; deploy-policy patterns (README/LICENSE) stay under package `.drift_ignore` control at delivery time.
 
 ---
 

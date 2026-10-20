@@ -29,6 +29,7 @@
 * **Transaction State Tuples**:
   * `MIDWAY_TRANSACTION_STATES = ("staging", "installing")`: Crash interlocks blocking new operations without `--force`.
   * `ROLLBACK_ELIGIBLE_STATES = ("staging", "staged", "installing")`: States unconditionally eligible for rollback.
+* **Ignore Defaults**: `DEFAULT_DRIFT_IGNORE_CONTENT` (scaffolded `.drift_ignore` text) = header + `DEFAULT_DRIFT_IGNORE_JUNK_CONTENT` + deploy-policy block (`^/README.*`, `^/LICENSE.*`, `^/COPYING.*`, `.drift/`). `DEFAULT_IGNORE_PATTERNS` parses the full text; `DEFAULT_JUNK_IGNORE_PATTERNS` parses only the junk block (bytecode, tool caches, VCS, editor temp, OS metadata) and is the only set safe to enforce at render time.
 * **Test Mode Controls**: `set_test_mode(enabled: bool, enable_logging: bool = False) -> None`, `in_test_mode() -> bool`.
 * **Mixins ([`mixins.py`](mixins.py))**: `AlwaysTruthy` base class and `@always_truthy` decorator (`__bool__` always returns `True`).
 
@@ -46,7 +47,7 @@
 ### [`folder_diff.py`](folder_diff.py) — Directory Tree Comparison
 * `FolderDiff(added: List[Path], modified: List[Path], deleted: List[Path], matches: List[Path])`.
 * `compare_folders(src_dir, dst_dir, ignore_handler=None, src_only=False, translate_mode=None, ...) -> FolderDiff`: Compares two directory trees with optional `dot-` prefix translation (`"forward"` or `"reverse"`).
-* `list_folder_paths(base_dir: Path, ignore_handler=None, dir_mode: DirMode = DirMode.IGNORE_DIR) -> List[Path]`: Recursively lists relative paths in `base_dir`.
+* `list_folder_paths(src_dir: Path, base_rel=None, ignore_handler=None, resolve_symlinks=True, translate_mode=None, dir_mode=DirMode.ALL_DIRS, dest_dir=None, ignore_junk_files=False) -> List[Path]`: Recursively lists paths in `src_dir`. `ignore_junk_files=True` skips `DEFAULT_JUNK_IGNORE_PATTERNS` entries (matched relative to `src_dir`, independent of `base_rel`; used by render Phase 2 & 3).
 
 ### [`file_action.py`](file_action.py) — `FileAction` Algebra, Execution & Write-Ahead Log (WAL)
 * `FileActionType(str, Enum)`: `CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `CREATE_DIR`, `CREATE_KEEP_FILE`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `DELETE_ITEM`, `DELETE_TREE`, `RENDER_ITEM`, `WRITE_CONFIG`, `INFO_MESSAGE`.

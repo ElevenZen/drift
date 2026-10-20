@@ -81,6 +81,7 @@ def build_phase2_hooks_dag(
         src_dir=hooks_src_dir,
         base_rel=src_prefix,
         dir_mode=DirMode.ONLY_EMPTY_DIR,
+        ignore_junk_files=True,
     )
 
     initial_nodes: list[Node] = []

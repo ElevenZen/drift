@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, InstallMethod
 from drift.models import DeployOptions, NextActionType
-from drift.core.exceptions import HookMissingError, TargetPermissionError
+from drift.core.exceptions import DriftDetectedError, HookMissingError, TargetPermissionError
 from drift.config.workspace_config import WorkspaceConfig
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.state_registry import load_state_registry, save_state_registry
@@ -121,11 +121,12 @@ target_directory = "{self.system_target_dir.as_posix()}"
         target_file = self.system_target_dir / "file.txt"
         target_file.write_text("Modified on host system directly!", encoding="utf-8")
 
-        # 3. Running deploy should raise RuntimeError because of drift
-        with self.assertRaises(RuntimeError) as context:
+        # 3. Running deploy should raise DriftDetectedError (exit code 3) because of drift
+        with self.assertRaises(DriftDetectedError) as context:
             execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         self.assertIn("[DEPLOY ABORTED] System drift detected", str(context.exception))
+        self.assertEqual(context.exception.packages, ["pkg_a"])
 
     def test_deploy_pipeline_overrides_drift_with_force(self) -> None:
         """Verifies that passing force=True bypasses the drift guard, commits a drift snapshot, and overwrites modifications."""
