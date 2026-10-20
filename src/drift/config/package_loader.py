@@ -374,7 +374,10 @@ def load_package_config_for_install(
             workspace_config=workspace_config,
         )
     except Exception as e:
+        src_str = "the source directory"
+        if workspace_config is not None and (workspace_config.source_path / pkg_name).exists():
+            src_str = f"'{((workspace_config.workspace.source_directory) / pkg_name).as_posix()}/'"
         raise RuntimeError(
             f"Failed to load package configuration for '{pkg_name}' from install base: {e}\n"
-            f"👉 Hint: Update the package configuration in 'src/{pkg_name}/' and run 'drift deploy {pkg_name}' to refresh its staged configuration."
+            f"👉 Hint: Update the package configuration in {src_str} and run 'drift deploy {pkg_name}' to refresh its staged configuration."
         ) from e

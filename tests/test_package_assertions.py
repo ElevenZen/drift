@@ -724,15 +724,49 @@ class TestPackageAssertions(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(RuntimeError) as ctx:
+        # Case 1: src/mise does not exist on disk -> falls back to "the source directory"
+        with self.assertRaises(RuntimeError) as ctx_missing_src:
             resolve_target_package_order(
                 target_metadata={"pkg_app": meta_app},
                 state_registry=registry,
                 workspace_config=self.workspace_config,
             )
-        err_msg = str(ctx.exception)
-        self.assertIn("Failed to load package configuration for 'mise' from install base", err_msg)
-        self.assertIn("Update the package configuration in 'src/mise/' and run 'drift deploy mise'", err_msg)
+        err_missing_src = str(ctx_missing_src.exception)
+        self.assertIn("Failed to load package configuration for 'mise' from install base", err_missing_src)
+        self.assertIn(
+            "Update the package configuration in the source directory and run 'drift deploy mise'",
+            err_missing_src,
+        )
+
+        # Case 2: src/mise exists on disk -> formats relative path "'src/mise/'"
+        (self.source_dir / "mise").mkdir(parents=True, exist_ok=True)
+        with self.assertRaises(RuntimeError) as ctx_existing_src:
+            resolve_target_package_order(
+                target_metadata={"pkg_app": meta_app},
+                state_registry=registry,
+                workspace_config=self.workspace_config,
+            )
+        err_existing_src = str(ctx_existing_src.exception)
+        self.assertIn("Failed to load package configuration for 'mise' from install base", err_existing_src)
+        self.assertIn(
+            "Update the package configuration in 'src/mise/' and run 'drift deploy mise'",
+            err_existing_src,
+        )
+
+        # Case 3: Custom workspace source_directory (e.g. 'packages') when 'packages/mise' exists
+        custom_src_dir = self.drift_root / "packages" / "mise"
+        custom_src_dir.mkdir(parents=True, exist_ok=True)
+        self.workspace_config.workspace.source_directory = Path("packages")
+        with self.assertRaises(RuntimeError) as ctx_custom_src:
+            resolve_target_package_order(
+                target_metadata={"pkg_app": meta_app},
+                state_registry=registry,
+                workspace_config=self.workspace_config,
+            )
+        self.assertIn(
+            "Update the package configuration in 'packages/mise/' and run 'drift deploy mise'",
+            str(ctx_custom_src.exception),
+        )
 
 
 if __name__ == "__main__":
