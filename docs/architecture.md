@@ -40,6 +40,9 @@ Drift separates configuration management into four physical tiers backed by `bac
 * **Tier 4 — Active Host System (`$HOME`, `~/.config`, `/etc`, etc.)**:
   * Live host directories where applications read configurations.
   * Files are delivered in **Primitive 5** as either relative symlinks pointing into `install/<pkg>/` (`install_method = "symlink"`) or physical copies (`install_method = "copy"`).
+* **Workspace Root Discovery**:
+  * The workspace root is the nearest directory at or above the cwd (or `-C`) containing `config/drift_workspace.toml` (or its `.envst` / `.local` / legacy variants), resolved by [`resolve_drift_workspace_root`](../src/drift/utils/workspace_root.py).
+  * Git toplevels play no role, so workspaces may be nested inside other repositories (e.g. `samples/<name>/`). `drift init` initializes its target directory literally.
 * **Backup & Transactional WAL Archive (`backup/<pkg>/`)**:
   * `backup/<pkg>/overwritten/`: Displaced pre-existing host files or colliding symlinks (with reverse `dot-` prefix translation).
   * `backup/<pkg>/deleted/`: Historically deployed files pruned when removed from a package.
@@ -119,7 +122,7 @@ Drift separates configuration management into four physical tiers backed by `bac
 | :--- | :--- | :--- | :--- |
 | **`0`** | `ExitCode.SUCCESS` | — | Operation completed cleanly |
 | **`1`** | `ExitCode.GENERAL_ERROR` | `DriftError` (+ runtime subclasses) | Runtime, hook, permission, or transaction error |
-| **`2`** | `ExitCode.CONFIG_ERROR` | `ConfigError` | Invalid schema, cyclic dependency, or CLI syntax error |
+| **`2`** | `ExitCode.CONFIG_ERROR` | `ConfigError` | Invalid schema, cyclic dependency, missing workspace, or CLI syntax error |
 | **`3`** | `ExitCode.DRIFT_DETECTED` | `DriftDetectedError` | Uncommitted host drift in `install/` during `deploy` |
 | **`4`** | `ExitCode.RENDER_ERROR` | `RenderError`, `RenderCollisionError` | Template compilation failure or output path collision |
 | **`5`** | `ExitCode.COLLISION_ERROR` | `InstallCollisionError`, `CrossPackageCollisionError` | Target inside `drift_root` or cross-package conflict |

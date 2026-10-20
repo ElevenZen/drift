@@ -90,7 +90,7 @@
 * **P14 ([`workspace_repair.py`](workspace_repair.py) & [`workspace_check.py`](workspace_check.py))**: `check_existing_workspace_status(drift_root, quiet=False) -> WorkspaceHealthReport`, `repair_drift_workspace(drift_root, dry_run=False) -> WorkspaceHealthReport`, `build_repair_result(report, dry_run=False) -> RepairResult`.
 * **P15 ([`workspace_diff.py`](workspace_diff.py))**: `run_primitive_15_workspace_diff(workspace_config, target_pkgs=(), diff_type=WorkspaceDiffType.PENDING, stat_only=False, side_by_side=False) -> DiffResult`.
 * **P16 ([`workspace_status.py`](workspace_status.py))**: `run_primitive_status(workspace_config, target_pkgs=(), list_only=False) -> StatusResult`.
-* **Init ([`workspace_init.py`](workspace_init.py))**: `init_drift_workspace(drift_root, force=False, no_git_root=False) -> WorkspaceConfig`.
+* **Init ([`workspace_init.py`](workspace_init.py))**: `init_drift_workspace(drift_root, force=False) -> WorkspaceConfig` (initializes `drift_root` literally; never redirects to the enclosing Git toplevel).
 
 ---
 

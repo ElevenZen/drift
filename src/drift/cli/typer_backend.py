@@ -91,7 +91,7 @@ def generate_typer_app(
             no_args_is_help=True
         )
 
-    # 1. Wrap and attach the main root callback (global flags: -C, --no-git-root, -v, --json)
+    # 1. Wrap and attach the main root callback (global flags: -C, -v, --json)
     if callback_handler is not None:
         callback_wrapper = _create_typer_callback_wrapper(schema.global_options, callback_handler)
         app.callback()(callback_wrapper)
@@ -111,7 +111,7 @@ def generate_typer_app(
 def _create_typer_callback_wrapper(global_options: List[OptionSpec], callback_func: Any) -> Any:
     """Builds a typed wrapper with typer.Option defaults for the main CLI callback.
 
-    Inspects `global_options` and synthesizes parameters (e.g. `directory`, `no_git_root`,
+    Inspects `global_options` and synthesizes parameters (e.g. `directory`,
     `verbose`, `json`) with proper flag aliases (`-C/--directory`, `-v/--verbose`) and
     help descriptions for the root CLI context.
     """
@@ -312,7 +312,6 @@ def _create_typer_command_wrapper(
 def main_callback(
     ctx: typer.Context,
     directory: Optional[str] = None,
-    no_git_root: bool = False,
     verbose: bool = False,
     json: bool = False,
     raw_errors: bool = False,
@@ -325,7 +324,6 @@ def main_callback(
         setup_logging(level=logging.DEBUG)
     ctx.obj = DriftCLIContext(
         directory=directory,
-        no_git_root=no_git_root,
         json_mode=json,
         use_rich=True,
         raw_errors=raw_errors or trace,

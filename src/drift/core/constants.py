@@ -62,6 +62,10 @@ LEGACY_WORKSPACE_CONFIG_FILE_NAMES = (
     "drift.envst.toml",
     "drift.local.envst.toml",
 )
+# Any of these files under '<root>/config/' marks '<root>' as a drift workspace root.
+# Mirrors the candidates accepted by check_workspace_config (legacy names included so
+# that 'drift repair' can still locate and migrate legacy workspaces).
+WORKSPACE_ROOT_MARKER_FILE_NAMES = CURRENT_WORKSPACE_CONFIG_FILE_NAMES + LEGACY_WORKSPACE_CONFIG_FILE_NAMES
 PACKAGE_CONFIG_FILE_NAME = "drift_package.toml"
 PACKAGE_CONFIG_LOCAL_FILE_NAME = "drift_package.local.toml"
 SECRETS_ENV_FILE_NAME = "secrets.env"

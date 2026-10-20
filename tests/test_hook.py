@@ -184,26 +184,26 @@ class TestPackageHook(unittest.TestCase):
         # 1. Typer CLI
         stdout = StringIO()
         with patch("sys.stdout", stdout):
-            main(["-C", str(self.drift_root), "--no-git-root", "hook", "pkg_hook", "pre_source"])
+            main(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source"])
         self.assertIn("Successfully executed hook 'pre_source' for package 'pkg_hook'", stdout.getvalue())
 
         # 2. Typer CLI with --json
         stdout_json = StringIO()
         with patch("sys.stdout", stdout_json):
-            main(["-C", str(self.drift_root), "--no-git-root", "hook", "pkg_hook", "pre_source", "--json"])
+            main(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source", "--json"])
         self.assertIn('"command": "hook"', stdout_json.getvalue())
         self.assertIn('"status": "SUCCESS"', stdout_json.getvalue())
 
         # 3. Argparse CLI
         stdout_argparse = StringIO()
         with patch("sys.stdout", stdout_argparse):
-            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "hook", "pkg_hook", "pre_source"])
+            run_argparse_cli(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source"])
         self.assertIn("Successfully executed hook 'pre_source' for package 'pkg_hook'", stdout_argparse.getvalue())
 
         # 4. Argparse CLI with --json
         stdout_argparse_json = StringIO()
         with patch("sys.stdout", stdout_argparse_json):
-            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "hook", "pkg_hook", "pre_source", "--json"])
+            run_argparse_cli(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source", "--json"])
         self.assertIn('"command": "hook"', stdout_argparse_json.getvalue())
         self.assertIn('"status": "SUCCESS"', stdout_argparse_json.getvalue())
 
@@ -543,7 +543,7 @@ echo "VALUE=$DYNAMIC_VAL"
         # 1. CLI with --from source for pre_source hook
         stdout = StringIO()
         with patch("sys.stdout", stdout):
-            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "hook", "pkg_hook", "pre_source", "--from", "source"])
+            run_argparse_cli(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source", "--from", "source"])
         self.assertIn("Successfully executed hook 'pre_source' for package 'pkg_hook'", stdout.getvalue())
 
     def test_hook_execution_streaming(self) -> None:

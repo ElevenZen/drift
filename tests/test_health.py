@@ -339,7 +339,7 @@ exit 0
         save_state_registry(registry)
 
         with patch("sys.stdout.write") as mock_stdout:
-            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "health", pkg, "--json"])
+            run_argparse_cli(["-C", str(self.drift_root), "health", pkg, "--json"])
             # Collect stdout calls
             output = "".join(call.args[0] for call in mock_stdout.call_args_list)
             data = json.loads(output)
@@ -402,7 +402,7 @@ exit 0
 
         # 1. From source succeeds when package exists only in src/
         with patch("sys.stdout.write") as mock_stdout:
-            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "health", pkg, "--from", "source", "--json"])
+            run_argparse_cli(["-C", str(self.drift_root), "health", pkg, "--from", "source", "--json"])
             output = "".join(call.args[0] for call in mock_stdout.call_args_list)
             data = json.loads(output)
             self.assertEqual(data["status"], "SUCCESS")
@@ -410,7 +410,7 @@ exit 0
 
         # 2. From install returns NOT_INSTALLED when package is not yet in install/
         with patch("sys.stdout.write") as mock_stdout:
-            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "health", pkg, "--from", "install", "--json"])
+            run_argparse_cli(["-C", str(self.drift_root), "health", pkg, "--from", "install", "--json"])
             output = "".join(call.args[0] for call in mock_stdout.call_args_list)
             data = json.loads(output)
             self.assertEqual(data["packages"][0]["status"], "NOT_INSTALLED")

@@ -86,6 +86,7 @@ from ..schema import (
     Choice,
     is_movable_global_option,
 )
+from .workspace_markers import render_bracket_marker_test
 
 
 class ZshGenerator:
@@ -121,18 +122,20 @@ class ZshGenerator:
             '        search_dir="${opt_args[--directory]}"',
             "    fi",
             "",
-            '    if [[ -d "$search_dir/src" ]]; then',
-            '        pkgs=(${${(f)"$(ls -1 "$search_dir/src" 2>/dev/null)"}})',
-            "    else",
-            '        local cur_path="$(pwd)"',
-            '        while [[ "$cur_path" != "/" && "$cur_path" != "." ]]; do',
-            '            if [[ -d "$cur_path/src" && ( -f "$cur_path/config/drift_workspace.toml" || -d "$cur_path/render" ) ]]; then',
+            "    # Walk up from the start dir (-C or cwd) to the nearest workspace root (config marker),",
+            "    # mirroring the CLI's workspace discovery.",
+            "    local cur_path",
+            '    cur_path="$(CDPATH= cd -- "$search_dir" 2>/dev/null && pwd -P)" || return 0',
+            "    while true; do",
+            f"        if {render_bracket_marker_test('cur_path')}; then",
+            '            if [[ -d "$cur_path/src" ]]; then',
             '                pkgs=(${${(f)"$(ls -1 "$cur_path/src" 2>/dev/null)"}})',
-            '                break',
             '            fi',
-            '            cur_path="$(dirname "$cur_path")"',
-            '        done',
-            '    fi',
+            '            break',
+            '        fi',
+            '        [[ "$cur_path" == "/" ]] && break',
+            '        cur_path="$(dirname -- "$cur_path")"',
+            '    done',
             "",
             "    if (( ${#pkgs} )); then",
             "        _describe -t packages 'package' pkgs",

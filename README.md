@@ -637,7 +637,7 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 ### 🌐 Global & Movable Options
 Global options can be specified before or after subcommands (e.g. `drift -v deploy` or `drift deploy -v`):
 *   `-C, --directory <DIR>`: Run as if drift was started in `<DIR>` instead of the current working directory.
-*   `--no-git-root`: Bypass searching for parent repository git root; treat current or `-C` directory as the literal workspace root.
+*   **Workspace discovery**: Drift walks upward from the current (or `-C`) directory and uses the nearest directory containing `config/drift_workspace.toml` (or its `.envst` / `.local` variants) as the workspace root. The enclosing Git toplevel is irrelevant, so workspaces nested inside other repositories (e.g. `samples/<name>/`) work out of the box. `drift init` always initializes the current (or `-C`) directory literally.
 *   `-v, --verbose`: Enable verbose (DEBUG) logging output.
 *   `--json`: Output results in structured machine-readable JSON format using typed result models.
 *   `--raw-errors`: Bypass CLI error boundary to print raw exceptions and full Python stack traces without verbose log output.

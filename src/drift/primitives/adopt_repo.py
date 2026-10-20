@@ -164,7 +164,7 @@ from ..utils.git_utils import (
     GitStatusChanges,
     parse_git_status_porcelain,
     has_uncommitted_modifications,
-    get_drift_root,
+    get_git_toplevel,
     commit_staged_repo_changes,
 )
 from ..utils.file_ops import remove_file_or_empty_dir, remove_tree, copy_file, ensure_dir
@@ -279,11 +279,11 @@ def assert_source_file_clean(
         return
 
     try:
-        drift_root = get_drift_root(src_file.parent)
+        git_root = get_git_toplevel(src_file.parent)
     except Exception:
-        drift_root = src_file.parent
+        git_root = src_file.parent
 
-    if not has_uncommitted_modifications(drift_root, src_file):
+    if not has_uncommitted_modifications(git_root, src_file):
         return
 
     if force:
@@ -292,7 +292,7 @@ def assert_source_file_clean(
         )
         return
 
-    rel_dirty = to_relative_path(src_file, drift_root)
+    rel_dirty = to_relative_path(src_file, git_root)
 
     raise RuntimeError(
         f"The source file '{rel_dirty}' has uncommitted local modifications!\n"

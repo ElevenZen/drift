@@ -108,13 +108,13 @@ class TestExitCodes(unittest.TestCase):
         stderr_buf = io.StringIO()
         with patch("sys.stderr", stderr_buf):
             with self.assertRaises(SystemExit) as cm:
-                run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "render"])
+                run_argparse_cli(["-C", str(self.drift_root), "render"])
             self.assertEqual(cm.exception.code, ExitCode.CONFIG_ERROR)
         self.assertIn("No Drift workspace found", stderr_buf.getvalue())
 
     def test_health_check_failed_exit_code(self) -> None:
         # Initialize a real workspace
-        execute_init(self.drift_root, force=True, no_git_root=True)
+        execute_init(self.drift_root, force=True)
         execute_new_package(self.drift_root, "failing_pkg", force=True)
 
         target_temp = tempfile.TemporaryDirectory()
@@ -153,7 +153,7 @@ health = "drift_hooks/probe.sh"
 
     def test_status_drift_detected_exit_code(self) -> None:
         # Initialize workspace and package
-        execute_init(self.drift_root, force=True, no_git_root=True)
+        execute_init(self.drift_root, force=True)
         execute_new_package(self.drift_root, "status_pkg", force=True)
         
         target_temp = tempfile.TemporaryDirectory()
@@ -206,29 +206,29 @@ target_directory = "{custom_target.as_posix()}"
     def test_argparse_raw_errors_flag_reraises_exception(self) -> None:
         # Pre-command flag
         with self.assertRaises(ConfigError):
-            run_argparse_cli(["--raw-errors", "-C", str(self.drift_root), "--no-git-root", "render"])
+            run_argparse_cli(["--raw-errors", "-C", str(self.drift_root), "render"])
         # Post-command flag (movable global flag)
         with self.assertRaises(ConfigError):
-            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "render", "--raw-errors"])
+            run_argparse_cli(["-C", str(self.drift_root), "render", "--raw-errors"])
 
     def test_typer_raw_errors_flag_reraises_exception(self) -> None:
         from drift.cli import main
         # Pre-command flag
         with self.assertRaises(ConfigError):
-            main(["--raw-errors", "-C", str(self.drift_root), "--no-git-root", "render"])
+            main(["--raw-errors", "-C", str(self.drift_root), "render"])
         # Post-command flag (movable global flag)
         with self.assertRaises(ConfigError):
-            main(["-C", str(self.drift_root), "--no-git-root", "render", "--raw-errors"])
+            main(["-C", str(self.drift_root), "render", "--raw-errors"])
 
     def test_argparse_trace_flag_sets_debug_logging_and_reraises(self) -> None:
         import logging
         root_logger = logging.getLogger()
         with self.assertRaises(ConfigError):
-            run_argparse_cli(["--trace", "-C", str(self.drift_root), "--no-git-root", "render"])
+            run_argparse_cli(["--trace", "-C", str(self.drift_root), "render"])
         self.assertEqual(root_logger.level, logging.DEBUG)
 
         with self.assertRaises(ConfigError):
-            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "render", "--trace"])
+            run_argparse_cli(["-C", str(self.drift_root), "render", "--trace"])
         self.assertEqual(root_logger.level, logging.DEBUG)
 
     def test_typer_trace_flag_sets_debug_logging_and_reraises(self) -> None:
@@ -236,11 +236,11 @@ target_directory = "{custom_target.as_posix()}"
         from drift.cli import main
         root_logger = logging.getLogger()
         with self.assertRaises(ConfigError):
-            main(["--trace", "-C", str(self.drift_root), "--no-git-root", "render"])
+            main(["--trace", "-C", str(self.drift_root), "render"])
         self.assertEqual(root_logger.level, logging.DEBUG)
 
         with self.assertRaises(ConfigError):
-            main(["-C", str(self.drift_root), "--no-git-root", "render", "--trace"])
+            main(["-C", str(self.drift_root), "render", "--trace"])
         self.assertEqual(root_logger.level, logging.DEBUG)
 
 

@@ -31,7 +31,7 @@ class TestCompletionGenerators(unittest.TestCase):
             self.assertIn(f'"{cmd_name}"', script)
 
         # Check options
-        self.assertIn("--no-git-root", script)
+        self.assertNotIn("--no-git-root", script)
         self.assertIn("--json", script)
         self.assertIn("--verbose", script)
 

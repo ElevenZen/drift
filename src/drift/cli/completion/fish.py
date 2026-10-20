@@ -66,6 +66,7 @@ from ..schema import (
     Choice,
     is_movable_global_option,
 )
+from .workspace_markers import render_fish_marker_test
 
 
 class FishGenerator:
@@ -103,16 +104,16 @@ class FishGenerator:
             "        end",
             "    end",
             "",
-            '    if test -d "$root/src"',
-            '        command ls -1 "$root/src" 2>/dev/null',
-            "    else",
-            '        while test "$root" != "/" -a "$root" != "."',
-            r'            if test -d "$root/src" -a \( -f "$root/config/drift_workspace.toml" -o -d "$root/render" \)',
-            '                command ls -1 "$root/src" 2>/dev/null',
-            "                break",
-            "            end",
-            '            set root (dirname "$root")',
+            "    # Walk up from the start dir (-C or cwd) to the nearest workspace root (config marker),",
+            "    # mirroring the CLI's workspace discovery.",
+            '    set root (builtin realpath "$root" 2>/dev/null); or return',
+            "    while true",
+            f"        if {render_fish_marker_test('root')}",
+            '            test -d "$root/src"; and command ls -1 "$root/src" 2>/dev/null',
+            "            return",
             "        end",
+            '        test "$root" = "/"; and return',
+            '        set root (dirname "$root")',
             "    end",
             "end",
             "",

@@ -195,7 +195,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
         from drift.primitives.workspace_init import init_drift_workspace
-        init_drift_workspace(Path(self.drift_root), force=True, no_git_root=True)
+        init_drift_workspace(Path(self.drift_root), force=True)
 
         for d in [self.drift_root, os.path.join(self.drift_root, "render"), os.path.join(self.drift_root, "install")]:
             subprocess.run(["git", "-C", d, "config", "user.name", "Test User"], check=True, capture_output=True)
@@ -248,26 +248,26 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         return json.loads(raw)
 
     def test_status_json(self) -> None:
-        res = self._run_cli_json(["-C", self.drift_root, "--no-git-root", "status", "--json"])
+        res = self._run_cli_json(["-C", self.drift_root, "status", "--json"])
         self.assertEqual(res["command"], "status")
         self.assertIn("overall_status", res)
         self.assertIn("packages", res)
         self.assertTrue(any(p["name"] == "pkg_a" for p in res["packages"]))
 
     def test_status_list_json(self) -> None:
-        res = self._run_cli_json(["-C", self.drift_root, "--no-git-root", "status", "-l", "--json"])
+        res = self._run_cli_json(["-C", self.drift_root, "status", "-l", "--json"])
         self.assertEqual(res["command"], "status")
         self.assertEqual(res["overall_status"], "UNKNOWN")
         self.assertTrue(res["list_only"])
         self.assertIn("packages", res)
 
     def test_diff_json(self) -> None:
-        res = self._run_cli_json(["-C", self.drift_root, "--no-git-root", "diff", "--json"])
+        res = self._run_cli_json(["-C", self.drift_root, "diff", "--json"])
         self.assertEqual(res["command"], "diff")
         self.assertIn("packages", res)
 
     def test_deploy_json_success(self) -> None:
-        res = self._run_cli_json(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+        res = self._run_cli_json(["-C", self.drift_root, "deploy", "pkg_a", "--json"])
         self.assertEqual(res["command"], "deploy")
         self.assertEqual(res["status"], "SUCCESS")
         self.assertIn("pkg_a", res["target_packages"])
@@ -275,27 +275,27 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         self.assertTrue(len(res["completed_steps"]) > 0)
 
     def test_new_package_json(self) -> None:
-        res = self._run_cli_json(["-C", self.drift_root, "--no-git-root", "new", "pkg_c", "--json"])
+        res = self._run_cli_json(["-C", self.drift_root, "new", "pkg_c", "--json"])
         self.assertEqual(res["command"], "new")
         self.assertEqual(res["status"], "SUCCESS")
         self.assertEqual(res["package"], "pkg_c")
         self.assertTrue(os.path.exists(res["config_file"]))
 
     def test_gc_json(self) -> None:
-        res = self._run_cli_json(["-C", self.drift_root, "--no-git-root", "gc", "--json"])
+        res = self._run_cli_json(["-C", self.drift_root, "gc", "--json"])
         self.assertEqual(res["command"], "gc")
         self.assertEqual(res["status"], "SUCCESS")
         self.assertIn("uninstalled_orphans", res)
 
     def test_repair_json(self) -> None:
-        res = self._run_cli_json(["-C", self.drift_root, "--no-git-root", "repair", "--json"])
+        res = self._run_cli_json(["-C", self.drift_root, "repair", "--json"])
         self.assertEqual(res["command"], "repair")
         self.assertEqual(res["status"], "SUCCESS")
         self.assertIn("checks", res)
 
     def test_deploy_sentinel_drift_failure_json(self) -> None:
         # First deploy pkg_a
-        self._run_cli_json(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+        self._run_cli_json(["-C", self.drift_root, "deploy", "pkg_a", "--json"])
 
         # Now drift the host file
         host_file = os.path.join(self.target_dir, "test.txt")
@@ -308,7 +308,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         sys.stdout = stdout
         try:
             with self.assertRaises(SystemExit) as cm:
-                main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+                main(["-C", self.drift_root, "deploy", "pkg_a", "--json"])
             self.assertEqual(cm.exception.code, 3)
         finally:
             sys.stdout = old_stdout
@@ -339,7 +339,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         old_stdout = sys.stdout
         sys.stdout = stdout
         try:
-            main(["-C", self.drift_root, "--no-git-root", "render", "pkg_a", "--json"])
+            main(["-C", self.drift_root, "render", "pkg_a", "--json"])
         finally:
             sys.stdout = old_stdout
 
@@ -353,7 +353,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         # 1. First deploy
         devnull = StringIO()
         with patch("sys.stdout", devnull):
-            main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+            main(["-C", self.drift_root, "deploy", "pkg_a", "--json"])
 
         # 2. Add failing post_update hook with failure_is_fatal = false
         hooks_dir = os.path.join(self.src_dir, "pkg_a", "drift_hooks")
@@ -379,7 +379,7 @@ failure_is_fatal = false
         sys.stdout = stdout
         try:
             with self.assertRaises(SystemExit) as cm:
-                main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+                main(["-C", self.drift_root, "deploy", "pkg_a", "--json"])
             self.assertEqual(cm.exception.code, 1)
         finally:
             sys.stdout = old_stdout
@@ -396,7 +396,7 @@ failure_is_fatal = false
         """Verifies that when auto-rollback succeeds during deploy --json, failure.requires_rollback is False."""
         devnull = StringIO()
         with patch("sys.stdout", devnull):
-            main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+            main(["-C", self.drift_root, "deploy", "pkg_a", "--json"])
 
         hooks_dir = os.path.join(self.src_dir, "pkg_a", "drift_hooks")
         os.makedirs(hooks_dir, exist_ok=True)
@@ -422,7 +422,7 @@ failure_is_fatal = true
         stdout = StringIO()
         with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()):
             with self.assertRaises(SystemExit) as cm:
-                main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+                main(["-C", self.drift_root, "deploy", "pkg_a", "--json"])
             self.assertEqual(cm.exception.code, 1)
 
         parsed = json.loads(stdout.getvalue().strip())

@@ -149,13 +149,12 @@ def run_argparse_cli(argv=None) -> None:
 
     cli_ctx = DriftCLIContext(
         directory=getattr(args, "directory", None),
-        no_git_root=getattr(args, "no_git_root", False),
         json_mode=getattr(args, "json", False),
         use_rich=False,
         raw_errors=raw_errors,
         verbose=is_verbose or is_trace,
     )
 
-    global_keys = {"command", "no_git_root", "verbose", "json", "directory", "raw_errors", "trace"}
+    global_keys = {"command", "verbose", "json", "directory", "raw_errors", "trace"}
     kwargs = {k: v for k, v in vars(args).items() if k not in global_keys}
     handler(cli_ctx, **kwargs)

@@ -31,7 +31,7 @@ from .actions import (
 from ..core.constants import InstallMethod, PackageStage, RollbackPolicy
 from ..models import WorkspaceDiffType
 from ..primitives.deploy_repo import DeployOptions
-from ..utils.git_utils import get_drift_root
+from ..utils.workspace_root import resolve_drift_workspace_root
 from .error_boundary import cli_error_boundary
 
 
@@ -40,25 +40,25 @@ class DriftCLIContext:
     def __init__(
         self,
         directory: Optional[str] = None,
-        no_git_root: bool = False,
         json_mode: bool = False,
         use_rich: bool = True,
         raw_errors: bool = False,
         verbose: bool = False,
     ) -> None:
         self.directory: Optional[str] = directory
-        self.no_git_root: bool = no_git_root
         self.json_mode: bool = json_mode
         self.use_rich: bool = use_rich
         self.raw_errors: bool = raw_errors
         self.verbose: bool = verbose
 
+    def get_start_dir(self) -> Path:
+        """Returns the absolute start directory (``-C/--directory`` or the current working directory)."""
+        return Path(self.directory).resolve() if self.directory else Path.cwd().resolve()
+
     def get_drift_root(self) -> Path:
-        """Resolves the absolute path to the drift root repository."""
-        base_dir = Path(self.directory).resolve() if self.directory else Path.cwd().resolve()
-        if self.no_git_root:
-            return base_dir
-        return get_drift_root(base_dir)
+        """Resolves the drift workspace root: the nearest directory at or above the start directory
+        that contains a workspace config marker under ``config/``."""
+        return resolve_drift_workspace_root(self.get_start_dir())
 
     def print_message(self, rich_text: str, plain_text: Optional[str] = None) -> None:
         """Prints user-facing feedback honoring json_mode and rich formatting capabilities."""
@@ -117,8 +117,8 @@ def handle_init(
     """Initialize a new drift workspace."""
     cli_ctx = _extract_cli_context(ctx)
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
-        drift_root = Path(cli_ctx.directory).resolve() if cli_ctx.directory else Path.cwd().resolve()
-        execute_init(drift_root, force=force, no_git_root=cli_ctx.no_git_root, json_mode=cli_ctx.json_mode)
+        drift_root = cli_ctx.get_start_dir()
+        execute_init(drift_root, force=force, json_mode=cli_ctx.json_mode)
         if not cli_ctx.json_mode:
             cli_ctx.print_message("[bold yellow]✨[/bold yellow] [bold green]Initialized drift workspace![/bold green]", "✨ Initialized drift workspace!")
             cli_ctx.print_message("[bold yellow]📁[/bold yellow] [bold green]Created render/ sandbox Git database.[/bold green]", "📁 Created render/ sandbox Git database.")

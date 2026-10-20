@@ -24,7 +24,6 @@ from ..core.constants import (
 from .workspace_check import check_existing_workspace_status, ComponentStatus
 from ..utils.git_utils import (
     is_git_tracked,
-    get_drift_root,
     assert_git_repository_health,
     git_init_repo,
     configure_repo_git_user,
@@ -37,10 +36,12 @@ from ..config.workspace_config import WorkspaceConfig
 logger = logging.getLogger(__name__)
 
 
-def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: bool = False) -> WorkspaceConfig:
-    """Initializes the active repository as a drift workspace.
+def init_drift_workspace(drift_root: Path, force: bool = False) -> WorkspaceConfig:
+    """Initializes ``drift_root`` literally as a drift workspace root.
 
-    Only works if the directory is empty or tracked by git, unless force is True.
+    ``drift_root`` is never redirected to an enclosing Git toplevel, so a workspace can live in a
+    subdirectory of another repository (e.g. ``samples/<name>/``). Only works if the directory is
+    empty or tracked by git, unless force is True.
 
     Returns:
         The validated WorkspaceConfig instance for the initialized workspace.
@@ -61,11 +62,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
         git_init_repo(drift_root, "main")
         is_git = True
 
-    # 3. Change to git root, and check git health unless force is True
-    if not no_git_root:
-        drift_root = get_drift_root(drift_root, force=force)
-
-    # Validate main git repo health (bare, detached head, merge/rebase in progress)
+    # 3. Validate main git repo health (bare, detached head, merge/rebase in progress) unless force is True
     if not force:
         assert_git_repository_health(drift_root)
 

@@ -7,7 +7,7 @@ This document specifies the technical design, command taxonomy, declarative sche
 ### Core Architectural Principles:
 1. **Single Source of Truth (`src/drift/cli/schema.py`)**: All commands, flags, descriptions, positional patterns, and choice hints live in a declarative Python schema. Shell scripts and CLI parser backends are compiled programmatically from this data model.
 2. **Rich Interactive Hints**: Shells with interactive menu support (Zsh and Fish) automatically display detailed documentation descriptions for subcommands, options, and fixed choices (e.g. lifecycle hooks, manual topics, install methods).
-3. **Dynamic Discovery**: Package names are queried live on `<TAB>` by scanning `src/`, with automatic fallback searching parent directories for `drift_workspace.toml` and honoring `-C / --directory`.
+3. **Dynamic Discovery**: Package names are queried live on `<TAB>` by walking upward from the cwd (or `-C / --directory`, in Bash/Zsh/Fish) to the nearest workspace root and listing its `src/`. The marker test is generated from `WORKSPACE_ROOT_MARKER_FILE_NAMES` via [`workspace_markers.py`](../../src/drift/cli/completion/workspace_markers.py), so it always matches the CLI's own discovery ([`resolve_drift_workspace_root`](../../src/drift/utils/workspace_root.py)).
 4. **Dual-Mode `new` Command**: Seamlessly accepts free-text for brand-new packages or completes existing folders in `src/` to scaffold missing configuration files.
 5. **Zero-Latency Execution**: Generated shell scripts execute entirely in native shell memory, eliminating Python interpreter startup overhead during `<TAB>`.
 6. **Movable Global Flags**: Options designated in `MOVABLE_GLOBAL_FLAGS` (such as `--json` and `-v/--verbose`) are supported both before and after subcommands across all shell engines and CLI backends.
@@ -159,7 +159,6 @@ SHELLS: List[Choice] = [
 
 GLOBAL_OPTIONS: List[OptionSpec] = [
     OptionSpec(["-C", "--directory"], "Run in <directory> instead of current working directory", takes_value=True, is_directory=True),
-    OptionSpec(["--no-git-root"], "Stop resolving git root of cwd or -C directory, using the literal path instead"),
     OptionSpec(["-v", "--verbose"], "Enable verbose (DEBUG) logging output"),
     OptionSpec(["--json"], "Output results in structured machine-readable JSON format"),
     OptionSpec(["--raw-errors"], "Bypass CLI error boundary to print raw exceptions and full stack trace", dest="raw_errors"),

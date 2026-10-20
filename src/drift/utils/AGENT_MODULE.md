@@ -12,7 +12,7 @@
 ## 2. Internal Dependency Order (Bottom-Up)
 1. **Pure Data & Parsing**: [`toml_utils.py`](toml_utils.py), [`config_utils.py`](config_utils.py), [`path_utils.py`](path_utils.py), [`host_facts.py`](host_facts.py)
 2. **Environment & Process**: [`process_utils.py`](process_utils.py), [`env_utils.py`](env_utils.py), [`python_hook_utils.py`](python_hook_utils.py)
-3. **Filesystem & Git Operations**: [`file_inspect.py`](file_inspect.py), [`file_ops.py`](file_ops.py), [`git_utils.py`](git_utils.py), [`editor_utils.py`](editor_utils.py)
+3. **Filesystem & Git Operations**: [`file_inspect.py`](file_inspect.py), [`file_ops.py`](file_ops.py), [`git_utils.py`](git_utils.py), [`editor_utils.py`](editor_utils.py), [`workspace_root.py`](workspace_root.py)
 
 ---
 
@@ -90,7 +90,14 @@
 * `parse_git_status_porcelain(porcelain_output: str, pkg_prefix: str = "") -> GitStatusChanges`
 * `commit_repo_changes(repo_path: Path, commit_message: str, target_pkgs: Sequence[str] = (), repo_name: str = "repo") -> bool`: Stages (`git add -A`) and commits changes (scoped to `target_pkgs` if provided).
 * `commit_staged_repo_changes(repo_path: Path, commit_message: str, repo_name: str = "repo") -> bool`: Commits only currently staged index changes.
+* `get_git_toplevel(dir_path: Path) -> Path`: Pure Git toplevel lookup (raises `RuntimeError` outside a work tree). **Never** use it to locate the drift workspace root.
 * `assert_git_repository_health(dir_path: Path) -> None`, `check_repo_can_commit(repo_path: Path) -> Optional[str]`, `assert_repo_can_commit(repo_path: Path) -> None`, `git_init_repo(dir_path: Path, name: str) -> bool`, `append_to_gitignore(drift_root: Path, folders_to_ignore: Sequence[str]) -> None`.
+
+### [`workspace_root.py`](workspace_root.py) — Marker-Based Workspace Root Discovery
+* `check_is_drift_workspace_root(dir_path: Path) -> bool`: True if `dir_path/config/` contains any `WORKSPACE_ROOT_MARKER_FILE_NAMES` file.
+* `iter_self_and_ancestor_dirs(start_dir: Path) -> Iterator[Path]`: Resolved `start_dir` followed by its parents.
+* `find_drift_workspace_root(start_dir: Path) -> Optional[Path]`: Nearest marked ancestor (nearest wins for nested workspaces).
+* `resolve_drift_workspace_root(start_dir: Path) -> Path`: Same, raising `WorkspaceNotFoundError` (`ConfigError`, exit `2`) with an actionable hint. Used by `DriftCLIContext.get_drift_root()`.
 
 ### [`process_utils.py`](process_utils.py), [`host_facts.py`](host_facts.py), [`editor_utils.py`](editor_utils.py) & [`python_hook_utils.py`](python_hook_utils.py)
 * `run_command(cmd, cwd=None, env=None, check=True, capture_output=True, text=True, timeout=None, encoding=None, ...)`: Unified subprocess runner with UTF-8/encoding handling and debug logging.

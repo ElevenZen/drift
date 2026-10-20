@@ -98,7 +98,7 @@ from .git_utils import (
     parse_git_status_porcelain,
     commit_repo_changes,
     is_git_tracked,
-    get_drift_root,
+    get_git_toplevel,
     is_bare_repository,
     is_detached_head,
     is_merge_or_rebase_in_progress,
@@ -137,6 +137,12 @@ from .host_facts import (
 from .python_hook_utils import (
     load_python_module,
     execute_python_hook,
+)
+from .workspace_root import (
+    check_is_drift_workspace_root,
+    iter_self_and_ancestor_dirs,
+    find_drift_workspace_root,
+    resolve_drift_workspace_root,
 )
 
 __all__ = [
@@ -222,7 +228,11 @@ __all__ = [
     "parse_git_status_porcelain",
     "commit_repo_changes",
     "is_git_tracked",
-    "get_drift_root",
+    "get_git_toplevel",
+    "check_is_drift_workspace_root",
+    "iter_self_and_ancestor_dirs",
+    "find_drift_workspace_root",
+    "resolve_drift_workspace_root",
     "is_bare_repository",
     "is_detached_head",
     "is_merge_or_rebase_in_progress",

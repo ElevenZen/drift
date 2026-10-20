@@ -67,6 +67,12 @@ class CyclicDependencyError(ConfigError, ValueError):
 
 
 
+class WorkspaceNotFoundError(ConfigError, FileNotFoundError):
+    """Raised when no drift workspace root (a directory containing a workspace config marker
+    under 'config/') is found in the start directory or any of its ancestors."""
+    exit_code: int = ExitCode.CONFIG_ERROR
+
+
 class DriftDetectedError(DriftError, RuntimeError):
     """Raised in stage_repo / deploy operations when unadopted live host drift or uncommitted install modifications block staging."""
     exit_code: int = ExitCode.DRIFT_DETECTED

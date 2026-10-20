@@ -137,7 +137,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("Directory is not empty and not tracked by git", str(cm.exception))
 
     def test_init_in_existing_git_repository(self) -> None:
-        """Verifies that init in an existing Git repo sets up workspace correctly at repo root."""
+        """Verifies that init in a subdir of an existing Git repo sets up the workspace literally in that subdir."""
         # Create a subfolder and initialize git at self.drift_root
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
@@ -147,11 +147,14 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
 
         init_drift_workspace(sub_dir)
 
-        # It should resolve self.drift_root as the workspace top-level root
+        # The workspace is created literally in sub_dir; the enclosing Git toplevel is left untouched
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, ".git")))
-        self.assertTrue(os.path.isdir(os.path.join(self.drift_root, "render", ".git")))
-        self.assertTrue(os.path.isdir(os.path.join(self.drift_root, "install", ".git")))
-        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
+        self.assertFalse(os.path.exists(os.path.join(sub_dir, ".git")))
+        self.assertTrue(os.path.isdir(os.path.join(sub_dir, "render", ".git")))
+        self.assertTrue(os.path.isdir(os.path.join(sub_dir, "install", ".git")))
+        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift_workspace.toml")))
+        self.assertFalse(os.path.exists(os.path.join(self.drift_root, "render")))
+        self.assertFalse(os.path.exists(os.path.join(self.drift_root, "config")))
 
     def test_init_twice_raises_error(self) -> None:
         """Verifies that running init twice raises an error."""
@@ -312,8 +315,8 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
 
         self.assertIn("Initialized drift workspace!", stdout.getvalue())
 
-    def test_init_with_no_git_root_literal(self) -> None:
-        """Verifies that --no-git-root stops drift from climbing to the Git repository root."""
+    def test_init_in_git_subdir_is_literal(self) -> None:
+        """Verifies that init never climbs to the enclosing Git toplevel and initializes the subdir literally."""
         # Initialize Git at self.drift_root
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
@@ -321,8 +324,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         sub_dir = self.drift_root / "nested_dir"
         os.makedirs(sub_dir, exist_ok=True)
 
-        # Initialize with no_git_root=True
-        init_drift_workspace(sub_dir, no_git_root=True)
+        init_drift_workspace(sub_dir)
 
         # Workspace should be initialized inside nested_dir literally, not self.drift_root
         self.assertTrue(os.path.isdir(os.path.join(sub_dir, "render", ".git")))
@@ -330,9 +332,15 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift_workspace.toml")))
         # The parent self.drift_root should NOT have these folders/files created
         self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
+        # The enclosing Git repo is reused: no nested root .git is created in the subdir
+        self.assertFalse(os.path.exists(os.path.join(sub_dir, ".git")))
+        # render/ and install/ are isolated from the enclosing repo via the subdir .gitignore
+        gitignore = (sub_dir / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("render", gitignore)
+        self.assertIn("install", gitignore)
 
-    def test_cli_init_typer_with_no_git_root(self) -> None:
-        """Verifies that Typer CLI respects --no-git-root."""
+    def test_cli_init_typer_in_git_subdir_is_literal(self) -> None:
+        """Verifies that Typer CLI init initializes the -C subdir literally inside a Git repo."""
         # Initialize Git at self.drift_root
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
@@ -340,16 +348,15 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         sub_dir = os.path.join(self.drift_root, "nested_typer_dir")
         os.makedirs(sub_dir, exist_ok=True)
 
-        # Run with --no-git-root
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
-            main(["-C", sub_dir, "--no-git-root", "init"])
+            main(["-C", sub_dir, "init"])
 
         # Workspace should be inside nested_typer_dir
         self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift_workspace.toml")))
         self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
-    def test_cli_init_argparse_with_no_git_root(self) -> None:
-        """Verifies that Argparse CLI respects --no-git-root."""
+    def test_cli_init_argparse_in_git_subdir_is_literal(self) -> None:
+        """Verifies that Argparse CLI init initializes the -C subdir literally inside a Git repo."""
         # Initialize Git at self.drift_root
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
@@ -357,9 +364,8 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         sub_dir = os.path.join(self.drift_root, "nested_argparse_dir")
         os.makedirs(sub_dir, exist_ok=True)
 
-        # Run with --no-git-root
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
-            run_argparse_cli(["-C", sub_dir, "--no-git-root", "init"])
+            run_argparse_cli(["-C", sub_dir, "init"])
 
         # Workspace should be inside nested_argparse_dir
         self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift_workspace.toml")))
@@ -440,11 +446,11 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIsInstance(ws_cfg2, WorkspaceConfig)
         self.assertEqual(ws_cfg2.drift_root, self.drift_root)
 
-    def test_init_no_git_root_returns_workspace_config_for_subpath(self) -> None:
-        """Verifies that init_drift_workspace with no_git_root returns WorkspaceConfig matching subpath."""
+    def test_init_returns_workspace_config_for_subpath(self) -> None:
+        """Verifies that init_drift_workspace on a subpath returns a WorkspaceConfig rooted at that subpath."""
         sub_dir = self.drift_root / "nested" / "project"
         sub_dir.mkdir(parents=True, exist_ok=True)
-        ws_cfg = init_drift_workspace(sub_dir, no_git_root=True)
+        ws_cfg = init_drift_workspace(sub_dir)
         self.assertEqual(ws_cfg.drift_root, sub_dir.resolve())
         self.assertEqual(ws_cfg.source_path, sub_dir.resolve() / "src")
 

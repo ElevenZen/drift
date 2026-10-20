@@ -25,7 +25,7 @@
 * `build_completion_schema() -> CompletionSchema`: Declarative registry of all global options, movable flags (`--json`, `-v/--verbose`), high-level commands, and low-level primitive commands.
 
 ### [`cli_handlers.py`](cli_handlers.py) & [`actions.py`](actions.py) — Unified Command Routing & Execution
-* `DriftCLIContext(directory=None, verbose=False, json_mode=False, env_vars=())`: Normalizes global CLI flags (`-C/--directory`, `-v/--verbose`, `--json`, `-e/--env`), resolves `drift_root`, and scopes CLI `-e KEY=VAL` overrides.
+* `DriftCLIContext(directory=None, verbose=False, json_mode=False, env_vars=())`: Normalizes global CLI flags (`-C/--directory`, `-v/--verbose`, `--json`, `-e/--env`), resolves `drift_root` via `get_drift_root()` (marker-based upward walk from `get_start_dir()`, see [`utils/workspace_root.py`](../utils/workspace_root.py)), and scopes CLI `-e KEY=VAL` overrides. `handle_init` uses `get_start_dir()` literally.
 * `handle_<command>(ctx: DriftCLIContext, ...)` in [`cli_handlers.py`](cli_handlers.py): Normalizes CLI arguments (e.g. `RollbackPolicy.from_value`, `PackageStage` tier parsing) and dispatches to `actions.execute_<command>(...)`.
 * `check_sudo_and_root(drift_root: Path) -> None` in [`actions.py`](actions.py): Enforces the CLI Sudo Guard (blocks running `drift` under `sudo` on user-owned workspaces).
 * `assert_workspace_healthy(drift_root: Path, json_mode: bool = False) -> WorkspaceHealthReport`: Runs pre-flight workspace health checks before executing commands.

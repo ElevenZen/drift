@@ -310,8 +310,15 @@ def is_git_tracked(dir_path: Path) -> bool:
     return res.returncode == 0
 
 
-def get_drift_root(dir_path: Path, force: bool = False) -> Path:
-    """Resolves the root of the drift workspace (git toplevel)."""
+def get_git_toplevel(dir_path: Path) -> Path:
+    """Resolves the toplevel directory of the Git repository containing ``dir_path``.
+
+    Note: This is a pure Git lookup. Drift workspace roots are discovered via config markers
+    (see ``utils.workspace_root.resolve_drift_workspace_root``), not via the Git toplevel.
+
+    Raises:
+        RuntimeError: If ``dir_path`` is not inside a Git work tree.
+    """
     try:
         res = run_command(
             ["git", "rev-parse", "--show-toplevel"],
@@ -320,16 +327,7 @@ def get_drift_root(dir_path: Path, force: bool = False) -> Path:
         )
         return Path(res.stdout.strip()).resolve()
     except subprocess.CalledProcessError as e:
-        if not force:
-            assert_git_repository_health(dir_path)
-        # Check if the error is due to not being inside a Git repo
-        if not is_git_tracked(dir_path):
-            raise RuntimeError(
-                f"The directory '{dir_path}' is not inside a Git repository. "
-                "drift requires a Git-backed workspace to manage configuration state. "
-                "Run 'drift init' to initialize a new workspace, or specify '--no-git-root' to run drift in literal mode."
-            )
-        raise RuntimeError(f"Failed to resolve git repository root: {e.stderr.strip()}")
+        raise RuntimeError(f"Failed to resolve Git toplevel of '{dir_path}': {(e.stderr or '').strip()}") from e
 
 
 def is_bare_repository(dir_path: Path) -> bool:

@@ -75,6 +75,7 @@ from ..schema import (
     LIFECYCLE_HOOKS,
     ROLLBACK_POLICIES,
 )
+from .workspace_markers import render_nu_marker_list
 
 
 class NushellGenerator:
@@ -100,14 +101,22 @@ class NushellGenerator:
             "# =============================================================================",
             "",
             f'def "nu-complete {cli}-packages" [] {{',
-            '  let root = ($env.PWD | path expand)',
-            '  let src_dir = ($root | path join "src")',
-            '  if ($src_dir | path exists) {',
-            '    ls $src_dir | where type == dir | get name | path basename | each { |pkg|',
-            f'      {{ value: $pkg, description: $"Drift package \'($pkg)\'" }}',
+            "  # Walk up from $env.PWD to the nearest workspace root (config marker),",
+            "  # mirroring the CLI's workspace discovery.",
+            f'  let markers = {render_nu_marker_list()}',
+            '  mut dir = ($env.PWD | path expand)',
+            '  loop {',
+            '    let here = $dir',
+            '    if ($markers | any { |m| ($here | path join $m | path type) == "file" }) {',
+            '      let src_dir = ($here | path join "src")',
+            '      if not ($src_dir | path exists) { return [] }',
+            '      return (ls $src_dir | where type == dir | get name | path basename | each { |pkg|',
+            f'        {{ value: $pkg, description: $"Drift package \'($pkg)\'" }}',
+            '      })',
             '    }',
-            '  } else {',
-            '    []',
+            '    let parent = ($here | path dirname)',
+            '    if $parent == $here { return [] }',
+            '    $dir = $parent',
             '  }',
             '}',
             "",

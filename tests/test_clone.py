@@ -55,7 +55,7 @@ class TestWorkspaceClone(unittest.TestCase):
         """Verifies cloning a valid Drift workspace automatically triggers repair and database healing."""
         # 1. Prepare remote Drift workspace
         remote_repo = self._create_git_repo(self.remote_base / "drift_dotfiles")
-        init_drift_workspace(remote_repo, no_git_root=True)
+        init_drift_workspace(remote_repo)
 
         # Create a sample package
         pkg_src = remote_repo / "src" / "nvim"
@@ -173,7 +173,7 @@ class TestWorkspaceClone(unittest.TestCase):
     def test_clone_with_no_repair(self):
         """Verifies cloning with no_repair=True skips workspace repair."""
         remote_repo = self._create_git_repo(self.remote_base / "drift_no_repair")
-        init_drift_workspace(remote_repo, no_git_root=True)
+        init_drift_workspace(remote_repo)
         subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "init"], check=True, capture_output=True)
 
@@ -194,7 +194,7 @@ class TestWorkspaceClone(unittest.TestCase):
     def test_cli_clone_json_output(self):
         """Verifies CLI execution with 'drift clone --json'."""
         remote_repo = self._create_git_repo(self.remote_base / "cli_repo")
-        init_drift_workspace(remote_repo, no_git_root=True)
+        init_drift_workspace(remote_repo)
         subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "init"], check=True, capture_output=True)
 

@@ -111,7 +111,7 @@ def convert_legacy_dotfiles_repo(target_dir: Path, pkg_name: str) -> List[str]:
     actions.append("Isolated existing dotfile contents into temporary payload buffer.")
 
     # 2. Run drift init in target_dir
-    ws = init_drift_workspace(target_dir, no_git_root=True)
+    ws = init_drift_workspace(target_dir)
     actions.append("Initialized Drift workspace infrastructure (config/, render/, install/, .gitignore).")
 
     # 3. Move payload to target_dir / source_directory / pkg_name

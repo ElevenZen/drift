@@ -212,10 +212,10 @@ def assert_workspace_healthy(
         )
 
 
-def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = False, json_mode: bool = False) -> WorkspaceConfig:
+def execute_init(drift_root: Path, force: bool = False, json_mode: bool = False) -> WorkspaceConfig:
     """Core function to initialize a drift workspace, shared by both CLI backends."""
     prepare_cli_environment(drift_root)
-    ws_cfg = init_drift_workspace(drift_root, force=force, no_git_root=no_git_root)
+    ws_cfg = init_drift_workspace(drift_root, force=force)
     if json_mode:
         print(SerializableModel().to_json())
     return ws_cfg

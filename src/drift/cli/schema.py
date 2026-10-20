@@ -135,10 +135,6 @@ GLOBAL_OPTIONS: List[OptionSpec] = [
         is_directory=True
     ),
     OptionSpec(
-        flags=["--no-git-root"],
-        description="Stop resolving git root of cwd or -C directory, using the literal path instead"
-    ),
-    OptionSpec(
         flags=["-v", "--verbose"],
         description="Enable verbose (DEBUG) logging output"
     ),

@@ -34,7 +34,7 @@
 
 ### [`exceptions.py`](exceptions.py) & [`serialization.py`](serialization.py) — Domain Exceptions & JSON Serialization
 * `DriftError(Exception)`: Base domain exception (`exit_code`, `packages: List[str]`, `logged: bool`).
-* **Subclasses**: `ConfigError` (`ExitCode.CONFIG_ERROR`), `DriftDetectedError` (`ExitCode.DRIFT_DETECTED`), `RenderError` & `RenderCollisionError` (`ExitCode.RENDER_ERROR`), `InstallCollisionError` & `CrossPackageCollisionError` (`ExitCode.COLLISION_ERROR`), `HookMissingError`, `HookExecutionError(is_fatal: bool)`, `MidwayTransactionError`, `PackageInstallDirMissingError`, `TargetPermissionError`, `AdminPrivilegeError`.
+* **Subclasses**: `ConfigError` (`ExitCode.CONFIG_ERROR`; subclasses `CyclicDependencyError`, `WorkspaceNotFoundError`), `DriftDetectedError` (`ExitCode.DRIFT_DETECTED`), `RenderError` & `RenderCollisionError` (`ExitCode.RENDER_ERROR`), `InstallCollisionError` & `CrossPackageCollisionError` (`ExitCode.COLLISION_ERROR`), `HookMissingError`, `HookExecutionError(is_fatal: bool)`, `MidwayTransactionError`, `PackageInstallDirMissingError`, `TargetPermissionError`, `AdminPrivilegeError`.
 * `SerializableModel` & `serialize_for_json(obj: Any) -> Any`: Recursive dataclass/Path/Enum-to-JSON serializer.
 
 ### [`ignore.py`](ignore.py) — `.drift_ignore` PCRE Regex Engine

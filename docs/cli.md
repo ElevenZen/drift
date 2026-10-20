@@ -10,7 +10,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 
 | Command | Positional Arguments | Key Flags | Purpose |
 | :--- | :--- | :--- | :--- |
-| **`init`** | — | `-f`, `--no-git-root` | Initialize a new Drift workspace repository |
+| **`init`** | — | `-f` | Initialize a new Drift workspace repository |
 | **`new`** | `<pkg>` | `-t`, `-m`, `-f` | Scaffold a new package and `drift_package.toml` |
 | **`add`** | `<pkg> <paths...>` | `-n`, `--no-hooks` | Import host files with `dot-` prefix translation |
 | **`status`** | `[packages...]` | `--json` | Audit template evolution and active host drift |
@@ -41,7 +41,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 ## 2. Global Flags & Movable Flags
 
 *   `-C, --directory <DIR>`: Run as if drift was started in `<DIR>` instead of the current working directory.
-*   `--no-git-root`: Bypass searching for parent repository git root; treat the current or `-C` directory as the literal workspace root.
+*   **Workspace discovery**: Drift walks upward from the current (or `-C`) directory and uses the nearest directory containing `config/drift_workspace.toml` (or its `.envst` / `.local` variants) as the workspace root. The enclosing Git toplevel is irrelevant, so workspaces nested inside other repositories (e.g. `samples/<name>/`) work out of the box. `drift init` always initializes the current (or `-C`) directory literally.
 *   `-v, --verbose`: Enable verbose (DEBUG) logging output. (*Movable: can be specified before or after subcommands*).
 *   `--json`: Output results in structured machine-readable JSON format using typed result models. (*Movable: can be specified before or after subcommands*).
 *   `--raw-errors`: Bypass CLI error boundary to print raw exceptions and full Python stack trace without changing the logging level. (*Movable: can be specified before or after subcommands*).
@@ -52,15 +52,14 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 ## 3. Detailed Command Reference
 
 ### A. Initialization: `drift init [--force] [--json]`
-Initializes the active directory as a drift workspace.
-*   **Command Signature**: `drift init [--force / -f] [--no-git-root] [--json]`
+Initializes the current (or `-C`) directory literally as a drift workspace (never redirected to an enclosing Git toplevel).
+*   **Command Signature**: `drift init [--force / -f] [--json]`
 *   **Optional Arguments & Flags**:
     - `--force / -f`: Re-initializes workspace files and database sub-repositories even if already initialized.
-    - `--no-git-root`: Treats the target directory as the literal workspace root without searching for parent Git roots.
     - `--json`: Outputs initialization results in structured JSON format.
 *   **Actions**:
     1.  If the directory is empty and not tracked by Git, initializes an empty Git repository.
-    2.  Verifies the main repository is tracked by Git (unless `--no-git-root` is active).
+    2.  Verifies the enclosing Git repository is healthy (not bare, detached, or mid-merge/rebase) unless `--force` is given.
     3.  Creates `.gitignore` entries to isolate `render/` and `install/` database files.
     4.  Initializes `render/` and `install/` as independent, untracked local Git repositories.
     5.  Creates default directory structure (`src/`, `config/drift_workspace.toml`, `config/envsubst.bash`, `config/mustache.envst.json`, `install/state.toml`).
