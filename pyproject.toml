@@ -7,8 +7,10 @@ name = "drift"
 version = "0.1.0"
 description = "Decoupled Two-Stage Git-Backed Dotfiles Manager"
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.9"
 classifiers = [
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
