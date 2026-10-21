@@ -40,7 +40,8 @@ def add_template_suffix(filename: Union[str, Path], suffix: str = "envst") -> st
     Inserts a template suffix before the file extension.
     Example: 'drift_package.toml' -> 'drift_package.envst.toml'
     """
-    filename_str = str(filename)
+    from drift.utils.path_utils import as_posix
+    filename_str = as_posix(filename)
     stem, ext = os.path.splitext(filename_str)
     return f"{stem}.{suffix}{ext}"
 

@@ -38,7 +38,7 @@ from ..core.constants import (
     add_envst_path,
 )
 from ..core.exceptions import ConfigError
-from ..utils.config_utils import branch
+from ..utils.func_utils import branch
 from ..utils.env_utils import (
     EnvConfig,
     EnvResolve,
@@ -69,7 +69,7 @@ def render_workspace_config(render_input_path: Path) -> str:
     returning the rendered output.
     """
     content = render_input_path.read_text(encoding="utf-8")
-    return render_workspace_config_content(content, source_desc=str(render_input_path))
+    return render_workspace_config_content(content, source_desc=render_input_path.as_posix())
 
 
 def check_is_envst_workspace_config(path: Path) -> bool:
@@ -95,7 +95,7 @@ def parse_workspace_config_content(content: str, source_path: Path) -> dict:
     """
     text = branch(
         check_is_envst_workspace_config(source_path),
-        lambda: render_workspace_config_content(content, source_desc=str(source_path)),
+        lambda: render_workspace_config_content(content, source_desc=source_path.as_posix()),
         lambda: content,
     )
     try:
@@ -132,7 +132,7 @@ def assert_no_legacy_workspace_config(drift_root: Path) -> None:
     err_box = (
         "\n" + "=" * 80 + "\n"
         "❌ DEPRECATION ERROR: Legacy workspace configuration file detected!\n\n"
-        f"Found legacy file: {', '.join(str(x) for x in legacy_found)}\n\n"
+        f"Found legacy file: {', '.join(x.as_posix() for x in legacy_found)}\n\n"
         "The workspace configuration file has been renamed:\n"
         "  • 'drift.toml'             -> 'drift_workspace.toml'\n"
         "  • 'drift.local.toml'       -> 'drift_workspace.local.toml'\n"
@@ -179,7 +179,7 @@ def load_workspace_config_files_layered(rendered_config_path_list: Sequence[Path
     # The whole result cannot be an empty dict.
     if not result:
         raise ConfigError(
-            f"Workspace configuration file not found in [{', '.join(str(x) for x in rendered_config_path_list)}] "
+            f"Workspace configuration file not found in [{', '.join(x.as_posix() for x in rendered_config_path_list)}] "
             "or their templates."
         )
     return result

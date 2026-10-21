@@ -7,6 +7,8 @@ Architecture & Call Chain Overview
 All functions in this module are pure (no filesystem I/O except Path.home()
 for tilde expansion). They operate on path representations only.
 
+    as_posix(path) — Converts Path, PurePath, or str into a POSIX path string.
+    as_windows(path) — Converts Path, PurePath, or str into a Windows backslash path string.
     expand_path(path_input) — Expands ~, $VAR, %VAR% in path strings.
     check_is_relative_path(path) — True iff path has no drive or root anchor (State 1).
     check_is_partially_anchored_path(path) — True iff path has an anchor but is not absolute (State 2 on Windows).
@@ -24,7 +26,7 @@ import os
 import posixpath
 import sys
 import re
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 from typing import Union, Optional
 
 
@@ -49,9 +51,21 @@ COMMON_WINDOWS_PATH_ENVS = {
 }
 
 
+def as_posix(path: Union[str, PurePath]) -> str:
+    """Converts a Path, PurePath, or string into a POSIX path string."""
+    if isinstance(path, PurePath):
+        return path.as_posix()
+    return str(path)
+
+
+def as_windows(path: Union[str, PurePath]) -> str:
+    """Converts a Path, PurePath, or string into a Windows backslash path string."""
+    return os.fspath(PureWindowsPath(as_posix(path)))
+
+
 def expand_path(path_input: Union[str, Path]) -> Path:
     """Expands '~', Windows-style '%VAR%', and standard '$VAR' in path inputs."""
-    raw = str(path_input).strip()
+    raw = as_posix(path_input).strip()
     if not raw:
         return Path(".")
 

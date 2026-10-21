@@ -41,7 +41,7 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
             env["GIT_COMMITTER_EMAIL"] = "test@drift.local"
 
             res_help = subprocess.run(
-                [sys.executable, str(zipapp_path), "--help"],
+                [sys.executable, zipapp_path.as_posix(), "--help"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -53,7 +53,7 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
 
             # 3. Test help documentation loading from inside zipapp
             res_doc = subprocess.run(
-                [sys.executable, str(zipapp_path), "help", "drift_workspace.toml"],
+                [sys.executable, zipapp_path.as_posix(), "help", "drift_workspace.toml"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -70,8 +70,8 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
             target_dir.mkdir()
 
             res_init = subprocess.run(
-                [sys.executable, str(zipapp_path), "init"],
-                cwd=str(workspace_dir),
+                [sys.executable, zipapp_path.as_posix(), "init"],
+                cwd=workspace_dir,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -82,8 +82,8 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
             self.assertTrue((workspace_dir / "config" / "drift_workspace.toml").exists())
 
             res_new = subprocess.run(
-                [sys.executable, str(zipapp_path), "new", "test_pkg", "--target", target_dir.as_posix()],
-                cwd=str(workspace_dir),
+                [sys.executable, zipapp_path.as_posix(), "new", "test_pkg", "--target", target_dir.as_posix()],
+                cwd=workspace_dir,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -97,8 +97,8 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
             (workspace_dir / "src" / "test_pkg" / "app.conf").write_text("setting = 42\n", encoding="utf-8")
 
             res_deploy = subprocess.run(
-                [sys.executable, str(zipapp_path), "deploy", "test_pkg"],
-                cwd=str(workspace_dir),
+                [sys.executable, zipapp_path.as_posix(), "deploy", "test_pkg"],
+                cwd=workspace_dir,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

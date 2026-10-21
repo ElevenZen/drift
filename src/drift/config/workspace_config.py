@@ -67,17 +67,19 @@ from ..utils.path_utils import (
     expand_path,
 )
 from ..utils.file_inspect import check_can_symlink
-from ..utils.config_utils import (
+from ..utils.func_utils import (
     branch,
     partition,
+    when_none,
+    when_not_none,
+)
+from ..utils.config_utils import (
     get_first_from,
     get_nested_from,
     parse_bool_value,
     parse_config_path,
     parse_optional_config_path,
     validate_known_keys,
-    when_none,
-    when_not_none,
 )
 from .render_engine_config import (
     RenderEngineConfig,

@@ -30,7 +30,9 @@ from ..core.constants import (
 )
 from ..core.exceptions import ConfigError
 from ..utils.python_hook_utils import load_python_module, execute_python_hook
-from ..utils.config_utils import branch, get_nested_from, when_none
+from ..utils.config_utils import get_nested_from
+from ..utils.func_utils import branch, when_none
+from ..utils.path_utils import as_posix
 
 logger = logging.getLogger(__name__)
 
@@ -200,9 +202,9 @@ def apply_workspace_hook(
         ),
     )
     raw_secrets = get_nested_from(config_dict, "env.secrets", default={})
-    ws_secrets = {str(k): str(v) for k, v in raw_secrets.items()}
+    ws_secrets = {str(k): as_posix(v) for k, v in raw_secrets.items()}
     raw_overrides = get_nested_from(config_dict, "env.override", default={})
-    ws_overrides = {str(k): str(v) for k, v in raw_overrides.items()}
+    ws_overrides = {str(k): as_posix(v) for k, v in raw_overrides.items()}
     # 6-Tier Precedence: Tier 1 overrides > Tier 2 facts > Tier 3 ambient os.environ > Tier 4 secrets
     real_env = {**resolved_secrets, **ws_secrets, **os.environ, **system_facts, **ws_overrides}
 

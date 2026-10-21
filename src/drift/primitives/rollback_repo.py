@@ -64,7 +64,7 @@ from ..core.state_registry import (
 )
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..models import RollbackResult
-from ..utils.config_utils import partition
+from ..utils.func_utils import partition
 from ..utils.file_ops import remove_tree
 from .install_repo import InstallOptions, run_primitive_5_install, run_primitive_6_commit_install_repo
 from .package_assertions import resolve_package_uninstall_order
@@ -79,7 +79,7 @@ def is_package_committed_in_install_head(install_base: Path, pkg: str) -> bool:
     """Checks if the package exists in the HEAD commit of the install repository."""
     # check=False is intentional: git cat-file returns exit code 1 if the path is absent in HEAD.
     res = subprocess.run(
-        ["git", "-C", str(install_base), "cat-file", "-e", f"HEAD:{pkg}"],
+        ["git", "-C", install_base.as_posix(), "cat-file", "-e", f"HEAD:{pkg}"],
         capture_output=True,
         check=False,
     )
@@ -90,7 +90,7 @@ def reset_install_package_to_head(install_base: Path, pkg: str) -> None:
     """Resets a package directory inside the install state repository to the HEAD commit."""
     # Revert modifications & deletions in the package directory
     res_checkout = subprocess.run(
-        ["git", "-C", str(install_base), "checkout", "HEAD", "--", pkg],
+        ["git", "-C", install_base.as_posix(), "checkout", "HEAD", "--", pkg],
         capture_output=True,
         text=True,
         check=False,
@@ -100,7 +100,7 @@ def reset_install_package_to_head(install_base: Path, pkg: str) -> None:
 
     # Clean untracked files & directories inside the package directory
     res_clean = subprocess.run(
-        ["git", "-C", str(install_base), "clean", "-fd", "--", pkg],
+        ["git", "-C", install_base.as_posix(), "clean", "-fd", "--", pkg],
         capture_output=True,
         text=True,
         check=False,
@@ -115,7 +115,7 @@ def clean_first_time_install_package(install_base: Path, pkg: str) -> None:
     if pkg_dir.exists() or pkg_dir.is_symlink():
         remove_tree(pkg_dir)
     res_clean = subprocess.run(
-        ["git", "-C", str(install_base), "clean", "-fd", "--", pkg],
+        ["git", "-C", install_base.as_posix(), "clean", "-fd", "--", pkg],
         capture_output=True,
         text=True,
         check=False,

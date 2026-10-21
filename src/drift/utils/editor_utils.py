@@ -56,9 +56,9 @@ def launch_single_file_editor(file_path: Path) -> None:
     editor_bin = tokens[0]
 
     if editor_name in ("code", "codium", "code-oss", "code-insiders"):
-        cmd = tokens + ["--wait", str(file_path)]
+        cmd = tokens + ["--wait", file_path.as_posix()]
     else:
-        cmd = tokens + [str(file_path)]
+        cmd = tokens + [file_path.as_posix()]
 
     logger.info(f"📝 Launching editor '{editor_bin}' for '{file_path.name}'...")
     logger.info(f"⏳ Waiting for '{editor_bin}' to close '{file_path.name}'...")
@@ -83,9 +83,9 @@ def launch_vim_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequence
     editor_tokens = _to_tokens(editor_spec)
     editor_name = Path(editor_tokens[0]).name
     first_left, first_right = file_pairs[0]
-    cmd = editor_tokens + [str(first_left), "-c", f"vert diffsplit {first_right}"]
+    cmd = editor_tokens + [first_left.as_posix(), "-c", f"vert diffsplit {first_right.as_posix()}"]
     for left, right in file_pairs[1:]:
-        cmd.extend(["-c", f"tabe {left}", "-c", f"vert diffsplit {right}"])
+        cmd.extend(["-c", f"tabe {left.as_posix()}", "-c", f"vert diffsplit {right.as_posix()}"])
     if len(file_pairs) > 1:
         cmd.extend(["-c", "tabfirst"])
     logger.info(f"📝 Launching {editor_name} with {len(file_pairs)} diff pair(s) across tabpages...")
@@ -101,11 +101,11 @@ def launch_vscode_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Seque
     logger.info(f"📝 Opening {len(file_pairs)} diff tab(s) in {editor_name}...")
     for left, right in file_pairs[:-1]:
         # check=False is intentional: tab open commands should not fail if window reuse returns status code.
-        run_command(editor_tokens + ["--diff", str(left), str(right), "--reuse-window"], streaming=True, check=False)
+        run_command(editor_tokens + ["--diff", left.as_posix(), right.as_posix(), "--reuse-window"], streaming=True, check=False)
     last_left, last_right = file_pairs[-1]
     logger.info(f"⏳ Waiting for '{editor_tokens[0]}' diff session to be closed...")
     # check=False is intentional: user closing the diff window should complete normally regardless of exit code.
-    run_command(editor_tokens + ["--diff", str(last_left), str(last_right), "--reuse-window", "--wait"], streaming=True, check=False)
+    run_command(editor_tokens + ["--diff", last_left.as_posix(), last_right.as_posix(), "--reuse-window", "--wait"], streaming=True, check=False)
 
 
 def launch_emacs_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequence[Tuple[Path, Path]]) -> None:
@@ -120,13 +120,13 @@ def launch_emacs_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequen
         "(setq create-lockfiles nil)",
     ]
     if len(file_pairs) == 1:
-        steps.append(f'(ediff-files "{file_pairs[0][0]}" "{file_pairs[0][1]}")')
+        steps.append(f'(ediff-files "{file_pairs[0][0].as_posix()}" "{file_pairs[0][1].as_posix()}")')
     else:
         steps.append("(tab-bar-mode 1)")
         for i, (left, right) in enumerate(file_pairs):
             if i > 0:
                 steps.append("(tab-new)")
-            steps.append(f'(ediff-files "{left}" "{right}")')
+            steps.append(f'(ediff-files "{left.as_posix()}" "{right.as_posix()}")')
         steps.append("(tab-bar-select-tab 1)")
     elisp = f"(progn {' '.join(steps)})"
     cmd = editor_tokens + ["--eval", elisp]

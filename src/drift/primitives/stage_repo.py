@@ -78,7 +78,7 @@ from ..core.folder_delivery import (
     plan_actions_from_folder_diff,
 )
 from ..models import PackageStagePlan, StageOptions, StagePlan, StageResult
-from ..utils.config_utils import partition
+from ..utils.func_utils import partition
 from ..utils.process_utils import assert_can_escalate
 from ..core.folder_diff import compare_folders, FolderDiff
 from ..core.state_registry import load_state_registry, StateRegistry

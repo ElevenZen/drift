@@ -59,7 +59,7 @@ from ..core.constants import (
     DRY_RUN_ENABLED_HOOKS,
 )
 from ..utils.env_utils import env_scope
-from ..utils.path_utils import to_relative_path
+from ..utils.path_utils import as_posix, as_windows, to_relative_path
 from ..core.exceptions import HookExecutionError, HookMissingError, mark_logged
 
 logger = logging.getLogger(__name__)
@@ -134,20 +134,21 @@ class HookExecFlags:
 def build_hook_execution_command_win32(hook_path: Path) -> List[str]:
     """Generates Windows invocation command based on file extension."""
     ext = hook_path.suffix.lower()
+    win_hook = as_windows(hook_path)
     if ext == ".exe":
-        return [str(hook_path)]
+        return [win_hook]
     elif ext == ".ps1":
-        return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(hook_path)]
+        return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", win_hook]
     elif ext in (".bat", ".cmd"):
-        return ["cmd.exe", "/c", str(hook_path)]
+        return ["cmd.exe", "/c", win_hook]
     elif ext == ".py":
-        return [sys.executable, str(hook_path)]
+        return [sys.executable, win_hook]
     elif ext in (".sh", ".bash"):
         # Convert path to forward slashes for the Unix argument convention of bash,
         # preventing Windows backslashes from being treated as shell escape sequences (e.g. \n, \t).
-        return ["bash.exe", PureWindowsPath(hook_path).as_posix()]
+        return ["bash.exe", PureWindowsPath(win_hook).as_posix()]
     else:
-        return [str(hook_path)]
+        return [win_hook]
 
 
 def _parse_shebang_args(hook_path: Path) -> Optional[List[str]]:
@@ -172,21 +173,22 @@ def build_hook_execution_command_posix(hook_path: Path) -> List[str]:
     except Exception:
         is_exec = True
 
+    posix_hook = as_posix(hook_path)
     if is_exec:
-        return [str(hook_path)]
+        return [posix_hook]
 
     # If not executable on disk, fallback to interpreter to avoid mutating disk permissions at runtime
     ext = hook_path.suffix.lower()
     if ext in (".sh", ".bash"):
-        return ["/bin/bash", str(hook_path)]
+        return ["/bin/bash", posix_hook]
     elif ext == ".py":
-        return [sys.executable, str(hook_path)]
+        return [sys.executable, posix_hook]
 
     shebang_args = _parse_shebang_args(hook_path)
     if shebang_args:
-        return shebang_args + [str(hook_path)]
+        return shebang_args + [posix_hook]
 
-    return ["/bin/bash", str(hook_path)]
+    return ["/bin/bash", posix_hook]
 
 
 def build_hook_execution_command(hook_path: Path) -> List[str]:
@@ -206,7 +208,7 @@ def execute_hook_command(
     """Executes a lifecycle hook command in user space with timeout and configured output encoding."""
     return run_command(
         cmd,
-        cwd=str(cwd),
+        cwd=cwd,
         text=True,
         encoding=encoding,
         timeout=timeout_seconds,
@@ -335,8 +337,8 @@ def handle_hook_execution_failure(
         hook_name=hook_name,
         status="FAILED",
         exit_code=details.exit_code,
-        hook_path=str(hook_path),
-        cwd=str(cwd),
+        hook_path=hook_path.as_posix(),
+        cwd=cwd.as_posix(),
         sudo=False,
         duration_ms=duration_ms,
         stdout=details.stdout,
@@ -399,7 +401,7 @@ def execute_hook_script(
             hook_name=hook_name,
             cwd=cwd,
         )
-        res.hook_path = str(hook_path)
+        res.hook_path = hook_path.as_posix()
         return res
 
     logger.info(f"🪝  Triggering hook: {hook_name} ({pkg})")
@@ -432,8 +434,8 @@ def execute_hook_script(
                 hook_name=hook_name,
                 status="SUCCESS",
                 exit_code=proc.returncode if proc else 0,
-                hook_path=str(hook_path),
-                cwd=str(cwd),
+                hook_path=hook_path.as_posix(),
+                cwd=cwd.as_posix(),
                 sudo=False,
                 duration_ms=duration_ms,
                 stdout=proc.stdout if proc else None,
@@ -666,7 +668,7 @@ def trigger_hook_with_render(
                 timeout_override=timeout_override,
                 flags=exec_flags,
             )
-            res.hook_base_dir = str(src_pkg_dir)
+            res.hook_base_dir = src_pkg_dir.as_posix()
             return res
 
 
@@ -761,7 +763,7 @@ def trigger_hook(
         timeout_override=timeout_override,
         flags=exec_flags,
     )
-    res.hook_base_dir = str(hook_path.parent)
+    res.hook_base_dir = hook_path.parent.as_posix()
     return res
 
 

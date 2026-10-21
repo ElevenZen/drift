@@ -74,13 +74,13 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("*.py[cod]", render_gi_content)
 
         # Verify git check-ignore respects the internal .gitignore
-        res_render = subprocess.run(["git", "check-ignore", "test.swp"], cwd=str(self.drift_root / "render"), capture_output=True, text=True)
+        res_render = subprocess.run(["git", "check-ignore", "test.swp"], cwd=self.drift_root / "render", capture_output=True, text=True)
         self.assertEqual(res_render.returncode, 0)
-        res_render_pyc = subprocess.run(["git", "check-ignore", "module.pyc"], cwd=str(self.drift_root / "render"), capture_output=True, text=True)
+        res_render_pyc = subprocess.run(["git", "check-ignore", "module.pyc"], cwd=self.drift_root / "render", capture_output=True, text=True)
         self.assertEqual(res_render_pyc.returncode, 0)
-        res_install = subprocess.run(["git", "check-ignore", "#autosave#"], cwd=str(self.drift_root / "install"), capture_output=True, text=True)
+        res_install = subprocess.run(["git", "check-ignore", "#autosave#"], cwd=self.drift_root / "install", capture_output=True, text=True)
         self.assertEqual(res_install.returncode, 0)
-        res_install_pyc = subprocess.run(["git", "check-ignore", "__pycache__/foo.pyc"], cwd=str(self.drift_root / "install"), capture_output=True, text=True)
+        res_install_pyc = subprocess.run(["git", "check-ignore", "__pycache__/foo.pyc"], cwd=self.drift_root / "install", capture_output=True, text=True)
         self.assertEqual(res_install_pyc.returncode, 0)
 
         # Check config/drift_workspace.toml template was created
@@ -107,7 +107,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         # Check config/secrets.env template was created and is gitignored
         secrets_file = os.path.join(self.drift_root, "config", "secrets.env")
         self.assertTrue(os.path.isfile(secrets_file))
-        res = subprocess.run(["git", "check-ignore", "config/secrets.env"], cwd=str(self.drift_root), capture_output=True, text=True)
+        res = subprocess.run(["git", "check-ignore", "config/secrets.env"], cwd=self.drift_root, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
         self.assertIn("config/secrets.env", res.stdout.strip())
 
@@ -266,7 +266,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         sys.stdout = stdout
 
         try:
-            main(["-C", str(self.drift_root), "init"])
+            main(["-C", self.drift_root.as_posix(), "init"])
         finally:
             sys.stdout = original_stdout
 
@@ -286,7 +286,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         sys.stdout = stdout
 
         try:
-            run_argparse_cli(["-C", str(self.drift_root), "init"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "init"])
         finally:
             sys.stdout = original_stdout
 
@@ -302,14 +302,14 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
     def test_cli_init_typer_with_force(self) -> None:
         """Verifies that typer_backend CLI successfully initializes with --force."""
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
-            main(["-C", str(self.drift_root), "init"])
+            main(["-C", self.drift_root.as_posix(), "init"])
         
         stdout = StringIO()
         original_stdout = sys.stdout
         sys.stdout = stdout
 
         try:
-            main(["-C", str(self.drift_root), "init", "--force"])
+            main(["-C", self.drift_root.as_posix(), "init", "--force"])
         finally:
             sys.stdout = original_stdout
 
@@ -384,7 +384,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
             init_drift_workspace(self.drift_root)
 
         res_name = subprocess.run(
-            ["git", "-C", str(self.drift_root / "render"), "config", "--local", "user.name"],
+            ["git", "-C", (self.drift_root / "render").as_posix(), "config", "--local", "user.name"],
             capture_output=True,
             text=True,
             check=True,
@@ -392,7 +392,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertEqual(res_name.stdout.strip(), "Init Bot")
 
         res_email = subprocess.run(
-            ["git", "-C", str(self.drift_root / "install"), "config", "--local", "user.email"],
+            ["git", "-C", (self.drift_root / "install").as_posix(), "config", "--local", "user.email"],
             capture_output=True,
             text=True,
             check=True,

@@ -361,9 +361,9 @@ class TestPackageRenderEngine(unittest.TestCase):
         install_base = self.drift_root / "install"
         install_base.mkdir(parents=True, exist_ok=True)
         import subprocess
-        subprocess.run(["git", "init"], cwd=str(install_base), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(install_base), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(install_base), check=True, capture_output=True)
+        subprocess.run(["git", "init"], cwd=install_base, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=install_base, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=install_base, check=True, capture_output=True)
 
         install_pkg_dir = install_base / "pkg_rev"
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -373,8 +373,8 @@ class TestPackageRenderEngine(unittest.TestCase):
             (pkg_dir / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"),
             encoding="utf-8"
         )
-        subprocess.run(["git", "add", "."], cwd=str(install_base), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial install commit"], cwd=str(install_base), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=install_base, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install commit"], cwd=install_base, check=True, capture_output=True)
 
         # Deployed file on host is modified
         host_file = pkg_target / "config.ini"
@@ -465,7 +465,7 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$drift_hook_out"
         pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
 
         output_log = self.drift_root / "hook_output.log"
-        with patch.dict(os.environ, {"drift_hook_out": str(output_log)}):
+        with patch.dict(os.environ, {"drift_hook_out": output_log.as_posix()}):
             res = trigger_hook_with_render(
                 workspace_config=workspace_config,
                 package_name="pkg_hook_chain",

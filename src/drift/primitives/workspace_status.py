@@ -35,7 +35,7 @@ def audit_repo_package_status(
     # packages. Instead, we run `ls-files` on the package dir and filter candidate files using
     # `check_is_trackable` in Python.
     res_tracked = run_command(
-        ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"],
+        ["git", "-C", repo_path.as_posix(), "ls-files", f"{pkg}/"],
         text=True,
         check=False,
         suppress_output=True,
@@ -111,7 +111,7 @@ def build_list_only_status(
         pkg_state = state_registry.packages.get(pkg)
         if pkg_state:
             status.state = pkg_state.state
-            status.target_directory = str(pkg_state.target_directory) if pkg_state.target_directory else None
+            status.target_directory = pkg_state.target_directory.as_posix() if pkg_state.target_directory else None
             status.install_method = pkg_state.install_method.value if pkg_state.install_method else None
             status.last_deployed = pkg_state.last_deployed
             status.deployed_files_count = len(pkg_state.deployed_files)
@@ -174,7 +174,7 @@ def build_full_status(
         pkg_state = state_registry.packages.get(pkg)
         if pkg_state:
             status.state = pkg_state.state
-            status.target_directory = str(pkg_state.target_directory) if pkg_state.target_directory else None
+            status.target_directory = pkg_state.target_directory.as_posix() if pkg_state.target_directory else None
             status.install_method = pkg_state.install_method.value if pkg_state.install_method else None
             status.last_deployed = pkg_state.last_deployed
             status.deployed_files_count = len(pkg_state.deployed_files)

@@ -320,7 +320,7 @@ def execute_add_resources(
             plan=plan,
         )
 
-    imported_files = [str(action.src_path) for action in plan.actions if action.src_path]
+    imported_files = [action.src_path.as_posix() for action in plan.actions if action.src_path]
 
     if plan.dry_run:
         for action in plan.actions:

@@ -254,7 +254,7 @@ class TestPrimitivePackagesEnable(_WorkspaceFixture):
         self.base.unlink()
         envst = self.config_dir / "drift_workspace.envst.toml"
         envst.write_text(ENVST_CONFIG, encoding="utf-8")
-        with patch.dict(os.environ, {"DRIFT_ENABLE_TEST_TARGET": str(self.root / "home")}):
+        with patch.dict(os.environ, {"DRIFT_ENABLE_TEST_TARGET": (self.root / "home").as_posix()}):
             res = self.run_enable(["pkg_b"])
             self.assertEqual(res.config_file, "config/drift_workspace.envst.toml")
             text = envst.read_text(encoding="utf-8")
@@ -525,7 +525,7 @@ class TestCLIEnableDisable(TestCaseUtilityMixin, _WorkspaceFixture):
     def _run(self, runner, argv):
         out, err = StringIO(), StringIO()
         with patch("sys.stdout", out), patch("sys.stderr", err):
-            runner(["-C", str(self.root)] + argv)
+            runner(["-C", self.root.as_posix()] + argv)
         return out.getvalue()
 
     def _backends(self):
@@ -591,7 +591,7 @@ class TestCLIEnableDisable(TestCaseUtilityMixin, _WorkspaceFixture):
     def test_handler_routing(self) -> None:
         from drift.cli import run_argparse_cli
         with patch("drift.cli.cli_handlers.execute_packages_enable") as mock_exec:
-            run_argparse_cli(["-C", str(self.root), "disable", "--local", "--dry-run", "pkg_a", "pkg_b"])
+            run_argparse_cli(["-C", self.root.as_posix(), "disable", "--local", "--dry-run", "pkg_a", "pkg_b"])
         args, kwargs = mock_exec.call_args
         self.assertEqual(args[1], ["pkg_a", "pkg_b"])
         self.assertEqual(kwargs["enabled"], False)

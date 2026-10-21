@@ -47,9 +47,9 @@ class TestWorkspaceGc(unittest.TestCase):
 
         # Initialize Git repos in render/ and install/
         for repo_dir in [self.render_dir, self.install_dir]:
-            subprocess.run(["git", "init"], cwd=str(repo_dir), capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(repo_dir), capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(repo_dir), capture_output=True, check=True)
+            subprocess.run(["git", "init"], cwd=repo_dir, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_dir, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_dir, capture_output=True, check=True)
 
         self.workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,

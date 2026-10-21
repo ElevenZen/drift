@@ -153,7 +153,7 @@ def check_sudo_and_root(drift_root: Path) -> None:
         return
 
     # Neither scenario is satisfied: running under sudo / root on a user-owned workspace.
-    root_display = str(drift_root)
+    root_display = drift_root.as_posix()
     print(
         f"❌ [ERROR] Running Drift under 'sudo' on a user-owned workspace is prohibited.\n\n"
         f"Why this is prevented:\n"
@@ -951,7 +951,7 @@ def execute_complete(
             dest_path = get_default_completion_path(s)
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             dest_path.write_text(script_content, encoding="utf-8")
-            installed_list.append({"shell": s, "path": str(dest_path)})
+            installed_list.append({"shell": s, "path": dest_path.as_posix()})
 
         if json_mode:
             data = {

@@ -324,7 +324,7 @@ class PackageHooks(AlwaysTruthy):
                     f"base_dir or workspace_config must be provided when constructing PackageHooks{name_str}."
                 )
 
-            norm_val = Path(os.path.normpath(str(norm_val)))
+            norm_val = Path(os.path.normpath(norm_val))
             if not is_relative_to(norm_val, Path(DRIFT_HOOKS_DIR_NAME)):
                 name_str = f" for package '{package_name}'" if package_name else ""
                 raise ConfigError(

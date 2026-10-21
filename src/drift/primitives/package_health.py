@@ -32,11 +32,12 @@ def _map_hook_result_to_health_result(
     target_dir: Path
 ) -> PackageHealthResult:
     """Converts a lifecycle HookResult into a PackageHealthResult."""
+    target_dir_posix = target_dir.as_posix()
     if hook_res.status == "SKIPPED":
         return PackageHealthResult(
             package=pkg,
             status=PackageHealthStatus.NO_HOOK,
-            target_directory=str(target_dir)
+            target_directory=target_dir_posix
         )
     if hook_res.status == "SUCCESS":
         return PackageHealthResult(
@@ -47,7 +48,7 @@ def _map_hook_result_to_health_result(
             stderr=hook_res.stderr or "",
             duration_ms=hook_res.duration_ms,
             hook_path=hook_res.hook_path,
-            target_directory=str(target_dir)
+            target_directory=target_dir_posix
         )
     is_timeout = (hook_res.exit_code == 124) or ("timed out" in (hook_res.error_message or "").lower())
     status = PackageHealthStatus.TIMEOUT if is_timeout else PackageHealthStatus.UNHEALTHY
@@ -59,7 +60,7 @@ def _map_hook_result_to_health_result(
         stderr=hook_res.stderr or "",
         duration_ms=hook_res.duration_ms,
         hook_path=hook_res.hook_path,
-        target_directory=str(target_dir),
+        target_directory=target_dir_posix,
         error_message=hook_res.error_message or ""
     )
 
@@ -70,6 +71,7 @@ def _execute_health_hook_no_throw(
     target_dir: Path
 ) -> PackageHealthResult:
     """Safely executes a health hook trigger function, handling errors and mapping to PackageHealthResult."""
+    target_dir_posix = target_dir.as_posix()
     try:
         hook_res = trigger_fn()
     except HookMissingError as e:
@@ -77,7 +79,7 @@ def _execute_health_hook_no_throw(
             package=pkg,
             status=PackageHealthStatus.MISSING_HOOK,
             hook_path=e.hook_name or str(e),
-            target_directory=str(target_dir),
+            target_directory=target_dir_posix,
             error_message=str(e),
         )
     except FileNotFoundError as e:
@@ -85,14 +87,14 @@ def _execute_health_hook_no_throw(
             package=pkg,
             status=PackageHealthStatus.MISSING_HOOK,
             hook_path=str(e),
-            target_directory=str(target_dir),
+            target_directory=target_dir_posix,
             error_message=str(e)
         )
     except Exception as e:
         return PackageHealthResult(
             package=pkg,
             status=PackageHealthStatus.ERROR,
-            target_directory=str(target_dir),
+            target_directory=target_dir_posix,
             error_message=str(e)
         )
 

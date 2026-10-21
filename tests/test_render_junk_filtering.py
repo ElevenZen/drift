@@ -70,7 +70,7 @@ def _snapshot_tree(root: Path) -> Dict[str, str]:
     def _entries() -> Iterator[Path]:
         return (p for p in root.rglob("*") if ".git" not in p.relative_to(root).parts)
 
-    return {str(p.relative_to(root)): _digest(p) for p in _entries()}
+    return {p.relative_to(root).as_posix(): _digest(p) for p in _entries()}
 
 
 def _junk_paths_under(root: Path) -> List[str]:
@@ -84,7 +84,7 @@ def _junk_paths_under(root: Path) -> List[str]:
         return any(re.search(p, part) for p in DEFAULT_JUNK_IGNORE_PATTERNS if "/" not in p)
 
     return sorted(
-        str(p.relative_to(root))
+        p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if ".git" not in p.relative_to(root).parts
         and any(_is_junk_part(part) for part in p.relative_to(root).parts)
@@ -265,7 +265,7 @@ class TestRenderSkipsJunk(unittest.TestCase):
 
     def test_dry_run_plans_no_junk_actions(self) -> None:
         res = self._render(dry_run=True)
-        planned = [str(a.dst_path) for a in res.packages[0].actions if a.dst_path is not None]
+        planned = [a.dst_path.as_posix() for a in res.packages[0].actions if a.dst_path is not None]
         self.assertFalse(any("__pycache__" in p or p.endswith((".pyc", "~")) for p in planned), planned)
         self.assertFalse(self.render_pkg.exists() and _junk_paths_under(self.render_pkg))
 

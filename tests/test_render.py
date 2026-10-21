@@ -723,9 +723,9 @@ class TestRenderPackage(unittest.TestCase):
 
         # 2. Initialize a git repository inside the render directory
         # Also, configure standard dummy git user for testing environments to avoid commit issues
-        subprocess.run(["git", "init"], cwd=str(render_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(render_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(render_dir), capture_output=True, check=True)
+        subprocess.run(["git", "init"], cwd=render_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=render_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=render_dir, capture_output=True, check=True)
 
         # 3. Create uncommitted files
         (render_dir / "pkg_a").mkdir()
@@ -739,7 +739,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # Verify commit message
         log_res = subprocess.run(
-            ["git", "-C", str(render_dir), "log", "-1", "--pretty=%B"],
+            ["git", "-C", render_dir.as_posix(), "log", "-1", "--pretty=%B"],
             capture_output=True,
             text=True,
             check=True
@@ -756,7 +756,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # Verify pkg_a is committed and clean, but pkg_b still has unstaged/uncommitted changes
         status_res = subprocess.run(
-            ["git", "-C", str(render_dir), "status", "--porcelain"],
+            ["git", "-C", render_dir.as_posix(), "status", "--porcelain"],
             capture_output=True,
             text=True,
             check=True
@@ -767,7 +767,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # Verify the commit message of the scoped commit
         log_scoped = subprocess.run(
-            ["git", "-C", str(render_dir), "log", "-1", "--pretty=%B"],
+            ["git", "-C", render_dir.as_posix(), "log", "-1", "--pretty=%B"],
             capture_output=True,
             text=True,
             check=True
@@ -808,16 +808,16 @@ class TestRenderPackage(unittest.TestCase):
 
         # 3. Setup git repo in render directory
         render_dir = drift_root / "render"
-        subprocess.run(["git", "init"], cwd=str(render_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(render_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(render_dir), capture_output=True, check=True)
+        subprocess.run(["git", "init"], cwd=render_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=render_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=render_dir, capture_output=True, check=True)
 
         # 4. Commit only pkg_one specifically
         run_primitive_3_commit_render_repo(workspace_config, "Commit pkg_one specifically", ["pkg_one"])
 
         # Verify pkg_one is committed and clean, but pkg_two is still untracked
         status_res = subprocess.run(
-            ["git", "-C", str(render_dir), "status", "--porcelain"],
+            ["git", "-C", render_dir.as_posix(), "status", "--porcelain"],
             capture_output=True,
             text=True,
             check=True

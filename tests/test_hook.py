@@ -184,26 +184,26 @@ class TestPackageHook(unittest.TestCase):
         # 1. Typer CLI
         stdout = StringIO()
         with patch("sys.stdout", stdout):
-            main(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source"])
+            main(["-C", self.drift_root.as_posix(), "hook", "pkg_hook", "pre_source"])
         self.assertIn("Successfully executed hook 'pre_source' for package 'pkg_hook'", stdout.getvalue())
 
         # 2. Typer CLI with --json
         stdout_json = StringIO()
         with patch("sys.stdout", stdout_json):
-            main(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source", "--json"])
+            main(["-C", self.drift_root.as_posix(), "hook", "pkg_hook", "pre_source", "--json"])
         self.assertIn('"command": "hook"', stdout_json.getvalue())
         self.assertIn('"status": "SUCCESS"', stdout_json.getvalue())
 
         # 3. Argparse CLI
         stdout_argparse = StringIO()
         with patch("sys.stdout", stdout_argparse):
-            run_argparse_cli(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "hook", "pkg_hook", "pre_source"])
         self.assertIn("Successfully executed hook 'pre_source' for package 'pkg_hook'", stdout_argparse.getvalue())
 
         # 4. Argparse CLI with --json
         stdout_argparse_json = StringIO()
         with patch("sys.stdout", stdout_argparse_json):
-            run_argparse_cli(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source", "--json"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "hook", "pkg_hook", "pre_source", "--json"])
         self.assertIn('"command": "hook"', stdout_argparse_json.getvalue())
         self.assertIn('"status": "SUCCESS"', stdout_argparse_json.getvalue())
 
@@ -379,7 +379,7 @@ class TestPackageHook(unittest.TestCase):
 
         # 1. build_hook_execution_command returns interpreter fallback
         cmd = build_hook_execution_command(test_script)
-        self.assertEqual(cmd, ["/bin/bash", str(test_script)])
+        self.assertEqual(cmd, ["/bin/bash", test_script.as_posix()])
 
         # 2. execute_hook_script executes without mutating test_script mode on disk
         pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
@@ -543,7 +543,7 @@ echo "VALUE=$DYNAMIC_VAL"
         # 1. CLI with --from source for pre_source hook
         stdout = StringIO()
         with patch("sys.stdout", stdout):
-            run_argparse_cli(["-C", str(self.drift_root), "hook", "pkg_hook", "pre_source", "--from", "source"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "hook", "pkg_hook", "pre_source", "--from", "source"])
         self.assertIn("Successfully executed hook 'pre_source' for package 'pkg_hook'", stdout.getvalue())
 
     def test_hook_execution_streaming(self) -> None:
@@ -1093,7 +1093,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
         # 3. Absolute hook path requires no base_dir
         abs_path = (Path("/opt/scripts/pre_install.sh")).resolve()
-        hooks_abs = PackageHooks.from_dict({"pre_install": str(abs_path)})
+        hooks_abs = PackageHooks.from_dict({"pre_install": abs_path.as_posix()})
         self.assertEqual(hooks_abs.pre_install, abs_path)
 
         # 4. Relative hook path without base_dir raises ConfigError
@@ -1154,7 +1154,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         )
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.exit_code, 0)
-        self.assertEqual(res.hook_path, str(shared_hook))
+        self.assertEqual(res.hook_path, shared_hook.as_posix())
         self.assertTrue(shared_out.is_file())
         self.assertEqual(shared_out.read_text(encoding="utf-8").strip(), "SHARED_HOOK_RAN")
 
@@ -1167,7 +1167,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             from_stage="source",
         )
         self.assertEqual(res_primitive.status, "SUCCESS")
-        self.assertEqual(res_primitive.hook_path, str(shared_hook))
+        self.assertEqual(res_primitive.hook_path, shared_hook.as_posix())
         self.assertTrue(shared_out.is_file())
 
 
@@ -1213,7 +1213,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         abs_in_src = (src_base / "drift_hooks" / "pre_install.sh").resolve()
         hooks_in_src = PackageHooks.from_dict(
             {
-                "pre_install": str(abs_in_src),
+                "pre_install": abs_in_src.as_posix(),
             },
             package_name="pkg_hook",
             workspace_config=self.workspace_config,
@@ -1227,7 +1227,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         external_abs = Path("/usr/local/bin/global_hook.sh").resolve()
         hooks_ext = PackageHooks.from_dict(
             {
-                "pre_install": str(external_abs),
+                "pre_install": external_abs.as_posix(),
             },
             package_name="pkg_hook",
             workspace_config=self.workspace_config,

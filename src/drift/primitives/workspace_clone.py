@@ -84,7 +84,7 @@ def clone_git_repository(
     if depth is not None:
         cmd.extend(["--depth", str(depth)])
 
-    cmd.extend([git_url, str(target_dir)])
+    cmd.extend([git_url, target_dir.as_posix()])
 
     try:
         run_command(cmd, streaming=streaming, text=True)
@@ -99,14 +99,14 @@ def convert_legacy_dotfiles_repo(target_dir: Path, pkg_name: str) -> List[str]:
     actions: List[str] = []
     tmp_payload = target_dir / "_drift_tmp_payload"
     if tmp_payload.exists():
-        shutil.rmtree(str(tmp_payload))
+        shutil.rmtree(tmp_payload)
     tmp_payload.mkdir(parents=True, exist_ok=True)
 
     # 1. Move all cloned contents (excluding .git and _drift_tmp_payload) into tmp_payload
     for item in list(target_dir.iterdir()):
         if item.name in (".git", "_drift_tmp_payload"):
             continue
-        shutil.move(str(item), str(tmp_payload / item.name))
+        shutil.move(item, tmp_payload / item.name)
 
     actions.append("Isolated existing dotfile contents into temporary payload buffer.")
 
@@ -119,8 +119,8 @@ def convert_legacy_dotfiles_repo(target_dir: Path, pkg_name: str) -> List[str]:
     src_dir.mkdir(parents=True, exist_ok=True)
     dest_pkg_dir = src_dir / pkg_name
     if dest_pkg_dir.exists():
-        shutil.rmtree(str(dest_pkg_dir))
-    shutil.move(str(tmp_payload), str(dest_pkg_dir))
+        shutil.rmtree(dest_pkg_dir)
+    shutil.move(tmp_payload, dest_pkg_dir)
     actions.append(f"Migrated dotfile assets into package source directory '{src_dir.name}/{pkg_name}/'.")
 
     # 4. Generate drift_package.toml
@@ -186,7 +186,7 @@ def run_primitive_clone(
             command="clone",
             status="FAILED",
             git_url=git_url,
-            target_directory=str(target_dir),
+            target_directory=target_dir.as_posix(),
             error_message=str(e)
         )
 
@@ -220,7 +220,7 @@ def run_primitive_clone(
         command="clone",
         status="SUCCESS",
         git_url=git_url,
-        target_directory=str(target_dir),
+        target_directory=target_dir.as_posix(),
         is_drift_workspace=is_drift,
         converted_legacy_package=converted_pkg,
         repaired_actions=repaired_actions,

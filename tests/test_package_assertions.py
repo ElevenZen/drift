@@ -172,24 +172,24 @@ class TestPackageAssertions(unittest.TestCase):
         assert_install_pkg_dirs_clean(self.install_dir, ["nonexistent_1", "nonexistent_2"])
 
         # Clean git repository
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True)
 
         pkg_dir = self.install_dir / "pkg_clean"
         pkg_dir.mkdir(parents=True, exist_ok=True)
         (pkg_dir / "file.txt").write_text("clean content", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=self.install_dir, check=True, capture_output=True)
 
         assert_install_pkg_dirs_clean(self.install_dir, "pkg_clean")
         assert_install_pkg_dirs_clean(self.install_dir, ["pkg_clean"])
 
     def test_assert_install_pkg_dirs_clean_collects_all_dirty_packages(self) -> None:
         """Verifies assert_install_pkg_dirs_clean aggregates all dirty packages across the batch."""
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True)
 
         pkg_a = self.install_dir / "pkg_a"
         pkg_b = self.install_dir / "pkg_b"
@@ -287,7 +287,7 @@ class TestPackageAssertions(unittest.TestCase):
 
         # Target directory inside drift_root
         meta_inside = PackageConfig.from_dict(
-            {"package": {"name": "pkg_inside", "target_directory": str(self.drift_root / "nested")}},
+            {"package": {"name": "pkg_inside", "target_directory": self.drift_root / "nested"}},
             "pkg_inside",
             self.source_dir / "pkg_inside",
             workspace_config=self.workspace_config,
@@ -300,7 +300,7 @@ class TestPackageAssertions(unittest.TestCase):
 
         # Target directory equal to drift_root
         meta_exact = PackageConfig.from_dict(
-            {"package": {"name": "pkg_exact", "target_directory": str(self.drift_root)}},
+            {"package": {"name": "pkg_exact", "target_directory": self.drift_root}},
             "pkg_exact",
             self.source_dir / "pkg_exact",
             workspace_config=self.workspace_config,
@@ -314,7 +314,7 @@ class TestPackageAssertions(unittest.TestCase):
             symlink_to_drift = Path(self.temp_dir.name) / "symlink_target_dir"
             symlink_to_drift.symlink_to(self.drift_root / "nested")
             meta_symlink = PackageConfig.from_dict(
-                {"package": {"name": "pkg_symlink", "target_directory": str(symlink_to_drift)}},
+                {"package": {"name": "pkg_symlink", "target_directory": symlink_to_drift}},
                 "pkg_symlink",
                 self.source_dir / "pkg_symlink",
                 workspace_config=self.workspace_config,
@@ -329,7 +329,7 @@ class TestPackageAssertions(unittest.TestCase):
         writable_target = Path(self.temp_dir.name).parent / "writable_dir"
         writable_target.mkdir(parents=True, exist_ok=True)
         meta = PackageConfig.from_dict(
-            {"package": {"name": "pkg_write", "target_directory": str(writable_target)}},
+            {"package": {"name": "pkg_write", "target_directory": writable_target}},
             "pkg_write",
             self.source_dir / "pkg_write",
             workspace_config=self.workspace_config,
@@ -360,7 +360,7 @@ class TestPackageAssertions(unittest.TestCase):
         )
 
         def mock_assert_writable(target_path: Path, sudo: bool = False) -> None:
-            if "bad" in str(target_path):
+            if "bad" in target_path.as_posix():
                 raise PermissionError(f"Directory '{target_path}' is not writable.")
 
         with mock.patch("drift.primitives.package_assertions.assert_writable", side_effect=mock_assert_writable):
@@ -383,13 +383,13 @@ class TestPackageAssertions(unittest.TestCase):
         system_target.mkdir(parents=True, exist_ok=True)
 
         meta_a = PackageConfig.from_dict(
-            {"package": {"name": "pkg_a", "target_directory": str(system_target)}},
+            {"package": {"name": "pkg_a", "target_directory": system_target}},
             "pkg_a",
             self.source_dir / "pkg_a",
             workspace_config=self.workspace_config,
         )
         meta_b = PackageConfig.from_dict(
-            {"package": {"name": "pkg_b", "target_directory": str(system_target)}},
+            {"package": {"name": "pkg_b", "target_directory": system_target}},
             "pkg_b",
             self.source_dir / "pkg_b",
             workspace_config=self.workspace_config,
@@ -438,13 +438,13 @@ class TestPackageAssertions(unittest.TestCase):
         system_target.mkdir(parents=True, exist_ok=True)
 
         meta_a = PackageConfig.from_dict(
-            {"package": {"name": "pkg_a", "target_directory": str(system_target)}},
+            {"package": {"name": "pkg_a", "target_directory": system_target}},
             "pkg_a",
             self.source_dir / "pkg_a",
             workspace_config=self.workspace_config,
         )
         meta_b = PackageConfig.from_dict(
-            {"package": {"name": "pkg_b", "target_directory": str(system_target)}},
+            {"package": {"name": "pkg_b", "target_directory": system_target}},
             "pkg_b",
             self.source_dir / "pkg_b",
             workspace_config=self.workspace_config,

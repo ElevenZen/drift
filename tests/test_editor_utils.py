@@ -61,7 +61,7 @@ class TestEditorUtils(unittest.TestCase):
 
         with patch.dict(os.environ, {"EDITOR": "nvim", "VISUAL": ""}, clear=True):
             launch_single_file_editor(file_path)
-            mock_run.assert_called_once_with(["nvim", str(file_path)], streaming=True, check=True)
+            mock_run.assert_called_once_with(["nvim", file_path.as_posix()], streaming=True, check=True)
 
     @patch("drift.utils.editor_utils.run_command")
     def test_launch_single_file_editor_vscode(self, mock_run: MagicMock) -> None:
@@ -71,12 +71,12 @@ class TestEditorUtils(unittest.TestCase):
 
         with patch.dict(os.environ, {"EDITOR": "code", "VISUAL": ""}, clear=True):
             launch_single_file_editor(file_path)
-            mock_run.assert_called_once_with(["code", "--wait", str(file_path)], streaming=True, check=True)
+            mock_run.assert_called_once_with(["code", "--wait", file_path.as_posix()], streaming=True, check=True)
 
         mock_run.reset_mock()
         with patch.dict(os.environ, {"EDITOR": "/usr/bin/codium", "VISUAL": ""}, clear=True):
             launch_single_file_editor(file_path)
-            mock_run.assert_called_once_with(["/usr/bin/codium", "--wait", str(file_path)], streaming=True, check=True)
+            mock_run.assert_called_once_with(["/usr/bin/codium", "--wait", file_path.as_posix()], streaming=True, check=True)
 
     @patch("drift.utils.editor_utils.run_command")
     def test_launch_single_file_editor_missing_binary(self, mock_run: MagicMock) -> None:
@@ -93,7 +93,7 @@ class TestEditorUtils(unittest.TestCase):
         p1 = (Path("/tmp/f1_a.txt"), Path("/tmp/f1_b.txt"))
         launch_vim_diff("nvim", [p1])
         mock_run.assert_called_once_with(
-            ["nvim", str(p1[0]), "-c", f"vert diffsplit {p1[1]}"],
+            ["nvim", p1[0].as_posix(), "-c", f"vert diffsplit {p1[1].as_posix()}"],
             streaming=True,
             check=False
         )
@@ -106,10 +106,10 @@ class TestEditorUtils(unittest.TestCase):
         launch_vim_diff("vim", [p1, p2])
         expected_cmd = [
             "vim",
-            str(p1[0]),
-            "-c", f"vert diffsplit {p1[1]}",
-            "-c", f"tabe {p2[0]}",
-            "-c", f"vert diffsplit {p2[1]}",
+            p1[0].as_posix(),
+            "-c", f"vert diffsplit {p1[1].as_posix()}",
+            "-c", f"tabe {p2[0].as_posix()}",
+            "-c", f"vert diffsplit {p2[1].as_posix()}",
             "-c", "tabfirst",
         ]
         mock_run.assert_called_once_with(expected_cmd, streaming=True, check=False)
@@ -123,7 +123,7 @@ class TestEditorUtils(unittest.TestCase):
         # Single pair
         launch_vscode_diff("code", [p1])
         mock_run.assert_called_once_with(
-            ["code", "--diff", str(p1[0]), str(p1[1]), "--reuse-window", "--wait"],
+            ["code", "--diff", p1[0].as_posix(), p1[1].as_posix(), "--reuse-window", "--wait"],
             streaming=True,
             check=False
         )
@@ -133,8 +133,8 @@ class TestEditorUtils(unittest.TestCase):
         launch_vscode_diff("code-oss", [p1, p2])
         self.assertEqual(mock_run.call_count, 2)
         mock_run.assert_has_calls([
-            call(["code-oss", "--diff", str(p1[0]), str(p1[1]), "--reuse-window"], streaming=True, check=False),
-            call(["code-oss", "--diff", str(p2[0]), str(p2[1]), "--reuse-window", "--wait"], streaming=True, check=False),
+            call(["code-oss", "--diff", p1[0].as_posix(), p1[1].as_posix(), "--reuse-window"], streaming=True, check=False),
+            call(["code-oss", "--diff", p2[0].as_posix(), p2[1].as_posix(), "--reuse-window", "--wait"], streaming=True, check=False),
         ])
 
     @patch("drift.utils.editor_utils.run_command")
@@ -151,7 +151,7 @@ class TestEditorUtils(unittest.TestCase):
             f'(setq auto-save-default nil) '
             f'(setq make-backup-files nil) '
             f'(setq create-lockfiles nil) '
-            f'(ediff-files "{p1[0]}" "{p1[1]}"))'
+            f'(ediff-files "{p1[0].as_posix()}" "{p1[1].as_posix()}"))'
         )
         mock_run.assert_called_once_with(
             ["emacs", "--eval", expected_single_elisp],
@@ -169,9 +169,9 @@ class TestEditorUtils(unittest.TestCase):
             f'(setq make-backup-files nil) '
             f'(setq create-lockfiles nil) '
             f'(tab-bar-mode 1) '
-            f'(ediff-files "{p1[0]}" "{p1[1]}") '
+            f'(ediff-files "{p1[0].as_posix()}" "{p1[1].as_posix()}") '
             f'(tab-new) '
-            f'(ediff-files "{p2[0]}" "{p2[1]}") '
+            f'(ediff-files "{p2[0].as_posix()}" "{p2[1].as_posix()}") '
             f'(tab-bar-select-tab 1))'
         )
         mock_run.assert_called_once_with(

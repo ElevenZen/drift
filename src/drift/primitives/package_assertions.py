@@ -116,7 +116,7 @@ from ..core.exceptions import (
     PackageInstallDirMissingError,
     TargetPermissionError,
 )
-from ..utils.config_utils import branch, when_none
+from ..utils.func_utils import branch, when_none
 from ..utils.git_utils import has_uncommitted_modifications
 from ..utils.path_utils import is_relative_to, encode_dot_prefix
 from ..utils.file_ops import assert_writable
@@ -437,18 +437,18 @@ def assert_no_cross_package_conflicts(
     conflict_lines = [
         f"❌ Cross-package destination conflicts detected ({len(conflicts)} collision(s)):",
     ]
-    for dst in sorted(conflicts.keys(), key=lambda p: str(p)):
+    for dst in sorted(conflicts.keys(), key=lambda p: p.as_posix()):
         claims = conflicts[dst]
         batch_claimants = sorted(set(pkg for pkg, src in claims if src == "batch"))
         installed_owners = sorted(set(pkg for pkg, src in claims if src == "installed"))
 
         if len(batch_claimants) > 1:
             conflict_lines.append(
-                f"  • '{dst}': Intra-batch collision between packages {batch_claimants}"
+                f"  • '{dst.as_posix()}': Intra-batch collision between packages {batch_claimants}"
             )
         elif installed_owners:
             conflict_lines.append(
-                f"  • '{dst}': Package '{batch_claimants[0]}' (current batch) collides with '{installed_owners[0]}' (already installed)"
+                f"  • '{dst.as_posix()}': Package '{batch_claimants[0]}' (current batch) collides with '{installed_owners[0]}' (already installed)"
             )
 
     conflicting_packages = sorted(set(

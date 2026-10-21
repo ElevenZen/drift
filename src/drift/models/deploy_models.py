@@ -15,7 +15,7 @@ from ..core.file_action import (
 )
 from ..core.mixins import AlwaysTruthy
 from ..core.serialization import SerializableModel
-from ..utils.config_utils import partition
+from ..utils.func_utils import partition
 from .install_models import PackageInstallPlan, PackageInstallResult
 from .render_models import PackageRenderResult
 from .reverse_sync_models import PackageReverseSyncPlan

@@ -62,15 +62,23 @@ from ..utils.env_utils import (
     resolve_env_configs,
 )
 from ..utils.file_inspect import check_can_symlink
-from ..utils.config_utils import (
+from ..utils.func_utils import (
     choose,
+    when_none,
+    when_not_none,
+)
+from ..utils.config_utils import (
     get_first_from,
     parse_bool_value,
     parse_config_path,
     parse_optional_config_path,
     validate_known_keys,
-    when_none,
-    when_not_none,
+)
+from ..utils.path_utils import (
+    as_posix,
+    check_is_relative_path,
+    expand_path,
+    is_relative_to,
 )
 from .package_hooks import PackageHooks
 from .package_requirements import PackageRequirements
@@ -260,7 +268,7 @@ class PackageSectionConfig(AlwaysTruthy):
             raise ConfigError(f"source_directory must be a Path for package '{self.name}'.")
         if self.source_directory.anchor:
             raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path.")
-        norm_src = os.path.normpath(str(self.source_directory))
+        norm_src = os.path.normpath(self.source_directory)
         if norm_src == ".." or norm_src.startswith(".." + os.sep) or norm_src.startswith("../"):
             raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' escapes package root.")
         if self.install_method is not None and not isinstance(self.install_method, InstallMethod):
@@ -469,10 +477,10 @@ class PackageConfig(AlwaysTruthy):
             if workspace_config is not None
             else self.package.install_method
         )
-        pkg_facts = { k: str(v) for k, v in {
+        pkg_facts = { k: as_posix(v) for k, v in {
             'drift_package_name': self.name,
             'drift_package_install_method': effective_method,
-            'drift_package_target_dir': self.package.target_directory.as_posix() if self.package.target_directory else None,
+            'drift_package_target_dir': self.package.target_directory,
         }.items() if v is not None }
         return { **ws_pkg_facts, **pkg_facts }
 
@@ -518,7 +526,7 @@ class PackageConfig(AlwaysTruthy):
         Pure path join. We avoid Path.resolve() here to maintain lexical path identity
         and prevent macOS APFS firmlink mutation (e.g., /home -> /System/Volumes/Data/home).
         """
-        if not self.package.source_directory or self.package.source_directory == Path(".") or str(self.package.source_directory) in (".", ""):
+        if not self.package.source_directory or self.package.source_directory == Path("."):
             return package_dir
         return package_dir / self.package.source_directory
 

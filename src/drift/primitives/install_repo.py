@@ -132,7 +132,7 @@ from .package_assertions import (
     resolve_target_package_order,
 )
 from ..utils.process_utils import run_command, assert_can_escalate
-from ..utils.config_utils import partition
+from ..utils.func_utils import partition
 from ..core.file_action import (
     FileActionExecutionContext,
     FileActionType,
@@ -233,7 +233,7 @@ def plan_package_install(
 
     return PackageInstallPlan(
         package=context.pkg_name,
-        target_directory=str(context.target_dir),
+        target_directory=context.target_dir.as_posix(),
         install_method=context.install_method,
         actions=actions,
         hooks_to_trigger=hooks_to_trigger,

@@ -398,7 +398,7 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertTrue(any("secrets.env" in a for a in actions))
         self.assertTrue((self.drift_root / "config" / "secrets.env").is_file())
 
-        res = subprocess.run(["git", "check-ignore", "config/secrets.env"], cwd=str(self.drift_root), capture_output=True, text=True)
+        res = subprocess.run(["git", "check-ignore", "config/secrets.env"], cwd=self.drift_root, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
         self.assertIn("config/secrets.env", res.stdout.strip())
 
@@ -409,7 +409,7 @@ class TestWorkspaceRepair(unittest.TestCase):
 
         # Run CLI repair
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
-            main(["-C", str(self.drift_root), "repair"])
+            main(["-C", self.drift_root.as_posix(), "repair"])
 
         self.assertTrue((self.drift_root / "render" / ".git").is_dir())
         report = check_existing_workspace_status(self.drift_root)
@@ -432,7 +432,7 @@ class TestWorkspaceRepair(unittest.TestCase):
         """If render/.git exists but is a bare repo, repair does not re-init and warns the user."""
         init_drift_workspace(self.drift_root)
         # Set core.bare = true in render/.git/config
-        subprocess.run(["git", "-C", str(self.drift_root / "render"), "config", "core.bare", "true"], check=True)
+        subprocess.run(["git", "-C", (self.drift_root / "render").as_posix(), "config", "core.bare", "true"], check=True)
 
         actions = repair_drift_workspace(self.drift_root)
         self.assertTrue(any("bare Git repository" in a or "Manual resolution required" in a for a in actions))
@@ -766,13 +766,13 @@ class TestWorkspaceGitUserRepair(unittest.TestCase):
         self.assertTrue(any("Configured git user in 'install/' repository." in a for a in actions))
 
         render_name = run_command(
-            ["git", "-C", str(self.drift_root / "render"), "config", "--local", "user.name"],
+            ["git", "-C", (self.drift_root / "render").as_posix(), "config", "--local", "user.name"],
             text=True,
         ).stdout.strip()
         self.assertEqual(render_name, "Bot Repair")
 
         install_email = run_command(
-            ["git", "-C", str(self.drift_root / "install"), "config", "--local", "user.email"],
+            ["git", "-C", (self.drift_root / "install").as_posix(), "config", "--local", "user.email"],
             text=True,
         ).stdout.strip()
         self.assertEqual(install_email, "bot-repair@example.com")

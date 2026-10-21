@@ -523,7 +523,7 @@ def check_engine_inputs(
             if not input_path.anchor:
                 input_path = config_dir / input_path
             if not input_path.exists():
-                missing.append(str(engine.input_file))
+                missing.append(engine.input_file.as_posix())
 
     if total == 0:
         return CheckResult(

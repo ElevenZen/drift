@@ -148,7 +148,7 @@ def compute_merkle_node_hash(node: Node, package_render_dir: Optional[Path] = No
     if node.merkle_hash is not None:
         return node.merkle_hash
 
-    from ..utils.config_utils import branch, when_none
+    from ..utils.func_utils import branch, when_none
     from .render_cache import NodeHashes
 
     own_h = when_none(node.own_hash, lambda: compute_node_own_hash(node, package_render_dir=package_render_dir))

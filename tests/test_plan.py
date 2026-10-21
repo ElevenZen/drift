@@ -50,7 +50,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
 
         # Initialize workspace repositories
         with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
-            main(["-C", str(self.drift_root), "init", "--force"])
+            main(["-C", self.drift_root.as_posix(), "init", "--force"])
             render_dir = self.drift_root / "render"
             subprocess.run(["git", "config", "user.name", "Test User"], cwd=render_dir, check=True, capture_output=True)
             subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=render_dir, check=True, capture_output=True)
@@ -102,12 +102,12 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
     def _deploy_package_clean(self, pkg_name: str) -> None:
         """Deploys a package to host and commits all intermediate stages."""
         with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
-            main(["-C", str(self.drift_root), "render", pkg_name])
-            main(["-C", str(self.drift_root), "render-commit", "-m", f"Render {pkg_name}", pkg_name])
-            main(["-C", str(self.drift_root), "stage", pkg_name])
-            main(["-C", str(self.drift_root), "install-commit", "-m", f"Stage {pkg_name}", pkg_name])
-            main(["-C", str(self.drift_root), "apply", pkg_name])
-            main(["-C", str(self.drift_root), "install-commit", "-m", f"Apply {pkg_name}"])
+            main(["-C", self.drift_root.as_posix(), "render", pkg_name])
+            main(["-C", self.drift_root.as_posix(), "render-commit", "-m", f"Render {pkg_name}", pkg_name])
+            main(["-C", self.drift_root.as_posix(), "stage", pkg_name])
+            main(["-C", self.drift_root.as_posix(), "install-commit", "-m", f"Stage {pkg_name}", pkg_name])
+            main(["-C", self.drift_root.as_posix(), "apply", pkg_name])
+            main(["-C", self.drift_root.as_posix(), "install-commit", "-m", f"Apply {pkg_name}"])
 
     def test_plan_clean_workspace_no_changes_no_drift(self) -> None:
         """Verifies planning on fully synchronized workspace reports success with zero changes or drift."""
@@ -200,7 +200,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         # 5. Dual CLI Backend tests (Typer and Argparse)
         stdout_typer = io.StringIO()
         with patch("sys.stdout", stdout_typer), patch("sys.stderr", io.StringIO()):
-            main(["-C", str(self.drift_root), "plan", "-v", pkg_name])
+            main(["-C", self.drift_root.as_posix(), "plan", "-v", pkg_name])
         typer_out = stdout_typer.getvalue()
         self.assertIn("0 with changes", typer_out)
         self.assertIn("1 unchanged", typer_out)
@@ -208,7 +208,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
 
         stdout_argparse = io.StringIO()
         with patch("sys.stdout", stdout_argparse), patch("sys.stderr", io.StringIO()):
-            run_argparse_cli(["-C", str(self.drift_root), "plan", "-v", pkg_name])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "plan", "-v", pkg_name])
         argparse_out = stdout_argparse.getvalue()
         self.assertIn("0 with changes", argparse_out)
         self.assertIn("1 unchanged", argparse_out)
@@ -291,12 +291,12 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         # 1. Clean workspace -> exit code 0 across both backends
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
-            main(["-C", str(self.drift_root), "plan", "pkg_cli"])
+            main(["-C", self.drift_root.as_posix(), "plan", "pkg_cli"])
         self.assertIn("pkg_cli", stdout.getvalue())
 
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
-            run_argparse_cli(["-C", str(self.drift_root), "plan", "pkg_cli"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "plan", "pkg_cli"])
         self.assertIn("pkg_cli", stdout.getvalue())
 
         # 2. Introduce host drift
@@ -306,7 +306,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
             with self.assertRaises(SystemExit) as cm:
-                main(["-C", str(self.drift_root), "plan", "pkg_cli"])
+                main(["-C", self.drift_root.as_posix(), "plan", "pkg_cli"])
             self.assertEqual(cm.exception.code, ExitCode.DRIFT_DETECTED)
         self.assertIn("DRIFT_DETECTED", stdout.getvalue())
 
@@ -314,7 +314,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
             with self.assertRaises(SystemExit) as cm:
-                run_argparse_cli(["-C", str(self.drift_root), "plan", "pkg_cli"])
+                run_argparse_cli(["-C", self.drift_root.as_posix(), "plan", "pkg_cli"])
             self.assertEqual(cm.exception.code, ExitCode.DRIFT_DETECTED)
         self.assertIn("DRIFT_DETECTED", stdout.getvalue())
 
@@ -322,7 +322,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
             with self.assertRaises(SystemExit) as cm:
-                main(["-C", str(self.drift_root), "plan", "--json", "pkg_cli"])
+                main(["-C", self.drift_root.as_posix(), "plan", "--json", "pkg_cli"])
             self.assertEqual(cm.exception.code, ExitCode.DRIFT_DETECTED)
         data = json.loads(stdout.getvalue())
         self.assertEqual(data["status"], "DRIFT_DETECTED")
@@ -331,7 +331,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         # Force mode (Typer) -> exits with 0
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
-            main(["-C", str(self.drift_root), "plan", "--force", "pkg_cli"])
+            main(["-C", self.drift_root.as_posix(), "plan", "--force", "pkg_cli"])
         self.assertIn("pkg_cli", stdout.getvalue())
 
     def test_deploy_dry_run_flag_alias(self) -> None:
@@ -342,13 +342,13 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         # Typer deploy --dry-run
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
-            main(["-C", str(self.drift_root), "deploy", "--dry-run", "pkg_deploy_dry"])
+            main(["-C", self.drift_root.as_posix(), "deploy", "--dry-run", "pkg_deploy_dry"])
         self.assertIn("=== Workspace Deployment Preview: deploy", stdout.getvalue())
 
         # Argparse deploy -n
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
-            run_argparse_cli(["-C", str(self.drift_root), "deploy", "-n", "pkg_deploy_dry"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "deploy", "-n", "pkg_deploy_dry"])
         self.assertIn("=== Workspace Deployment Preview: deploy", stdout.getvalue())
 
     def test_plan_dependency_topological_ordering(self) -> None:
@@ -382,12 +382,12 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         # Also verify CLI plan does not write to render/
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
-            main(["-C", str(self.drift_root), "plan", pkg_name])
+            main(["-C", self.drift_root.as_posix(), "plan", pkg_name])
         self.assertFalse(render_pkg_dir.exists())
 
         # Verify git status in render/ repository remains pristine clean
         res = subprocess.run(
-            ["git", "-C", str(self.drift_root / "render"), "status", "--porcelain"],
+            ["git", "-C", (self.drift_root / "render").as_posix(), "status", "--porcelain"],
             capture_output=True,
             text=True,
             check=True,
@@ -436,7 +436,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
 
         # Canonical render repository must remain 100% clean
         res = subprocess.run(
-            ["git", "-C", str(self.drift_root / "render"), "status", "--porcelain"],
+            ["git", "-C", (self.drift_root / "render").as_posix(), "status", "--porcelain"],
             capture_output=True,
             text=True,
             check=True,
@@ -627,9 +627,9 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         self.assertEqual(update_action.dst_path, self.drift_root / "install" / pkg_name / "service.conf")
 
         # Zero mutation invariant on real repositories
-        res_r = subprocess.run(["git", "-C", str(self.drift_root / "render"), "status", "--porcelain"], capture_output=True, text=True, check=True)
+        res_r = subprocess.run(["git", "-C", (self.drift_root / "render").as_posix(), "status", "--porcelain"], capture_output=True, text=True, check=True)
         self.assertEqual(res_r.stdout.strip(), "")
-        res_i = subprocess.run(["git", "-C", str(self.drift_root / "install"), "status", "--porcelain"], capture_output=True, text=True, check=True)
+        res_i = subprocess.run(["git", "-C", (self.drift_root / "install").as_posix(), "status", "--porcelain"], capture_output=True, text=True, check=True)
         self.assertEqual(res_i.stdout.strip(), "")
 
     def test_plan_install_symlink_identity_and_skip_identical(self) -> None:
@@ -751,7 +751,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         # Test default plan output (show_all=False): pkg_clean collapsed, summary banner present
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
-            main(["-C", str(self.drift_root), "plan", "pkg_clean", "pkg_modified"])
+            main(["-C", self.drift_root.as_posix(), "plan", "pkg_clean", "pkg_modified"])
         out_str = stdout.getvalue()
         self.assertIn("📊 Summary: 2 package(s) planned | 1 with changes | 1 unchanged | 0 drifted", out_str)
         self.assertIn("✨ 1 package(s) unchanged: pkg_clean", out_str)
@@ -762,7 +762,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         # Test show_all=True via -a flag (Typer backend)
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
-            main(["-C", str(self.drift_root), "plan", "-a", "pkg_clean", "pkg_modified"])
+            main(["-C", self.drift_root.as_posix(), "plan", "-a", "pkg_clean", "pkg_modified"])
         out_a = stdout.getvalue()
         self.assertIn("📦 Package: pkg_clean", out_a)
         self.assertIn("📦 Package: pkg_modified", out_a)
@@ -771,7 +771,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         # Test show_all=True via --all flag (Argparse backend)
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
-            run_argparse_cli(["-C", str(self.drift_root), "plan", "--all", "pkg_clean", "pkg_modified"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "plan", "--all", "pkg_clean", "pkg_modified"])
         out_arg = stdout.getvalue()
         self.assertIn("📦 Package: pkg_clean", out_arg)
         self.assertIn("📦 Package: pkg_modified", out_arg)
@@ -782,7 +782,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
             with self.assertRaises(SystemExit) as cm:
-                main(["-C", str(self.drift_root), "plan", "pkg_clean", "pkg_modified"])
+                main(["-C", self.drift_root.as_posix(), "plan", "pkg_clean", "pkg_modified"])
             self.assertEqual(cm.exception.code, ExitCode.DRIFT_DETECTED)
         out_drift = stdout.getvalue()
         self.assertIn("⚠️  Drift Warnings:", out_drift)
@@ -831,7 +831,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
             stdout = io.StringIO()
             with patch("sys.stdout", stdout):
                 with self.assertRaises(SystemExit) as cm:
-                    cli_call(["-C", str(self.drift_root), "plan", "--json", "pkg_clean_j", "pkg_mod_j"])
+                    cli_call(["-C", self.drift_root.as_posix(), "plan", "--json", "pkg_clean_j", "pkg_mod_j"])
                 self.assertEqual(cm.exception.code, ExitCode.DRIFT_DETECTED)
             cli_data = json.loads(stdout.getvalue())
             self.assertEqual(cli_data["status"], "DRIFT_DETECTED")
@@ -844,7 +844,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
             with self.assertRaises(SystemExit) as cm:
-                main(["-C", str(self.drift_root), "deploy", "--dry-run", "--json", "pkg_clean_j", "pkg_mod_j"])
+                main(["-C", self.drift_root.as_posix(), "deploy", "--dry-run", "--json", "pkg_clean_j", "pkg_mod_j"])
             self.assertEqual(cm.exception.code, ExitCode.DRIFT_DETECTED)
         deploy_json_data = json.loads(stdout.getvalue())
         self.assertEqual(deploy_json_data["status"], "DRIFT_DETECTED")
@@ -874,7 +874,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
             # Typer
             with patch("drift.cli.cli_handlers.execute_plan") as mock_action:
                 with patch("sys.stdout", io.StringIO()):
-                    main(["-C", str(self.drift_root), "plan", flag, "pkg_a"])
+                    main(["-C", self.drift_root.as_posix(), "plan", flag, "pkg_a"])
                 self.assertTrue(mock_action.called, f"Typer plan with {flag} was not called")
                 _, kwargs = mock_action.call_args
                 opts = kwargs.get("options")
@@ -884,7 +884,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
             # Argparse
             with patch("drift.cli.cli_handlers.execute_plan") as mock_action:
                 with patch("sys.stdout", io.StringIO()):
-                    run_argparse_cli(["-C", str(self.drift_root), "plan", flag, "pkg_a"])
+                    run_argparse_cli(["-C", self.drift_root.as_posix(), "plan", flag, "pkg_a"])
                 self.assertTrue(mock_action.called, f"Argparse plan with {flag} was not called")
                 _, kwargs = mock_action.call_args
                 opts = kwargs.get("options")
@@ -895,7 +895,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         for cli_call in [main, run_argparse_cli]:
             with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
                 with self.assertRaises(SystemExit) as cm:
-                    cli_call(["-C", str(self.drift_root), "plan", "--no-hooks", "--with-hooks", "pkg_a"])
+                    cli_call(["-C", self.drift_root.as_posix(), "plan", "--no-hooks", "--with-hooks", "pkg_a"])
                 self.assertNotEqual(cm.exception.code, 0)
 
         # Deploy --dry-run flag propagation
@@ -903,7 +903,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
             for cli_call in [main, run_argparse_cli]:
                 with patch("drift.cli.cli_handlers.execute_plan") as mock_action:
                     with patch("sys.stdout", io.StringIO()):
-                        cli_call(["-C", str(self.drift_root), "deploy", flag, "-f", "-r", "-c", "--no-deps", "--no-hooks", "pkg_a"])
+                        cli_call(["-C", self.drift_root.as_posix(), "deploy", flag, "-f", "-r", "-c", "--no-deps", "--no-hooks", "pkg_a"])
                     self.assertTrue(mock_action.called)
                     _, kwargs = mock_action.call_args
                     self.assertEqual(kwargs.get("command_name"), "deploy")
@@ -1006,7 +1006,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
             with self.assertRaises(SystemExit) as cm:
-                main(["-C", str(self.drift_root), "plan", "pkg_c1", "pkg_c2"])
+                main(["-C", self.drift_root.as_posix(), "plan", "pkg_c1", "pkg_c2"])
             self.assertEqual(cm.exception.code, ExitCode.GENERAL_ERROR)
         cli_out = stdout.getvalue()
         self.assertIn("Real deploy pipeline will fail", cli_out)

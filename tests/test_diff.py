@@ -38,10 +38,10 @@ class TestDiff(unittest.TestCase):
         
         # Initialize Git in render and install
         for d in [self.render_dir, self.install_dir]:
-            subprocess.run(["git", "init"], cwd=str(d), capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(d), capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(d), capture_output=True, check=True)
-            subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=str(d), capture_output=True, check=True)
+            subprocess.run(["git", "init"], cwd=d, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=d, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=d, capture_output=True, check=True)
+            subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=d, capture_output=True, check=True)
 
     def tearDown(self):
         self.temp_dir.cleanup()

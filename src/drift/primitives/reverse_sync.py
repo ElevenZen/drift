@@ -295,7 +295,7 @@ def plan_package_reverse_sync(
         logger.info(f"Reverse sync is disabled for package '{pkg}' (enable_install = false). Skipping.")
         return PackageReverseSyncPlan(
             package=pkg,
-            target_directory=str(target_dir_path),
+            target_directory=target_dir_path.as_posix(),
             status="SKIPPED",
         )
 
@@ -304,7 +304,7 @@ def plan_package_reverse_sync(
         logger.warning(f"Target directory '{target_dir_path}' for package '{pkg}' does not exist. Skipping reverse sync.")
         return PackageReverseSyncPlan(
             package=pkg,
-            target_directory=str(target_dir_path),
+            target_directory=target_dir_path.as_posix(),
             status="SKIPPED",
         )
 
@@ -353,7 +353,7 @@ def plan_package_reverse_sync(
 
     return PackageReverseSyncPlan(
         package=pkg,
-        target_directory=str(target_dir_path),
+        target_directory=target_dir_path.as_posix(),
         actions=actions,
         status="PENDING",
     )

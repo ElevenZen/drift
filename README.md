@@ -12,7 +12,7 @@
 
 ## Binaries don't drift. Configuration does.
 
-Tools like [mise](https://mise.jdx.dev), [Nix](https://nixos.org), or pkgit pin and install software reproducibly: a given version is the same bytes on every machine, and nothing rewrites it at runtime.
+Tools like [Nix](https://nixos.org), [mise](https://mise.jdx.dev), [pkgit](https://git.symlinx.net/pkgit/about/), or the system package manager install software reproducibly: a given version is almost the same bytes on every machine, and nothing rewrites it at runtime.
 
 Configuration is different. It varies per machine, embeds secrets, and is edited in place all the time by GUI apps, IDEs, installers, and you. **That mutable layer is what Drift manages.**
 

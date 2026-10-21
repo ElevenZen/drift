@@ -159,7 +159,7 @@ from ..models import (
 )
 from .render_repo import RenderOptions, run_primitive_2_render_packages
 from .reverse_sync import run_primitive_1_reverse_sync
-from ..utils.config_utils import partition
+from ..utils.func_utils import partition
 from ..utils.git_utils import (
     GitStatusChanges,
     parse_git_status_porcelain,
@@ -311,7 +311,7 @@ def generate_unified_patch(install_base: Path,
                            pkg_rel_path: Path,
                            old_rel_path: Optional[Path] = None) -> str:
     """Generates the unified patch string for a given drifted file in install/."""
-    cmd = ["git", "-C", str(install_base), "diff", "HEAD", "--"]
+    cmd = ["git", "-C", install_base.as_posix(), "diff", "HEAD", "--"]
     if old_rel_path:
         cmd.append(old_rel_path.as_posix())
     cmd.append(pkg_rel_path.as_posix())
@@ -372,7 +372,7 @@ def check_patch_conflicts(src_file: Path, patch_content: str) -> bool:
     """
     if not check_patch_has_hunks(patch_content):
         return False
-    cmd = ["patch", "--dry-run", "--no-backup-if-mismatch", str(src_file)]
+    cmd = ["patch", "--dry-run", "--no-backup-if-mismatch", src_file.as_posix()]
     try:
         subprocess.run(cmd, input=patch_content, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
         return False
@@ -393,7 +393,7 @@ def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: boo
     cmd = ["patch", "--no-backup-if-mismatch"]
     if accept_conflicts:
         cmd.append("--merge")
-    cmd.append(str(src_file))
+    cmd.append(src_file.as_posix())
     
     try:
         subprocess.run(cmd, input=patch_content, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
@@ -431,7 +431,7 @@ def resolve_source_file_path(
 def _temporary_stage_package_index(install_base: Path, pkg: str) -> Iterator[None]:
     """Temporarily stages a package in install/ for rename & diff inspection, restoring index on exit."""
     res_add = subprocess.run(
-        ["git", "-C", str(install_base), "add", "--all", pkg],
+        ["git", "-C", install_base.as_posix(), "add", "--all", pkg],
         capture_output=True,
         text=True,
         check=False,
@@ -444,7 +444,7 @@ def _temporary_stage_package_index(install_base: Path, pkg: str) -> Iterator[Non
         yield
     finally:
         res_rst = subprocess.run(
-            ["git", "-C", str(install_base), "restore", "--staged", "--", pkg],
+            ["git", "-C", install_base.as_posix(), "restore", "--staged", "--", pkg],
             capture_output=True,
             text=True,
             check=False,
@@ -697,7 +697,7 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
     rel_install_base = Path(install_pkg_dir.name) / rel_path
     # check=False is intentional: file may not be tracked in the git index yet.
     res_rm = subprocess.run(
-        ["git", "-C", str(install_base), "rm", "-r", "--cached", "-f", "--", rel_install_base.as_posix()],
+        ["git", "-C", install_base.as_posix(), "rm", "-r", "--cached", "-f", "--", rel_install_base.as_posix()],
         capture_output=True,
         text=True,
         check=False,
@@ -1616,7 +1616,7 @@ def stage_converged_package_drifts(
 
     stage_args = [(Path(plan.package) / p).as_posix() for p in plan.converged_files]
     res_add = subprocess.run(
-        ["git", "-C", str(workspace_config.install_path), "add", "--", *stage_args],
+        ["git", "-C", workspace_config.install_path.as_posix(), "add", "--", *stage_args],
         capture_output=True,
         text=True,
         check=False,
@@ -1770,7 +1770,7 @@ def execute_package_adopt(
     if resolved_paths:
         stage_args = [(Path(plan.package) / p).as_posix() for p in resolved_paths]
         res_add = subprocess.run(
-            ["git", "-C", str(workspace_config.install_path), "add", "--", *stage_args],
+            ["git", "-C", workspace_config.install_path.as_posix(), "add", "--", *stage_args],
             capture_output=True,
             text=True,
             check=False,

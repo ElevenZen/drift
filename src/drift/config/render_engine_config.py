@@ -32,14 +32,16 @@ from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence, 
 from ..core.constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from ..core.exceptions import ConfigError
 from ..core.mixins import AlwaysTruthy
-from ..utils.config_utils import (
+from ..utils.func_utils import (
     branch,
     choose,
+    when_none,
+    when_not_none,
+)
+from ..utils.config_utils import (
     parse_command_tokens,
     parse_optional_config_path,
     validate_known_keys,
-    when_none,
-    when_not_none,
 )
 from ..utils.path_utils import check_is_partially_anchored_path
 

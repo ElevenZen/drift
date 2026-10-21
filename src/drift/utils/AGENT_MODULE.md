@@ -10,7 +10,7 @@
 ---
 
 ## 2. Internal Dependency Order (Bottom-Up)
-1. **Pure Data & Parsing**: [`toml_utils.py`](toml_utils.py) $\rightarrow$ [`toml_edit.py`](toml_edit.py), [`config_utils.py`](config_utils.py), [`path_utils.py`](path_utils.py), [`host_facts.py`](host_facts.py)
+1. **Pure Functional & Path Primitives**: [`func_utils.py`](func_utils.py) $\rightarrow$ [`path_utils.py`](path_utils.py), [`toml_utils.py`](toml_utils.py) $\rightarrow$ [`toml_edit.py`](toml_edit.py), [`config_utils.py`](config_utils.py), [`host_facts.py`](host_facts.py)
 2. **Environment & Process**: [`process_utils.py`](process_utils.py), [`env_utils.py`](env_utils.py), [`python_hook_utils.py`](python_hook_utils.py)
 3. **Filesystem & Git Operations**: [`file_inspect.py`](file_inspect.py), [`file_ops.py`](file_ops.py), [`git_utils.py`](git_utils.py), [`editor_utils.py`](editor_utils.py), [`workspace_root.py`](workspace_root.py)
 
@@ -18,7 +18,16 @@
 
 ## 3. Module & Public API Catalog
 
-### [`path_utils.py`](path_utils.py) — 3-State Path Taxonomy & Dot-Prefix Translation
+### [`func_utils.py`](func_utils.py) — Functional Control-Flow, Null-Safety & Collection Helpers
+* `partition(pred: Callable[[T], bool], items: Iterable[T]) -> Tuple[List[T], List[T]]`: Splits items into `(truthy_list, falsy_list)`.
+* `branch(predicate: Union[bool, Callable[[], Any]], lambda1: Callable[[], T], lambda2: Callable[[], T]) -> T`: Evaluates `predicate` and invokes `lambda1()` if truthy, otherwise `lambda2()`.
+* `choose(predicate: Union[bool, Callable[[], Any]], value1: T, value2: T) -> T`: Eager counterpart of `branch()`; returns `value1` / `value2` verbatim (callable values are never invoked). Use `branch()` when either side is expensive, side-effecting, or only valid under its condition.
+* `when_not_none(a: Optional[S], b: Union[Callable[[S], Optional[T]], Callable[[], Optional[T]], Optional[T]]) -> Optional[T]`: Chooses/invokes `b` when `a is not None`, otherwise returns `None`.
+* `when_none(a: Optional[S], b: Union[Callable[[], T], T]) -> Union[S, T]`: Chooses/invokes fallback `b` when `a is None`, otherwise returns `a`.
+
+### [`path_utils.py`](path_utils.py) — 3-State Path Taxonomy, String Formatting & Dot-Prefix Translation
+* `as_posix(path: Union[str, PurePath]) -> str`: Converts a `Path`, `PurePath`, or string into a POSIX path string.
+* `as_windows(path: Union[str, PurePath]) -> str`: Converts a `Path`, `PurePath`, or string into a Windows backslash path string.
 * `expand_path(path_input: Union[str, Path]) -> Path`: Expands `~` and environment variables (`$VAR`, `%VAR%`) into a `Path`.
 * `check_is_relative_path(path: Path) -> bool`: Returns `True` iff `not path.anchor` (**State 1: Strictly Relative**).
 * `check_is_partially_anchored_path(path: Path) -> bool`: Returns `True` iff `bool(path.anchor) and not path.is_absolute()` (**State 2: Partially Anchored**, e.g. Windows `/foo` or `C:foo`).
@@ -77,11 +86,6 @@
 * `TomlEditAction` (`UPDATED` / `INSERTED` / `UNCHANGED`), `TomlLineKind`, `TomlLogicalLine`, `TomlTableSpan`, `TomlBoolEditResult`.
 
 ### [`config_utils.py`](config_utils.py) & [`toml_utils.py`](toml_utils.py) — Config Predicates & TOML Engine
-* `partition(pred: Callable[[T], bool], items: Iterable[T]) -> Tuple[List[T], List[T]]`: Splits items into `(truthy_list, falsy_list)`.
-* `branch(predicate: Union[bool, Callable[[], Any]], lambda1: Callable[[], T], lambda2: Callable[[], T]) -> T`: Evaluates `predicate` and invokes `lambda1()` if truthy, otherwise `lambda2()`.
-* `choose(predicate: Union[bool, Callable[[], Any]], value1: T, value2: T) -> T`: Eager counterpart of `branch()`; returns `value1` / `value2` verbatim (callable values are never invoked). Use `branch()` when either side is expensive, side-effecting, or only valid under its condition.
-* `when_not_none(a: Optional[S], b: Union[Callable[[S], Optional[T]], Callable[[], Optional[T]], Optional[T]]) -> Optional[T]`: Chooses/invokes `b` when `a is not None`, otherwise returns `None`.
-* `when_none(a: Optional[S], b: Union[Callable[[], T], T]) -> Union[S, T]`: Chooses/invokes fallback `b` when `a is None`, otherwise returns `a`.
 * `get_first_from(data: Mapping, keys: Sequence[str], default=None) -> Any`: Returns value for the first matching key alias.
 * `get_nested_from(data: dict, keys: Union[str, Sequence[str]], default=None, required=False, is_table=False, context="configuration") -> Any`: Traverses nested dict paths with type/presence validation.
 * `parse_bool_value(val: Any, default: bool = False, strict: bool = False, context: str = "") -> bool`: Coerces boolean values.

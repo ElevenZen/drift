@@ -43,9 +43,9 @@ class TestDeploy(unittest.TestCase):
 
         # Initialize install and render as git repos
         for repo_dir in (self.install_dir, self.render_dir):
-            subprocess.run(["git", "init"], cwd=str(repo_dir), check=True, capture_output=True)
-            subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(repo_dir), check=True, capture_output=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(repo_dir), check=True, capture_output=True)
+            subprocess.run(["git", "init"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_dir, check=True, capture_output=True)
 
         # Create global config file
         self.config_dir = self.drift_root / "config"
@@ -67,8 +67,8 @@ pkg_a = true
         # Create initial state.toml in install/
         self.state_file = self.install_dir / "state.toml"
         self.state_file.write_text("[packages]\n", encoding="utf-8")
-        subprocess.run(["git", "add", "state.toml"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "state.toml"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Build workspace config
         self.workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
@@ -106,10 +106,10 @@ target_directory = "{self.system_target_dir.as_posix()}"
         self.assertEqual(registry.get_package_state("pkg_a"), "installed")
 
         # 3. install/ and render/ git status should be clean (committed successfully)
-        install_status = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True, check=True)
+        install_status = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True, check=True)
         self.assertEqual(install_status.stdout.strip(), "")
 
-        render_status = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.render_dir), capture_output=True, text=True, check=True)
+        render_status = subprocess.run(["git", "status", "--porcelain"], cwd=self.render_dir, capture_output=True, text=True, check=True)
         self.assertEqual(render_status.stdout.strip(), "")
 
     def test_deploy_pipeline_aborts_on_system_drift(self) -> None:
@@ -149,7 +149,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         # 4. Verify install/ git log contains both the drift snapshot commit and deploy install commit
         git_log = subprocess.run(
             ["git", "log", "--oneline", "-n", "3"],
-            cwd=str(self.install_dir),
+            cwd=self.install_dir,
             capture_output=True,
             text=True,
             check=True
@@ -160,7 +160,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         # 5. Verify the drift snapshot commit in install/ recorded the modified host content
         snapshot_content = subprocess.run(
             ["git", "show", "HEAD~1:pkg_a/file.txt"],
-            cwd=str(self.install_dir),
+            cwd=self.install_dir,
             capture_output=True,
             text=True,
             check=True
@@ -248,7 +248,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
     def test_deploy_pipeline_checks_git_configs(self) -> None:
         """Verifies that deploy pipeline verifies git config user.name and user.email exists."""
         # Unconfigure user.name inside render repo temporarily
-        subprocess.run(["git", "config", "--unset", "user.name"], cwd=str(self.render_dir), check=True)
+        subprocess.run(["git", "config", "--unset", "user.name"], cwd=self.render_dir, check=True)
         
         env_override = {
             "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -574,8 +574,8 @@ target_directory = "{self.system_target_dir.as_posix()}"
         root_config = pkg_install_dir / PACKAGE_CONFIG_FILE_NAME
         if root_config.exists():
             root_config.unlink()
-        subprocess.run(["git", "add", "-A"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Corrupt config"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Corrupt config"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 3. Running check_and_prevent_system_drifts should NOT crash with ValueError; it should warn and return clean drifts
         set_test_mode(True, enable_logging=True)

@@ -212,7 +212,7 @@ class TestDeployCliExitCodes(_DeployWorkspaceTestCase):
         for backend, runner in CLI_BACKENDS.items():
             for extra in ([], ["--json"]):
                 with self.subTest(backend=backend, json=bool(extra)):
-                    code, out = self._exit_code(runner, ["-C", str(self.drift_root), "deploy", self.PKG, *extra])
+                    code, out = self._exit_code(runner, ["-C", self.drift_root.as_posix(), "deploy", self.PKG, *extra])
                     self.assertEqual(code, ExitCode.DRIFT_DETECTED)
                     if extra:
                         payload = json.loads(out)
@@ -223,7 +223,7 @@ class TestDeployCliExitCodes(_DeployWorkspaceTestCase):
         self.make_midway()
         for backend, runner in CLI_BACKENDS.items():
             with self.subTest(backend=backend):
-                code, _ = self._exit_code(runner, ["-C", str(self.drift_root), "deploy", self.PKG])
+                code, _ = self._exit_code(runner, ["-C", self.drift_root.as_posix(), "deploy", self.PKG])
                 self.assertEqual(code, ExitCode.GENERAL_ERROR)
 
     def test_force_recovers_then_warm_deploy_succeeds(self) -> None:
@@ -232,11 +232,11 @@ class TestDeployCliExitCodes(_DeployWorkspaceTestCase):
             with self.subTest(backend=backend):
                 self.target_file.write_text(f"edited by {backend}\n", encoding="utf-8")
                 # Pass 1 (cold recovery): --force overwrites the drift.
-                code, _ = self._exit_code(runner, ["-C", str(self.drift_root), "deploy", self.PKG, "--force"])
+                code, _ = self._exit_code(runner, ["-C", self.drift_root.as_posix(), "deploy", self.PKG, "--force"])
                 self.assertEqual(code, 0)
                 self.assertEqual(self.target_file.read_text(encoding="utf-8"), "from source\n")
                 # Pass 2 (warm): plain deploy succeeds with no drift left.
-                code, _ = self._exit_code(runner, ["-C", str(self.drift_root), "deploy", self.PKG])
+                code, _ = self._exit_code(runner, ["-C", self.drift_root.as_posix(), "deploy", self.PKG])
                 self.assertEqual(code, 0)
 
 

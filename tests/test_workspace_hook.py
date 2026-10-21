@@ -82,7 +82,7 @@ def configure_workspace(context):
         hook_file.write_text("""
 def configure_workspace(context):
     cfg = context.config
-    assert str(context.drift_root) in str(cfg) or True
+    assert context.drift_root.as_posix() in str(cfg) or True
     assert isinstance(context.discovered_packages, list)
     assert "pkg1" in context.discovered_packages
     assert "pkg2" in context.discovered_packages
@@ -131,7 +131,7 @@ pkg1 = true
 
         cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(cfg.env_resolve.effective.default.get("CUSTOM_HOOK_RAN"), "yes")
-        self.assertEqual(str(cfg.workspace.hook_file), "custom_hook.py")
+        self.assertEqual(cfg.workspace.hook_file, Path("custom_hook.py"))
 
     def test_custom_hook_file_nested_in_config_dir(self) -> None:
         """Custom hook_file nested inside a subdirectory of config/ resolves properly."""

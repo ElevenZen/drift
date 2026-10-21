@@ -42,7 +42,7 @@ from ..config.workspace_enable_edit import (
 )
 from ..core.exceptions import ConfigError
 from ..models import PackageEnableResult
-from ..utils.config_utils import choose
+from ..utils.func_utils import choose
 from ..utils.file_ops import write_file
 from ..utils.path_utils import to_relative_posix
 

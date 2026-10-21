@@ -99,6 +99,7 @@ Layer 1: Lexical State & Delimiter Tracking Primitives
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 import re
 from typing import Any, List, Optional
 
@@ -797,8 +798,10 @@ def merge_toml(dict_a: dict, dict_b: dict) -> dict:
 
 def _escape_toml_string(val: Any) -> str:
     """Escapes special characters in TOML string literals (including newlines and control characters)."""
+    from .path_utils import as_posix
+    raw = as_posix(val)
     return (
-        str(val)
+        raw
         .replace("\\", "\\\\")
         .replace('"', '\\"')
         .replace("\b", "\\b")

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from .process_utils import run_command
 from .file_inspect import check_is_trackable
-from .path_utils import to_relative_path
+from .path_utils import as_posix, to_relative_path
 from ..core.exceptions import mark_logged
 
 logger = logging.getLogger(__name__)
@@ -101,9 +101,9 @@ def get_git_status_porcelain(
     """Returns the trackable output lines of git status --porcelain for a given repository and package/sub path."""
     if not repo_path.exists():
         return []
-    cmd = ["git", "-C", str(repo_path), "status", "--porcelain", "-uall"]
+    cmd = ["git", "-C", repo_path.as_posix(), "status", "--porcelain", "-uall"]
     if pkg_path:
-        cmd.extend(["--", str(pkg_path)])
+        cmd.extend(["--", as_posix(pkg_path)])
     # check=False is intentional: non-zero returncode indicates error/clean/untracked, handled explicitly below.
     res = run_command(cmd, text=True, check=False, suppress_output=True)
     if res.returncode != 0 or not res.stdout or not res.stdout.strip():
@@ -192,7 +192,7 @@ def _is_pkg_stageable(repo_path: Path, pkg: str) -> bool:
         return True
     # check=False is intentional: exit code indicates untracked folder/missing files.
     res = run_command(
-        ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"],
+        ["git", "-C", repo_path.as_posix(), "ls-files", f"{pkg}/"],
         text=True,
         check=False,
         suppress_output=True,
@@ -229,9 +229,9 @@ def commit_repo_changes(
             # Nothing to add for these specific packages
             return False
 
-        add_cmd = ["git", "-C", str(repo_path), "add", *stage_targets]
+        add_cmd = ["git", "-C", repo_path.as_posix(), "add", *stage_targets]
     else:
-        add_cmd = ["git", "-C", str(repo_path), "add", "-A"]
+        add_cmd = ["git", "-C", repo_path.as_posix(), "add", "-A"]
 
     try:
         run_command(add_cmd, text=True)
@@ -256,7 +256,7 @@ def commit_repo_changes(
     # 3. Perform git commit with the given commit message
     try:
         run_command(
-            ["git", "-C", str(repo_path), "commit", "-m", commit_message],
+            ["git", "-C", repo_path.as_posix(), "commit", "-m", commit_message],
             text=True,
         )
         return True
@@ -280,7 +280,7 @@ def commit_staged_repo_changes(
         raise FileNotFoundError(f"{repo_name} directory does not exist: {repo_path}")
 
     res = run_command(
-        ["git", "-C", str(repo_path), "diff", "--cached", "--quiet"],
+        ["git", "-C", repo_path.as_posix(), "diff", "--cached", "--quiet"],
         text=True,
         check=False,
     )
@@ -289,7 +289,7 @@ def commit_staged_repo_changes(
 
     try:
         run_command(
-            ["git", "-C", str(repo_path), "commit", "-m", commit_message],
+            ["git", "-C", repo_path.as_posix(), "commit", "-m", commit_message],
             text=True,
         )
         return True
@@ -302,7 +302,7 @@ def is_git_tracked(dir_path: Path) -> bool:
     """Checks if a directory is inside a Git repository."""
     # check=False is intentional: returncode == 0 directly determines git repository presence.
     res = run_command(
-        ["git", "-C", str(dir_path), "rev-parse", "--git-dir"],
+        ["git", "-C", dir_path.as_posix(), "rev-parse", "--git-dir"],
         text=True,
         check=False,
         suppress_output=True,
@@ -322,7 +322,7 @@ def get_git_toplevel(dir_path: Path) -> Path:
     try:
         res = run_command(
             ["git", "rev-parse", "--show-toplevel"],
-            cwd=str(dir_path),
+            cwd=dir_path,
             text=True,
         )
         return Path(res.stdout.strip()).resolve()
@@ -334,7 +334,7 @@ def is_bare_repository(dir_path: Path) -> bool:
     """Checks if the Git repository is a bare repository."""
     # check=False is intentional: inspect returncode and stdout to identify bare repo state.
     res = run_command(
-        ["git", "-C", str(dir_path), "rev-parse", "--is-bare-repository"],
+        ["git", "-C", dir_path.as_posix(), "rev-parse", "--is-bare-repository"],
         text=True,
         check=False,
         suppress_output=True,
@@ -346,7 +346,7 @@ def is_detached_head(dir_path: Path) -> bool:
     """Checks if the Git repository is in a detached HEAD state."""
     # check=False is intentional: symbolic-ref exits with non-zero when HEAD is detached.
     res = run_command(
-        ["git", "-C", str(dir_path), "symbolic-ref", "-q", "HEAD"],
+        ["git", "-C", dir_path.as_posix(), "symbolic-ref", "-q", "HEAD"],
         text=True,
         check=False,
         suppress_output=True,
@@ -358,7 +358,7 @@ def is_merge_or_rebase_in_progress(dir_path: Path) -> bool:
     """Checks if a merge or rebase operation is currently in progress."""
     # check=False is intentional: non-zero returncode indicates git-dir resolution failed.
     res = run_command(
-        ["git", "-C", str(dir_path), "rev-parse", "--git-dir"],
+        ["git", "-C", dir_path.as_posix(), "rev-parse", "--git-dir"],
         text=True,
         check=False,
         suppress_output=True,
@@ -399,13 +399,13 @@ def configure_repo_git_user(
     """
     if user_name:
         run_command(
-            ["git", "-C", str(repo_path), "config", "user.name", user_name],
+            ["git", "-C", repo_path.as_posix(), "config", "user.name", user_name],
             text=True,
         )
         logger.debug(f"Configured git user.name = '{user_name}' in {repo_path}")
     if user_email:
         run_command(
-            ["git", "-C", str(repo_path), "config", "user.email", user_email],
+            ["git", "-C", repo_path.as_posix(), "config", "user.email", user_email],
             text=True,
         )
         logger.debug(f"Configured git user.email = '{user_email}' in {repo_path}")
@@ -425,7 +425,7 @@ def check_repo_can_commit(repo_path: Path) -> Optional[str]:
     if not has_env_name:
         # check=False is intentional: missing git config returns exit code 1.
         res = run_command(
-            ["git", "-C", str(repo_path), "config", "user.name"],
+            ["git", "-C", repo_path.as_posix(), "config", "user.name"],
             text=True,
             check=False,
             suppress_output=True,
@@ -443,7 +443,7 @@ def check_repo_can_commit(repo_path: Path) -> Optional[str]:
     if not has_env_email:
         # check=False is intentional: missing git config returns exit code 1.
         res = run_command(
-            ["git", "-C", str(repo_path), "config", "user.email"],
+            ["git", "-C", repo_path.as_posix(), "config", "user.email"],
             text=True,
             check=False,
             suppress_output=True,
@@ -480,7 +480,7 @@ def check_repo_git_user_synced(
     if expected_name:
         # check=False is intentional: unconfigured key returns exit code 1.
         res = run_command(
-            ["git", "-C", str(repo_path), "config", "--local", "user.name"],
+            ["git", "-C", repo_path.as_posix(), "config", "--local", "user.name"],
             text=True,
             check=False,
             suppress_output=True,
@@ -491,7 +491,7 @@ def check_repo_git_user_synced(
     if expected_email:
         # check=False is intentional: unconfigured key returns exit code 1.
         res = run_command(
-            ["git", "-C", str(repo_path), "config", "--local", "user.email"],
+            ["git", "-C", repo_path.as_posix(), "config", "--local", "user.email"],
             text=True,
             check=False,
             suppress_output=True,
@@ -511,7 +511,7 @@ def git_init_repo(dir_path: Path, name: str) -> bool:
     try:
         run_command(
             ["git", "init"],
-            cwd=str(dir_path),
+            cwd=dir_path,
             text=True,
         )
         return True

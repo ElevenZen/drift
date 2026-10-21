@@ -38,14 +38,16 @@ from typing import (
 from ..core.constants import CONFIG_DIR_NAME, SECRETS_ENV_FILE_NAME
 from ..core.exceptions import ConfigError
 from ..core.mixins import AlwaysTruthy
-from ..utils.config_utils import (
+from ..utils.func_utils import (
     branch,
     choose,
+    when_none,
+    when_not_none,
+)
+from ..utils.config_utils import (
     parse_command_tokens,
     parse_optional_config_path,
     validate_known_keys,
-    when_none,
-    when_not_none,
 )
 from ..utils.env_utils import parse_env_text, read_plain_secrets_file
 from ..utils.path_utils import check_is_partially_anchored_path

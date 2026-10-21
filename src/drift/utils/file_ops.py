@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 from ..core.constants import LineEnding
-from .config_utils import branch, choose, when_none
+from .func_utils import branch, choose, when_none
 from .path_utils import is_relative_to
 from .file_inspect import is_binary_file, normalize_newlines, is_mode_only_change, is_concrete_dir
 from .process_utils import run_command
@@ -107,7 +107,7 @@ def ensure_dir(path: Path, sudo: bool = False) -> None:
     if path.is_dir():
         return
     if sudo and sys.platform != "win32":
-        run_command(["mkdir", "-p", str(path)], sudo=True)
+        run_command(["mkdir", "-p", path.as_posix()], sudo=True)
     else:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -164,7 +164,7 @@ def copy_permissions(src: Path, dst: Path, sudo: bool = False) -> None:
             logger.warning(f"Failed to copy file mode from '{src}' to '{dst}': {exc}")
     else:
         octal_mode = oct(mode & 0o777)[2:]
-        cmd = ["chmod", octal_mode, str(dst)]
+        cmd = ["chmod", octal_mode, dst.as_posix()]
         run_command(cmd, sudo=True)
 
 
@@ -181,7 +181,7 @@ def remove_tree(path: Path, sudo: bool = False) -> None:
     if not (path.exists() or path.is_symlink()):
         return
     if sudo and sys.platform != "win32":
-        cmd_rm = ["rm", "-rf" if is_concrete_dir(path) else "-f", str(path)]
+        cmd_rm = ["rm", "-rf" if is_concrete_dir(path) else "-f", path.as_posix()]
         run_command(cmd_rm, sudo=True)
     else:
         if is_concrete_dir(path):
@@ -209,13 +209,13 @@ def remove_file_or_empty_dir(path: Path, sudo: bool = False) -> bool:
             return False
 
         if sudo and sys.platform != "win32":
-            run_command(["rmdir", str(path)], sudo=True)
+            run_command(["rmdir", path.as_posix()], sudo=True)
         else:
             path.rmdir()
         return True
     else:
         if sudo and sys.platform != "win32":
-            run_command(["rm", "-f", str(path)], sudo=True)
+            run_command(["rm", "-f", path.as_posix()], sudo=True)
         else:
             path.unlink()
         return True
@@ -250,7 +250,7 @@ def copy_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
     if sys.platform == "win32" or not sudo:
         dst.symlink_to(link_target)
     else:
-        cmd = ["ln", "-s", str(link_target), str(dst)]
+        cmd = ["ln", "-s", link_target, dst.as_posix()]
         run_command(cmd, sudo=True)
 
 
@@ -265,7 +265,7 @@ def create_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
     if sys.platform == "win32" or not sudo:
         dst.symlink_to(src, target_is_directory=src.is_dir())
     else:
-        cmd = ["ln", "-s", str(src), str(dst)]
+        cmd = ["ln", "-s", src.as_posix(), dst.as_posix()]
         run_command(cmd, sudo=True)
 
 
@@ -312,14 +312,14 @@ def _atomic_copy_elevated(src: Path, dst: Path) -> None:
     temp_path_str = None
     try:
         res = run_command(
-            ["mktemp", "-p", str(dst.parent), f".tmp_{dst.name}_XXXXXX"],
+            ["mktemp", "-p", dst.parent.as_posix(), f".tmp_{dst.name}_XXXXXX"],
             sudo=True,
             text=True
         )
         temp_path_str = str(res.stdout).strip()
         if temp_path_str:
-            run_command(["cp", "-p", str(src), temp_path_str], sudo=True)
-            run_command(["mv", "-f", temp_path_str, str(dst)], sudo=True)
+            run_command(["cp", "-p", src.as_posix(), temp_path_str], sudo=True)
+            run_command(["mv", "-f", temp_path_str, dst.as_posix()], sudo=True)
             return
     except Exception as exc:
         # Fallback to direct elevated cp if mktemp fails
@@ -333,7 +333,7 @@ def _atomic_copy_elevated(src: Path, dst: Path) -> None:
                 logger.debug(f"Failed to clean up elevated temporary file '{temp_path_str}': {exc}")
 
     # Direct fallback
-    cmd = ["cp", "-p", str(src), str(dst)]
+    cmd = ["cp", "-p", src.as_posix(), dst.as_posix()]
     run_command(cmd, sudo=True)
 
 
@@ -467,7 +467,7 @@ def write_file(
             os.replace(temp_path, dst)
         else:
             # POSIX with sudo: mv -f performs atomic replacement with best effort (rename)
-            cmd = ["mv", "-f", str(temp_path), str(dst)]
+            cmd = ["mv", "-f", temp_path.as_posix(), dst.as_posix()]
             run_command(cmd, sudo=True)
     finally:
         if temp_path and (temp_path.exists() or temp_path.is_symlink()):
@@ -486,11 +486,11 @@ def _tree_op_windows(src: Path, dst: Path, move: bool, resolve_symlinks: bool) -
     if move and not resolve_symlinks:
         if dst.exists() or dst.is_symlink():
             remove_tree(dst)
-        shutil.move(str(src), str(dst))
+        shutil.move(src, dst)
         return
 
     if is_concrete_dir(src) or (resolve_symlinks and src.is_dir()):
-        shutil.copytree(str(src), str(dst), dirs_exist_ok=True, symlinks=not resolve_symlinks)
+        shutil.copytree(src, dst, dirs_exist_ok=True, symlinks=not resolve_symlinks)
     else:
         copy_file(src, dst, follow_symlinks=resolve_symlinks)
 
@@ -501,12 +501,12 @@ def _tree_op_windows(src: Path, dst: Path, move: bool, resolve_symlinks: bool) -
 def _tree_op_posix(src: Path, dst: Path, sudo: bool, chown: bool, move: bool, resolve_symlinks: bool) -> None:
     """POSIX tree copy/move using external commands with optional sudo."""
     if move and not resolve_symlinks:
-        cmd = ["mv", str(src), str(dst)]
+        cmd = ["mv", src.as_posix(), dst.as_posix()]
     else:
         if src.is_dir():
-            cmd = ["cp", "-RP" if not resolve_symlinks else "-RL", str(src), str(dst)]
+            cmd = ["cp", "-RP" if not resolve_symlinks else "-RL", src.as_posix(), dst.as_posix()]
         else:
-            cmd = ["cp", "-P" if not resolve_symlinks else "-L", str(src), str(dst)]
+            cmd = ["cp", "-P" if not resolve_symlinks else "-L", src.as_posix(), dst.as_posix()]
 
     run_command(cmd, sudo=sudo)
 
@@ -515,13 +515,13 @@ def _tree_op_posix(src: Path, dst: Path, sudo: bool, chown: bool, move: bool, re
             uid = os.getuid()
             gid = os.getgid()
             if uid is not None and gid is not None:
-                chown_cmd = ["chown", "-R", f"{uid}:{gid}", str(dst)]
+                chown_cmd = ["chown", "-R", f"{uid}:{gid}", dst.as_posix()]
                 run_command(chown_cmd, sudo=True)
         except Exception as e:
             logger.warning(f"Failed to chown backup to process owner: {e}")
 
     if move:
-        del_cmd = ["rm", "-rf", str(src)]
+        del_cmd = ["rm", "-rf", src.as_posix()]
         run_command(del_cmd, sudo=sudo)
 
 

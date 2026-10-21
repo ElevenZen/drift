@@ -325,7 +325,7 @@ class TestFileUtils(unittest.TestCase):
     def test_ensure_dir_with_sudo(self, mock_run) -> None:
         path = self.root / "sudo_dir"
         ensure_dir(path, sudo=True)
-        mock_run.assert_called_once_with(["sudo", "mkdir", "-p", str(path)], check=True, capture_output=True, shell=False)
+        mock_run.assert_called_once_with(["sudo", "mkdir", "-p", path.as_posix()], check=True, capture_output=True, shell=False)
 
     @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
@@ -333,7 +333,7 @@ class TestFileUtils(unittest.TestCase):
         path = self.root / "file_to_remove"
         path.touch()
         remove_tree(path, sudo=True)
-        mock_run.assert_called_once_with(["sudo", "rm", "-f", str(path)], check=True, capture_output=True, shell=False)
+        mock_run.assert_called_once_with(["sudo", "rm", "-f", path.as_posix()], check=True, capture_output=True, shell=False)
 
     @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
@@ -342,7 +342,7 @@ class TestFileUtils(unittest.TestCase):
         dst = self.root / "dst_link"
         create_symlink(src, dst, sudo=True)
         # Verify run was called with sudo ln -s
-        mock_run.assert_any_call(["sudo", "ln", "-s", str(src), str(dst)], check=True, capture_output=True, shell=False)
+        mock_run.assert_any_call(["sudo", "ln", "-s", src.as_posix(), dst.as_posix()], check=True, capture_output=True, shell=False)
 
     @unittest.skipIf(sys.platform == "win32", "Sudo is POSIX-only")
     @patch("subprocess.run")
@@ -352,12 +352,12 @@ class TestFileUtils(unittest.TestCase):
 
         # 1. Pipeline success (mktemp -> cp -> mv)
         mock_proc = MagicMock()
-        mock_proc.stdout = str(self.root / ".tmp_dst_file_123456")
+        mock_proc.stdout = (self.root / ".tmp_dst_file_123456").as_posix()
         mock_run.return_value = mock_proc
 
         copy_file(src, dst, sudo=True)
         mock_run.assert_any_call(
-            ["sudo", "mktemp", "-p", str(dst.parent), f".tmp_{dst.name}_XXXXXX"],
+            ["sudo", "mktemp", "-p", dst.parent.as_posix(), f".tmp_{dst.name}_XXXXXX"],
             check=True,
             capture_output=True,
             text=True,
@@ -365,14 +365,14 @@ class TestFileUtils(unittest.TestCase):
             errors="replace",
             shell=False,
         )
-        mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(self.root / ".tmp_dst_file_123456")], check=True, capture_output=True, shell=False)
-        mock_run.assert_any_call(["sudo", "mv", "-f", str(self.root / ".tmp_dst_file_123456"), str(dst)], check=True, capture_output=True, shell=False)
+        mock_run.assert_any_call(["sudo", "cp", "-p", src.as_posix(), (self.root / ".tmp_dst_file_123456").as_posix()], check=True, capture_output=True, shell=False)
+        mock_run.assert_any_call(["sudo", "mv", "-f", (self.root / ".tmp_dst_file_123456").as_posix(), dst.as_posix()], check=True, capture_output=True, shell=False)
 
         # 2. Fallback when mktemp fails
         mock_run.reset_mock()
         mock_run.side_effect = [Exception("mktemp failed"), MagicMock()]
         copy_file(src, dst, sudo=True)
-        mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(dst)], check=True, capture_output=True, shell=False)
+        mock_run.assert_any_call(["sudo", "cp", "-p", src.as_posix(), dst.as_posix()], check=True, capture_output=True, shell=False)
 
     @unittest.skipIf(sys.platform == "win32", "External cp/mv commands are POSIX-only")
     @patch("subprocess.run")
@@ -382,17 +382,17 @@ class TestFileUtils(unittest.TestCase):
 
         # 1. Non-sudo copy file (resolve_symlinks=True)
         copy_tree(src, dst, sudo=False, chown=False, resolve_symlinks=True)
-        mock_run.assert_any_call(["cp", "-L", str(src), str(dst)], check=True, capture_output=True, shell=False)
+        mock_run.assert_any_call(["cp", "-L", src.as_posix(), dst.as_posix()], check=True, capture_output=True, shell=False)
 
         # 2. Sudo copy dir (resolve_symlinks=False, chown=True)
         dir_src = self.root / "src_dir"
         dir_src.mkdir()
         copy_tree(dir_src, dst, sudo=True, chown=True, resolve_symlinks=False)
-        mock_run.assert_any_call(["sudo", "cp", "-RP", str(dir_src), str(dst)], check=True, capture_output=True, shell=False)
+        mock_run.assert_any_call(["sudo", "cp", "-RP", dir_src.as_posix(), dst.as_posix()], check=True, capture_output=True, shell=False)
 
         # 3. Move file (sudo=False, resolve_symlinks=False)
         move_tree(src, dst, sudo=False, chown=False, resolve_symlinks=False)
-        mock_run.assert_any_call(["mv", str(src), str(dst)], check=True, capture_output=True, shell=False)
+        mock_run.assert_any_call(["mv", src.as_posix(), dst.as_posix()], check=True, capture_output=True, shell=False)
 
     def test_file_operations_windows_fallback(self) -> None:
         """Verifies that all sudo/external file operations fallback to Python builtins on Windows."""
@@ -925,14 +925,14 @@ class TestFileUtils(unittest.TestCase):
         f = self.root / "sudo_file.txt"
         f.touch()
         self.assertTrue(remove_file_or_empty_dir(f, sudo=True))
-        mock_run.assert_called_with(["sudo", "rm", "-f", str(f)], check=True, capture_output=True, shell=False)
+        mock_run.assert_called_with(["sudo", "rm", "-f", f.as_posix()], check=True, capture_output=True, shell=False)
 
         mock_run.reset_mock()
         # Empty dir under sudo -> sudo rmdir
         d = self.root / "sudo_empty_dir"
         d.mkdir()
         self.assertTrue(remove_file_or_empty_dir(d, sudo=True))
-        mock_run.assert_called_with(["sudo", "rmdir", str(d)], check=True, capture_output=True, shell=False)
+        mock_run.assert_called_with(["sudo", "rmdir", d.as_posix()], check=True, capture_output=True, shell=False)
 
     def test_remove_tree_recursive(self) -> None:
         # remove_tree recursively removes directory with children
@@ -1332,6 +1332,21 @@ class TestWriteFilePermissions(unittest.TestCase):
         with patch.object(Path, "lstat", side_effect=PermissionError("EACCES")):
             self.assertIsNone(_resolve_write_permission(dst, None))
             self.assertEqual(_resolve_write_permission(dst, 0o600), 0o600)
+
+    def test_as_posix_and_as_windows(self) -> None:
+        """Verifies explicit POSIX and Windows path string conversion helpers."""
+        from pathlib import PurePosixPath, PureWindowsPath
+        from drift.utils.path_utils import as_posix, as_windows
+
+        self.assertEqual(as_posix(Path("a/b/c.txt")), "a/b/c.txt")
+        self.assertEqual(as_posix(PurePosixPath("/opt/app/run.sh")), "/opt/app/run.sh")
+        self.assertEqual(as_posix(PureWindowsPath(r"C:\scripts\install.sh")), "C:/scripts/install.sh")
+        self.assertEqual(as_posix("/already/posix"), "/already/posix")
+
+        self.assertEqual(as_windows(Path("a/b/c.txt")), r"a\b\c.txt")
+        self.assertEqual(as_windows(PureWindowsPath(r"C:\scripts\install.ps1")), r"C:\scripts\install.ps1")
+        self.assertEqual(as_windows("C:/scripts/install.ps1"), r"C:\scripts\install.ps1")
+        self.assertEqual(as_windows(r"C:\scripts\install.bat"), r"C:\scripts\install.bat")
 
 
 if __name__ == "__main__":

@@ -39,9 +39,9 @@ class TestErrorStacking(unittest.TestCase):
         self.install_dir.mkdir(parents=True, exist_ok=True)
 
         for repo_dir in (self.install_dir, self.render_dir):
-            subprocess.run(["git", "init"], cwd=str(repo_dir), check=True, capture_output=True)
-            subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(repo_dir), check=True, capture_output=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(repo_dir), check=True, capture_output=True)
+            subprocess.run(["git", "init"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_dir, check=True, capture_output=True)
 
         self.workspace_config = WorkspaceConfig(drift_root=self.drift_root)
 

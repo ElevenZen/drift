@@ -34,8 +34,8 @@ class TestIntegration(unittest.TestCase):
         # Configure git identity for commits in tests
         for repo in ["render", "install"]:
             repo_path = self.drift_root / repo
-            subprocess.run(["git", "-C", str(repo_path), "config", "user.email", "test@example.com"], check=True, capture_output=True)
-            subprocess.run(["git", "-C", str(repo_path), "config", "user.name", "Test User"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", repo_path.as_posix(), "config", "user.email", "test@example.com"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", repo_path.as_posix(), "config", "user.name", "Test User"], check=True, capture_output=True)
         
         # 2. Load workspace config
         self.workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
@@ -229,8 +229,8 @@ class TestIntegration(unittest.TestCase):
         commit_repo_changes(self.install_dir, "Commit pkg_a install", target_pkgs=[pkg_a])
 
         # Verify repos are clean initially for pkg_a (ignoring untracked files like config/)
-        status_render = subprocess.run(["git", "-C", str(self.render_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
-        status_install = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
+        status_render = subprocess.run(["git", "-C", self.render_dir.as_posix(), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
+        status_install = subprocess.run(["git", "-C", self.install_dir.as_posix(), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
         self.assertEqual(status_render.stdout.strip(), "")
         self.assertEqual(status_install.stdout.strip(), "")
 
@@ -249,8 +249,8 @@ class TestIntegration(unittest.TestCase):
         commit_repo_changes(self.install_dir, "Commit zombie install", target_pkgs=[zombie_pkg])
 
         # Verify repos are clean after zombie addition (ignoring untracked files like config/)
-        status_render = subprocess.run(["git", "-C", str(self.render_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
-        status_install = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
+        status_render = subprocess.run(["git", "-C", self.render_dir.as_posix(), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
+        status_install = subprocess.run(["git", "-C", self.install_dir.as_posix(), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
         self.assertEqual(status_render.stdout.strip(), "")
         self.assertEqual(status_install.stdout.strip(), "")
 
@@ -259,8 +259,8 @@ class TestIntegration(unittest.TestCase):
         (self.install_dir / pkg_a / "file.txt").write_text("uncommitted install change", encoding="utf-8")
 
         # Verify that we have uncommitted modifications in pkg_a
-        status_render_before = subprocess.run(["git", "-C", str(self.render_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
-        status_install_before = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
+        status_render_before = subprocess.run(["git", "-C", self.render_dir.as_posix(), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
+        status_install_before = subprocess.run(["git", "-C", self.install_dir.as_posix(), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
         self.assertIn(f"pkg_a/file.txt", status_render_before)
         self.assertIn(f"pkg_a/file.txt", status_install_before)
 
@@ -272,8 +272,8 @@ class TestIntegration(unittest.TestCase):
         self.assertFalse(zombie_install.exists())
 
         # 6. Verify that modifications in pkg_a remain unstaged/uncommitted!
-        status_render_after = subprocess.run(["git", "-C", str(self.render_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
-        status_install_after = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
+        status_render_after = subprocess.run(["git", "-C", self.render_dir.as_posix(), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
+        status_install_after = subprocess.run(["git", "-C", self.install_dir.as_posix(), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
         
         # They MUST still be shown as modified/unstaged
         self.assertIn(f"M pkg_a/file.txt", status_render_after)

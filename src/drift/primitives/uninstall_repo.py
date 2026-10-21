@@ -96,7 +96,7 @@ from ..models import (
 )
 from ..core.state_registry import PackageState, StateRegistry, load_state_registry
 from ..hooks.lifecycle_hooks import HookExecFlags
-from ..utils.config_utils import partition
+from ..utils.func_utils import partition
 from ..utils.file_ops import prune_empty_parents, remove_tree
 from ..utils.path_utils import decode_dot_prefix, encode_dot_prefix, is_relative_to
 from ..utils.process_utils import assert_can_escalate
@@ -189,7 +189,7 @@ def plan_package_uninstall(
     if context.is_missing_install_dir:
         return PackageUninstallPlan(
             package=context.pkg_name,
-            target_directory=str(context.target_dir),
+            target_directory=context.target_dir.as_posix(),
             install_method=context.install_method,
             detach_mode=context.detach,
             actions=[],
@@ -243,7 +243,7 @@ def plan_package_uninstall(
 
     return PackageUninstallPlan(
         package=context.pkg_name,
-        target_directory=str(context.target_dir),
+        target_directory=context.target_dir.as_posix(),
         install_method=context.install_method,
         detach_mode=context.detach,
         actions=actions,
@@ -313,8 +313,8 @@ def uninstall_one_package(
     ]
     restored = [
         RestoredBackup(
-            source_backup=str(a.src_path),
-            restored_to=str(a.dst_path),
+            source_backup=a.src_path.as_posix() if a.src_path else "",
+            restored_to=a.dst_path.as_posix() if a.dst_path else "",
         )
         for a in plan.restored
     ]

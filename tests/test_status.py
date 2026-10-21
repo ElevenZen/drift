@@ -33,9 +33,9 @@ class TestStatus(unittest.TestCase):
         
         # Initialize Git in render and install
         for d in [self.render_dir, self.install_dir]:
-            subprocess.run(["git", "init"], cwd=str(d), capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(d), capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(d), capture_output=True, check=True)
+            subprocess.run(["git", "init"], cwd=d, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=d, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=d, capture_output=True, check=True)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -160,7 +160,7 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(modified_res[0].template_status, "MODIFIED")
         self.assertEqual(modified_res[0].pending_status, "STAGED")
         self.assertIsNotNone(modified_res[0].pending_changes)
-        self.assertTrue(any("drift_package.toml" in str(p) for p in modified_res[0].pending_changes.modified))
+        self.assertTrue(any("drift_package.toml" in p.as_posix() for p in modified_res[0].pending_changes.modified))
 
     def test_status_list_only(self):
         """Verifies status list_only (-l, --list) returns fast metadata without render/compare."""
@@ -345,8 +345,8 @@ class TestStatus(unittest.TestCase):
         from drift.primitives.workspace_status import audit_repo_package_status
         (self.render_dir / "pkg_only_lock" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (self.render_dir / "pkg_only_lock" / DRIFT_INTERNAL_DIR_NAME / RENDER_LOCK_FILE_NAME).write_text("{}\n")
-        subprocess.run(["git", "-C", str(self.render_dir), "add", "."], capture_output=True, check=True)
-        subprocess.run(["git", "-C", str(self.render_dir), "commit", "-m", "add lock only"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", self.render_dir.as_posix(), "add", "."], capture_output=True, check=True)
+        subprocess.run(["git", "-C", self.render_dir.as_posix(), "commit", "-m", "add lock only"], capture_output=True, check=True)
         status, diff = audit_repo_package_status(self.render_dir, "pkg_only_lock", "MODIFIED")
         self.assertEqual(status, "NEW")
         self.assertIsNone(diff)
@@ -354,8 +354,8 @@ class TestStatus(unittest.TestCase):
         # If a package contains a user file named render_lock.json outside .drift/, it is NOT treated as NEW
         (self.render_dir / "pkg_user_lock" / "my_config").mkdir(parents=True, exist_ok=True)
         (self.render_dir / "pkg_user_lock" / "my_config" / RENDER_LOCK_FILE_NAME).write_text("{}\n")
-        subprocess.run(["git", "-C", str(self.render_dir), "add", "."], capture_output=True, check=True)
-        subprocess.run(["git", "-C", str(self.render_dir), "commit", "-m", "add user lock"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", self.render_dir.as_posix(), "add", "."], capture_output=True, check=True)
+        subprocess.run(["git", "-C", self.render_dir.as_posix(), "commit", "-m", "add user lock"], capture_output=True, check=True)
         status, diff = audit_repo_package_status(self.render_dir, "pkg_user_lock", "MODIFIED")
         self.assertEqual(status, "CLEAN")
         self.assertIsNone(diff)

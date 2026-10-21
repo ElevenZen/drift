@@ -61,7 +61,7 @@ def _snapshot_tree(root: Path) -> Dict[str, str]:
     def _entries() -> Iterator[Path]:
         return (p for p in root.rglob("*") if ".git" not in p.relative_to(root).parts)
 
-    return {str(p.relative_to(root)): _digest(p) for p in _entries()}
+    return {p.relative_to(root).as_posix(): _digest(p) for p in _entries()}
 
 
 class _TempDirTestCase(unittest.TestCase):
@@ -169,7 +169,7 @@ class TestFindAndResolveWorkspaceRoot(_TempDirTestCase):
             self.outer / "src" / "other": self.outer,
         }
         for start, expected in cases.items():
-            with self.subTest(start=str(start.relative_to(self.tmp))):
+            with self.subTest(start=start.relative_to(self.tmp).as_posix()):
                 self.assertEqual(resolve_drift_workspace_root(start), expected)
 
     def test_nonexistent_start_dir_resolves_via_existing_ancestors(self) -> None:
@@ -203,7 +203,7 @@ class TestFindAndResolveWorkspaceRoot(_TempDirTestCase):
         self.assertIsInstance(err, ConfigError)
         self.assertIsInstance(err, FileNotFoundError)
         self.assertEqual(err.exit_code, ExitCode.CONFIG_ERROR)
-        self.assertIn(str(lone), str(err))
+        self.assertIn(f"'{lone}'", str(err))
         self.assertIn("drift init", str(err))
         self.assertIn("-C", str(err))
 
@@ -275,8 +275,8 @@ class TestCliWorkspaceDiscovery(TestCaseUtilityMixin, _TempDirTestCase):
         starts = [self.ws, self.ws / "src", self.ws / CONFIG_DIR_NAME, self.ws / "render", self.ws / "install"]
         for backend, runner in CLI_BACKENDS.items():
             for start in starts:
-                with self.subTest(backend=backend, start=str(start.relative_to(self.repo))):
-                    self.assertEqual(self._captured_status_root(runner, ["-C", str(start), "status"]), self.ws)
+                with self.subTest(backend=backend, start=start.relative_to(self.repo).as_posix()):
+                    self.assertEqual(self._captured_status_root(runner, ["-C", start.as_posix(), "status"]), self.ws)
 
     def test_cwd_start_dir_resolves_to_nested_workspace(self) -> None:
         for backend, runner in CLI_BACKENDS.items():
@@ -288,7 +288,7 @@ class TestCliWorkspaceDiscovery(TestCaseUtilityMixin, _TempDirTestCase):
         for backend, runner in CLI_BACKENDS.items():
             with self.subTest(backend=backend):
                 pkg = f"pkg_{backend}"
-                self._run_silenced(runner, ["-C", str(self.ws / CONFIG_DIR_NAME), "new", pkg])
+                self._run_silenced(runner, ["-C", (self.ws / CONFIG_DIR_NAME).as_posix(), "new", pkg])
                 self.assertTrue((self.ws / "src" / pkg / "drift_package.toml").is_file())
                 self.assertFalse((self.repo / "src" / pkg).exists())
 
@@ -299,7 +299,7 @@ class TestCliWorkspaceDiscovery(TestCaseUtilityMixin, _TempDirTestCase):
                 with patch("sys.stdout", StringIO()), patch("sys.stderr", stderr), \
                         patch("drift.cli.cli_handlers.execute_status") as mock_status:
                     with self.assertRaises(SystemExit) as cm:
-                        runner(["-C", str(self.repo / "src"), "status"])
+                        runner(["-C", (self.repo / "src").as_posix(), "status"])
                 self.assertEqual(cm.exception.code, ExitCode.CONFIG_ERROR)
                 mock_status.assert_not_called()
                 self.assertIn_stripped("No Drift workspace found", stderr.getvalue())
@@ -309,7 +309,7 @@ class TestCliWorkspaceDiscovery(TestCaseUtilityMixin, _TempDirTestCase):
             with self.subTest(backend=backend):
                 with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
                     with self.assertRaises(SystemExit) as cm:
-                        runner(["-C", str(self.ws), "--no-git-root", "status"])
+                        runner(["-C", self.ws.as_posix(), "--no-git-root", "status"])
                 self.assertEqual(cm.exception.code, 2)
 
     def test_init_from_cwd_is_literal_inside_git_repo(self) -> None:
@@ -328,7 +328,7 @@ class TestCliWorkspaceDiscovery(TestCaseUtilityMixin, _TempDirTestCase):
         for backend, runner in CLI_BACKENDS.items():
             with self.subTest(backend=backend):
                 pkg = f"render_{backend}"
-                start = str(self.ws / "src")
+                start = (self.ws / "src").as_posix()
                 self._run_silenced(runner, ["-C", start, "new", pkg])
                 (self.ws / "src" / pkg / "dot-samplerc").write_text("sample=1\n", encoding="utf-8")
 

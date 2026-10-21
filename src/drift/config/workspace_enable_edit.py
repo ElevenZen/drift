@@ -47,7 +47,8 @@ from ..core.constants import (
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
 )
 from ..core.exceptions import ConfigError
-from ..utils.config_utils import branch, choose, parse_bool_value, when_none
+from ..utils.config_utils import parse_bool_value
+from ..utils.func_utils import branch, choose, when_none
 from ..utils.path_utils import to_relative_posix
 from ..utils.toml_edit import (
     TomlEditAction,

@@ -228,7 +228,8 @@ def _extract_env_subtable(
     """Helper to validate and extract stringified key-value pairs from an env sub-table."""
     if not isinstance(table_data, dict):
         raise ConfigError(f"[env.{table_name}] must be a table of key-value pairs in {context_desc}.")
-    return {str(k): str(v) for k, v in table_data.items()}
+    from .path_utils import as_posix
+    return {str(k): as_posix(v) for k, v in table_data.items()}
 
 
 def merge_kvpairs(mappings: Iterable[Mapping[str, str]]) -> Dict[str, str]:
@@ -452,9 +453,10 @@ def update_env_dict(
     saved: EnvSnapshot = {}
     is_os_environ = target is os.environ
 
+    from .path_utils import as_posix
     for k, v in items:
         k_str = str(k)
-        v_str = str(v)
+        v_str = as_posix(v)
         if k_str in keep_set and k_str in target:
             if is_os_environ:
                 logger.debug(f"Environment variable skipped (in env_keep): {k_str}")

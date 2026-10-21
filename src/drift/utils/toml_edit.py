@@ -44,7 +44,7 @@ from enum import Enum
 import re
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from .config_utils import branch, choose
+from .func_utils import branch, choose
 from .toml_utils import (
     _ParserState,
     _escape_toml_string,

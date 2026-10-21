@@ -149,7 +149,7 @@ def collect_repo_diff_pairs(
         if not pkg_dir.exists():
             continue
         cmd = [
-            "git", "-C", str(repo_path), "diff", "--name-status", "HEAD", "--",
+            "git", "-C", repo_path.as_posix(), "diff", "--name-status", "HEAD", "--",
             f"{pkg}/",
         ]
         # check=False is intentional: git diff returns exit code 1 when differences exist.
@@ -176,7 +176,7 @@ def collect_repo_diff_pairs(
 
                 # check=False is intentional: new/uncommitted files are absent from HEAD, handled via fallback.
                 show_res = subprocess.run(
-                    ["git", "-C", str(repo_path), "show", f"HEAD:{rel_path_str}"],
+                    ["git", "-C", repo_path.as_posix(), "show", f"HEAD:{rel_path_str}"],
                     capture_output=True,
                     check=False,
                 )
@@ -429,7 +429,7 @@ def run_repo_diff(
     for pkg in packages:
         # We use pathspecs after '--' to avoid revision ambiguity
         cmd = [
-            "git", "-C", str(repo_path), "diff",
+            "git", "-C", repo_path.as_posix(), "diff",
             *git_options,
             "--", f"{pkg}/",
         ]
@@ -495,7 +495,7 @@ def run_pending_delta_diff(
         # check=False is intentional: git diff returns exit code 1 when differences exist.
         res = subprocess.run(
             cmd,
-            cwd=str(workspace_config.drift_root),
+            cwd=workspace_config.drift_root,
             capture_output=True,
             text=True,
             check=False,

@@ -315,7 +315,7 @@ def load_head_state_registry(install_base: Path) -> StateRegistry:
     """Loads the committed HEAD version of state.toml from the install repository."""
     state_file = install_base / "state.toml"
     res = run_command(
-        ["git", "-C", str(install_base), "show", "HEAD:state.toml"],
+        ["git", "-C", install_base.as_posix(), "show", "HEAD:state.toml"],
         text=True,
         check=False,
         suppress_output=True,

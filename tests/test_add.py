@@ -76,7 +76,7 @@ class TestAddResource(unittest.TestCase):
         res = run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.package, pkg)
-        self.assertEqual(res.imported_files, [str(target_file.resolve())])
+        self.assertEqual(res.imported_files, [target_file.resolve().as_posix()])
         self.assertFalse(res.dry_run)
         self.assertIsInstance(res.plan, AddResourcePlan)
         self.assertEqual(res.plan.package, pkg)
@@ -451,7 +451,7 @@ render_command = "bash -c 'cat %i %s'"
         res = execute_add_resources(self.workspace_config, plan)
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.package, pkg)
-        self.assertEqual(res.imported_files, [str(target_file.resolve())])
+        self.assertEqual(res.imported_files, [target_file.resolve().as_posix()])
         self.assertFalse(res.dry_run)
         self.assertIs(res.plan, plan)
 
@@ -478,7 +478,7 @@ render_command = "bash -c 'cat %i %s'"
         res = run_primitive_11_add_resources(self.workspace_config, pkg, [target_file], dry_run=True)
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue(res.dry_run)
-        self.assertEqual(res.imported_files, [str(target_file.resolve())])
+        self.assertEqual(res.imported_files, [target_file.resolve().as_posix()])
 
         # Verify zero filesystem mutations in src/
         self.assertFalse((pkg_src_dir / "dot-tmux.conf").exists())

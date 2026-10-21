@@ -49,10 +49,10 @@ class TestRollback(unittest.TestCase):
         self.system_target_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize install as an empty git repo
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
         # Configure dummy git user
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, check=True, capture_output=True)
 
         self.workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -102,8 +102,8 @@ class TestRollback(unittest.TestCase):
         save_state_registry(registry)
 
         # Initial commit in install repo
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "initial deploy"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial deploy"], cwd=self.install_dir, check=True, capture_output=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -454,8 +454,8 @@ class TestRollback(unittest.TestCase):
         registry.set_package_state("pkg_b", "installed")
         registry.set_package_state("pkg_c", "installed")
         save_state_registry(registry)
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "commit all pkgs"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit all pkgs"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 2. Stage pkg_a and pkg_b -> both become "staged"
         registry = load_state_registry(state_file)
@@ -464,12 +464,12 @@ class TestRollback(unittest.TestCase):
         save_state_registry(registry)
 
         # 3. Simulate deploying pkg_c successfully, which committed pkg_c and state.toml (with pkg_a and pkg_b "staged")
-        subprocess.run(["git", "add", "pkg_c", "state.toml"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Deploy pkg_c"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "pkg_c", "state.toml"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Deploy pkg_c"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Verify HEAD now has pkg_a and pkg_b as "staged"
         head_state = subprocess.run(
-            ["git", "-C", str(self.install_dir), "show", "HEAD:state.toml"],
+            ["git", "-C", self.install_dir.as_posix(), "show", "HEAD:state.toml"],
             capture_output=True,
             text=True,
             check=True,
@@ -490,7 +490,7 @@ class TestRollback(unittest.TestCase):
 
         # Verify pkg_a is now committed to HEAD as "installed", and pkg_b remains "staged" in HEAD
         head_after_a = subprocess.run(
-            ["git", "-C", str(self.install_dir), "show", "HEAD:state.toml"],
+            ["git", "-C", self.install_dir.as_posix(), "show", "HEAD:state.toml"],
             capture_output=True,
             text=True,
             check=True,
@@ -504,7 +504,7 @@ class TestRollback(unittest.TestCase):
 
         # Verify BOTH pkg_a and pkg_b are now "installed" in HEAD (pkg_a did NOT get reverted!)
         head_after_b = subprocess.run(
-            ["git", "-C", str(self.install_dir), "show", "HEAD:state.toml"],
+            ["git", "-C", self.install_dir.as_posix(), "show", "HEAD:state.toml"],
             capture_output=True,
             text=True,
             check=True,
@@ -542,8 +542,8 @@ class TestRollback(unittest.TestCase):
             deployable_files=[Path("file.txt"), Path("extra.txt")],
         )
         save_state_registry(registry)
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "commit v1 with extra"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit v1 with extra"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 2. Simulate uncommitted v2 deployment that modifies file.txt, deletes extra.txt, adds new_dir/added.txt,
         #    collides with host file collide_v2 (blocking directory collide_v2/nested.txt), and fails in post_install hook
@@ -738,8 +738,8 @@ class TestRollback(unittest.TestCase):
         pre_update = "drift_hooks/fail_hook.py"
         post_update = "drift_hooks/fail_hook.py"
         """, encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "commit failing hook in HEAD"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit failing hook in HEAD"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Dirty pkg_a and mark installing
         (self.pkg_a_install / "file.txt").write_text("dirty", encoding="utf-8")
@@ -777,8 +777,8 @@ class TestRollback(unittest.TestCase):
         [hooks]
         post_update = "drift_hooks/post_update.py"
         """, encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "commit post_update hook in HEAD"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit post_update hook in HEAD"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Simulate a failed deploy where WAL recorded a newly added file (so Step 1 WAL rollback
         # deletes the added file and leaves host files 100% identical to HEAD before Step 3 runs)

@@ -1,6 +1,15 @@
 """Drift utilities for filesystem, diffs, subprocesses, TOML, envs, git, and editors."""
 
+from .func_utils import (
+    partition,
+    branch,
+    choose,
+    when_not_none,
+    when_none,
+)
 from .path_utils import (
+    as_posix,
+    as_windows,
     expand_path,
     is_relative_to,
     encode_dot_prefix,
@@ -67,11 +76,6 @@ from .toml_edit import (
     set_toml_table_bools,
 )
 from .config_utils import (
-    partition,
-    branch,
-    choose,
-    when_not_none,
-    when_none,
     get_first_from,
     get_nested_from,
     set_nested_val,
@@ -159,6 +163,8 @@ from .workspace_root import (
 )
 
 __all__ = [
+    "as_posix",
+    "as_windows",
     "expand_path",
     "is_relative_to",
     "encode_dot_prefix",

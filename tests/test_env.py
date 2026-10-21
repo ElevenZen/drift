@@ -736,7 +736,7 @@ pkg_cli = true
 
         # Execute CLI render
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
-            main(["-C", str(self.drift_root), "render", "pkg_cli"])
+            main(["-C", self.drift_root.as_posix(), "render", "pkg_cli"])
 
         rendered_file = self.render_dir / "pkg_cli" / "dot-config.txt"
         self.assertTrue(rendered_file.exists())
@@ -1174,14 +1174,14 @@ ALL_PROXY = "${{SOCKS_PROXY}}"
                                           source_files=[pkg_toml_path],
                                           workspace_config=ws)
         self.assertEqual(pkg_cfg.name, "my_pkg")
-        self.assertEqual(str(pkg_cfg.package.target_directory), str(self.drift_root / "install" / "my_pkg" / "target"))
+        self.assertEqual(pkg_cfg.package.target_directory, self.drift_root / "install" / "my_pkg" / "target")
         self.assertEqual(pkg_cfg.env_resolve.effective.override["SRC_DIR_REF"], (self.drift_root / "src" / "my_pkg").as_posix())
         self.assertEqual(pkg_cfg.env_resolve.effective.override["RENDER_DIR_REF"], (self.drift_root / "render" / "my_pkg").as_posix())
         self.assertEqual(pkg_cfg.env_resolve.effective.override["INSTALL_DIR_REF"], (self.drift_root / "install" / "my_pkg").as_posix())
         # Fallback filled unset blanks
         self.assertEqual(pkg_cfg.env_resolve.effective.fallback["FALLBACK_VAR"], "fallback_val")
         # Hook path was interpolated and normalized to stage base (install directory for post_install)
-        self.assertEqual(str(pkg_cfg.hooks.post_install), str(self.drift_root / "install" / "my_pkg" / ".drift" / "hooks" / "post.sh"))
+        self.assertEqual(pkg_cfg.hooks.post_install, self.drift_root / "install" / "my_pkg" / ".drift" / "hooks" / "post.sh")
         self.assertEqual(pkg_cfg.hooks.get_relative_path("post_install"), Path("drift_hooks/post.sh"))
 
     def test_package_config_facts_with_custom_workspace_config(self) -> None:

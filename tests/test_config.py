@@ -17,10 +17,12 @@ from drift.core.constants import (
 )
 from drift.utils.toml_utils import parse_toml
 from drift.utils.host_facts import get_cached_system_facts
-from drift.utils.config_utils import (
+from drift.utils.func_utils import (
     partition,
     when_not_none,
     when_none,
+)
+from drift.utils.config_utils import (
     get_first_from,
     get_nested_from,
     validate_known_keys,
@@ -273,7 +275,7 @@ class TestConfigClasses(unittest.TestCase):
                 "render_directory": "custom_render",
                 "install_directory": "custom_install",
                 "backup_directory": "custom_backup",
-                "default_target_directory": str(abs_target)
+                "default_target_directory": abs_target.as_posix()
             },
             "packages": {
                 "enable": {
@@ -692,13 +694,13 @@ class TestConfigClasses(unittest.TestCase):
 
         # 2. Absolute hook path pointing inside package directory outside drift_hooks/ also raises ConfigError
         with self.assertRaises(ConfigError) as ctx_abs:
-            PackageHooks.from_dict({"pre_install": str(base / "scripts/install.sh")}, package_name="my_pkg", base_dir=base)
+            PackageHooks.from_dict({"pre_install": (base / "scripts/install.sh").as_posix()}, package_name="my_pkg", base_dir=base)
         self.assertIn("must be located within 'drift_hooks/' directory", str(ctx_abs.exception))
         self.assertIn("hooks inside package directory are restricted", str(ctx_abs.exception))
 
         # 3. External absolute hook executable is allowed without drift_hooks/ restriction
         ext_path = Path("/usr/local/bin/my_hook").resolve()
-        hooks_ext = PackageHooks.from_dict({"post_install": str(ext_path)}, package_name="my_pkg", base_dir=base)
+        hooks_ext = PackageHooks.from_dict({"post_install": ext_path.as_posix()}, package_name="my_pkg", base_dir=base)
         self.assertEqual(hooks_ext.post_install, ext_path)
         self.assertIsNone(hooks_ext.get_relative_path("post_install"))
 
@@ -748,31 +750,31 @@ class TestConfigClasses(unittest.TestCase):
             exec_file.write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
             if sys.platform != "win32":
                 exec_file.chmod(0o755)
-                self.assertEqual(build_hook_execution_command_posix(exec_file), [str(exec_file)])
+                self.assertEqual(build_hook_execution_command_posix(exec_file), [exec_file.as_posix()])
 
             # Non-executable .sh
             non_exec_sh = tmppath / "hook.sh"
             non_exec_sh.write_text("echo ok\n", encoding="utf-8")
             non_exec_sh.chmod(0o644)
-            self.assertEqual(build_hook_execution_command_posix(non_exec_sh), ["/bin/bash", str(non_exec_sh)])
+            self.assertEqual(build_hook_execution_command_posix(non_exec_sh), ["/bin/bash", non_exec_sh.as_posix()])
 
             # Non-executable .py
             non_exec_py = tmppath / "hook.py"
             non_exec_py.write_text("print('ok')\n", encoding="utf-8")
             non_exec_py.chmod(0o644)
-            self.assertEqual(build_hook_execution_command_posix(non_exec_py), [sys.executable, str(non_exec_py)])
+            self.assertEqual(build_hook_execution_command_posix(non_exec_py), [sys.executable, non_exec_py.as_posix()])
 
             # Non-executable with custom shebang
             shebang_file = tmppath / "hook.custom"
             shebang_file.write_text("#!/usr/bin/env python3\nprint('ok')\n", encoding="utf-8")
             shebang_file.chmod(0o644)
-            self.assertEqual(build_hook_execution_command_posix(shebang_file), ["/usr/bin/env", "python3", str(shebang_file)])
+            self.assertEqual(build_hook_execution_command_posix(shebang_file), ["/usr/bin/env", "python3", shebang_file.as_posix()])
 
             # Non-executable without extension or shebang -> fallback to /bin/bash
             plain_file = tmppath / "plain"
             plain_file.write_text("echo plain\n", encoding="utf-8")
             plain_file.chmod(0o644)
-            self.assertEqual(build_hook_execution_command_posix(plain_file), ["/bin/bash", str(plain_file)])
+            self.assertEqual(build_hook_execution_command_posix(plain_file), ["/bin/bash", plain_file.as_posix()])
 
         # 3. Cross-platform dispatcher
         with patch("sys.platform", "win32"):
@@ -801,7 +803,7 @@ class TestConfigClasses(unittest.TestCase):
                 )
                 mock_run.assert_called_with(
                     ["/scripts/setup.sh"],
-                    cwd=str(Path("/opt/app")),
+                    cwd=Path("/opt/app"),
                     text=True,
                     encoding="utf-8",
                     timeout=60,
@@ -821,7 +823,7 @@ class TestConfigClasses(unittest.TestCase):
                 )
                 mock_run.assert_called_with(
                     ["powershell.exe", "-File", r"C:\scripts\setup.ps1"],
-                    cwd=r"C:\app",
+                    cwd=Path(r"C:\app"),
                     text=True,
                     encoding="gbk",
                     timeout=60,
@@ -1542,7 +1544,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_render_engine_config_validation(self) -> None:
         from drift.config.render_engine_config import RenderEngineConfig, parse_render_command
-        from drift.utils.config_utils import branch
+        from drift.utils.func_utils import branch
         config = RenderEngineConfig(
             name="envsubst",
             input_file=Path("envsubst.bash"),
@@ -3378,18 +3380,19 @@ class TestAnchoredPathValidationEdgeCases(unittest.TestCase):
     """Tests strict Path.anchor validation for relative and hybrid (relative-or-absolute) config paths."""
 
     def test_package_section_config_rejects_anchored_source_directory_and_fully_controlled_dirs(self) -> None:
-        anchored_paths = [Path("/abs/path"), Path("/single_root")]
+        anchored_raw_paths = ["/abs/path", "/single_root"]
         if sys.platform == "win32":
-            anchored_paths.extend([Path("\\backslash_rooted"), Path("C:drive_relative"), Path("C:\\full_abs")])
+            anchored_raw_paths.extend(["\\backslash_rooted", "C:drive_relative", "C:\\full_abs"])
 
-        for bad_path in anchored_paths:
+        for raw_path in anchored_raw_paths:
+            bad_path = Path(raw_path)
             with self.subTest(field="source_directory", path=bad_path):
                 with self.assertRaises(ConfigError) as cm:
                     PackageSectionConfig(name="pkg", source_directory=bad_path).validate()
                 self.assertIn("must be a relative path", str(cm.exception))
 
                 with self.assertRaises(ConfigError) as cm:
-                    PackageSectionConfig.from_dict({"source_directory": str(bad_path)}, package_name="pkg")
+                    PackageSectionConfig.from_dict({"source_directory": raw_path}, package_name="pkg")
                 self.assertIn("must be a relative path", str(cm.exception))
 
             with self.subTest(field="fully_controlled_dirs", path=bad_path):
@@ -3398,7 +3401,7 @@ class TestAnchoredPathValidationEdgeCases(unittest.TestCase):
                 self.assertIn("must be a relative path", str(cm.exception))
 
                 with self.assertRaises(ConfigError) as cm:
-                    PackageSectionConfig.from_dict({"fully_controlled_dirs": [str(bad_path)]}, package_name="pkg")
+                    PackageSectionConfig.from_dict({"fully_controlled_dirs": [raw_path]}, package_name="pkg")
                 self.assertIn("must be a relative path", str(cm.exception))
 
     def test_package_section_config_hook_file_anchor_resolution_and_validation(self) -> None:

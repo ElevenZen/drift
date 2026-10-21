@@ -834,14 +834,14 @@ class TestStageRepo(unittest.TestCase):
         import subprocess
 
         # Initialize install git repo
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@drift.org"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@drift.org"], cwd=self.install_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True)
 
         # Stage pkg_a cleanly first
         run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_a"])
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial staging"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial staging"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 1. Uncommitted change in install/
         (self.install_dir / "pkg_a" / "uncommitted.txt").write_text("drift", encoding="utf-8")
@@ -880,9 +880,9 @@ class TestStageRepo(unittest.TestCase):
         render_package(self.workspace_config, self.pkg_a_src)
         render_package(self.workspace_config, pkg_c_src)
 
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@drift.org"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@drift.org"], cwd=self.install_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True)
 
         state_file = self.install_dir / "state.toml"
         reg = load_state_registry(state_file)
@@ -1217,9 +1217,9 @@ class TestStageRepo(unittest.TestCase):
 
         # 4. Dirty install repo raises DriftDetectedError without force
         registry.set_package_state("pkg_a", "installed")
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True)
         pkg_install_dir = self.install_dir / "pkg_a"
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "untracked.txt").write_text("dirty", encoding="utf-8")
@@ -1296,9 +1296,9 @@ class TestStageRepo(unittest.TestCase):
         registry.set_package_state("pkg_b", "staged")
 
         # 3. Dirty install directories aggregated across all packages
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True)
         pkg_a_install = self.install_dir / "pkg_a"
         pkg_b_install = self.install_dir / "pkg_b"
         pkg_a_install.mkdir(parents=True, exist_ok=True)
@@ -1366,9 +1366,9 @@ class TestStageRepo(unittest.TestCase):
         from drift.core.exceptions import DriftDetectedError
 
         # Initialize install as git repository
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True)
 
         pkg_a_install = self.install_dir / "pkg_a"
         pkg_b_install = self.install_dir / "pkg_b"

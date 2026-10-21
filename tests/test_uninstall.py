@@ -58,9 +58,9 @@ class TestUninstall(unittest.TestCase):
 
         
         # Initialize Git in install_dir for Primitive 6 commit
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), capture_output=True, check=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, capture_output=True, check=True)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -105,8 +105,8 @@ class TestUninstall(unittest.TestCase):
         
         # Commit initial state so git tracks it
         # or it will say nothing to commit when we try to commit the uninstall changes
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=self.install_dir, check=True, capture_output=True)
         
         # 4. Run uninstall
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg])
@@ -120,7 +120,7 @@ class TestUninstall(unittest.TestCase):
         self.assertNotIn(pkg, updated_registry.packages)
         
         # Verify commit happened
-        res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertIn(f"Uninstall: Removed package {pkg}", res.stdout)
 
     def test_uninstall_with_backup_restore(self):
@@ -162,8 +162,8 @@ class TestUninstall(unittest.TestCase):
         save_state_registry(registry)
 
         # Commit initial state so git tracks it
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 5. Run uninstall
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg])
@@ -201,8 +201,8 @@ class TestUninstall(unittest.TestCase):
         save_state_registry(registry)
         
         # Commit initial state so git tracks it
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=self.install_dir, check=True, capture_output=True)
 
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(force=True))
         
@@ -253,8 +253,8 @@ class TestUninstall(unittest.TestCase):
         save_state_registry(registry)
         
         # Commit initial state so git tracks it
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=self.install_dir, check=True, capture_output=True)
         
         # 5. Run uninstall with detach=True
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(detach=True))
@@ -276,7 +276,7 @@ class TestUninstall(unittest.TestCase):
         self.assertNotIn(pkg, updated_registry.packages)
         
         # Verify commit happened with "Detach" message
-        res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertIn(f"Detach: Removed package {pkg}", res.stdout)
 
     def test_uninstall_triggers_pre_and_post_uninstall_hooks(self):
@@ -331,8 +331,8 @@ fi
         )
         save_state_registry(registry)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=self.install_dir, check=True, capture_output=True)
 
         res = run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(force=True))
         self.assertEqual(res.status, "SUCCESS")
@@ -383,8 +383,8 @@ fi
         )
         save_state_registry(registry)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=self.install_dir, check=True, capture_output=True)
 
         with self.assertRaises(FileNotFoundError) as ctx:
             run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(force=True))
@@ -429,8 +429,8 @@ fi
         )
         save_state_registry(registry)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=self.install_dir, check=True, capture_output=True)
 
         with self.assertRaises(RuntimeError) as ctx:
             run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(force=True))
@@ -459,8 +459,8 @@ fi
         registry.set_package_state("pkg_b", "installed")
         save_state_registry(registry)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Attempting to uninstall pkg_a while pkg_b remains installed should raise ConfigError
         with self.assertRaises(ConfigError) as ctx:
@@ -487,8 +487,8 @@ fi
         registry.set_package_state("pkg_b", "installed")
         save_state_registry(registry)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 1. With no_deps=True (pkg_a is disabled in workspace_config, so safeguard passes)
         res = run_primitive_7_uninstall_packages(
@@ -538,8 +538,8 @@ fi
             registry.set_package_state(pkg, "installed")
         save_state_registry(registry)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Install all 3 packages"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Install all 3 packages"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Uninstall all three in random order in argument: ["pkg_a", "pkg_c", "pkg_b"]
         res = run_primitive_7_uninstall_packages(
@@ -560,8 +560,8 @@ fi
         registry.set_package_state(pkg, "installed")
         save_state_registry(registry)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Record ghost package"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Record ghost package"], cwd=self.install_dir, check=True, capture_output=True)
 
         # install_dir / pkg does NOT exist on disk
         self.assertFalse((self.install_dir / pkg).exists())
@@ -591,8 +591,8 @@ fi
             registry.set_package_state(p, "installed")
         save_state_registry(registry)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Record multiple packages"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Record multiple packages"], cwd=self.install_dir, check=True, capture_output=True)
 
         res = run_primitive_7_uninstall_packages(
             self.workspace_config,
@@ -601,7 +601,7 @@ fi
         )
         self.assertEqual(res.status, "SUCCESS")
 
-        log_res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
+        log_res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertEqual(log_res.stdout.strip(), "Uninstall: Removed packages pkg_mult2, pkg_mult1")
 
     def test_prepare_and_execute_uninstall_pipeline(self):
@@ -620,8 +620,8 @@ fi
         registry.set_package_state("pkg_b", "installed")
         save_state_registry(registry)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 1. Test prepare_uninstall_packages (read-only plan preparation)
         plan = prepare_uninstall_packages(
@@ -845,8 +845,8 @@ fi
         save_state_registry(registry)
 
         # Pre-commit so git repo is clean
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=self.install_dir, check=True, capture_output=True)
 
         res = run_primitive_7_uninstall_packages(
             self.workspace_config,

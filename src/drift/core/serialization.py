@@ -7,6 +7,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict
 
+from ..utils.path_utils import as_posix
+
 
 def serialize_for_json(obj: Any) -> Any:
     """Recursively converts Dataclasses, Paths, Enums, and Sets into standard JSON primitives."""
@@ -23,7 +25,7 @@ def serialize_for_json(obj: Any) -> Any:
     if isinstance(obj, (list, tuple, set)):
         return [serialize_for_json(item) for item in obj]
     if isinstance(obj, dict):
-        return {str(k): serialize_for_json(v) for k, v in obj.items()}
+        return {as_posix(k): serialize_for_json(v) for k, v in obj.items()}
     if is_dataclass(obj) and not isinstance(obj, type):
         return {f.name: serialize_for_json(getattr(obj, f.name)) for f in fields(obj)}
     if isinstance(obj, Exception):

@@ -561,7 +561,7 @@ class TestInstallRepo(unittest.TestCase):
             hooks=all_hooks
         )
 
-        hook_path = os.path.join(pkg_install_dir, "hook.sh")
+        hook_path = Path(pkg_install_dir) / "hook.sh"
         with open(hook_path, "w", encoding="utf-8") as f:
             f.write("# dummy")
         os.chmod(hook_path, 0o755)
@@ -586,7 +586,7 @@ class TestInstallRepo(unittest.TestCase):
                     self.assertIn("bash", called_cmd[0].lower())
                     self.assertEqual(called_cmd[-1], PureWindowsPath(hook_path).as_posix())
                 else:
-                    self.assertEqual(called_cmd[0], str(hook_path))
+                    self.assertEqual(called_cmd[0], hook_path.as_posix())
 
     def test_lifecycle_hook_non_executable_runs_via_interpreter_fallback(self) -> None:
         """Verifies that execute_hook_script falls back to interpreter without mutating disk permissions."""
@@ -616,7 +616,7 @@ class TestInstallRepo(unittest.TestCase):
             # On POSIX, non-executable .sh runs via /bin/bash fallback
             if sys.platform != "win32":
                 self.assertEqual(called_cmd[0], "/bin/bash")
-                self.assertEqual(called_cmd[1], str(hook_script))
+                self.assertEqual(called_cmd[1], hook_script.as_posix())
                 # Disk mode remains unchanged (no runtime mutation)
                 self.assertFalse(bool(hook_script.stat().st_mode & 0o111))
 
@@ -940,7 +940,7 @@ class TestInstallRepo(unittest.TestCase):
         # Re-run standalone deployment (without package_changes)
         res2 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res2.status, "SUCCESS")
-        self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res2.packages[0].plan.prune_backups if a.src_path is not None], ["file2.txt"])
+        self.assertEqual([a.src_path.relative_to(self.system_target_dir).as_posix() for a in res2.packages[0].plan.prune_backups if a.src_path is not None], ["file2.txt"])
 
         # 3. Assert file2.txt is pruned from system target
         self.assertFalse(system_file2.exists())
@@ -1123,9 +1123,9 @@ class TestInstallRepo(unittest.TestCase):
         import subprocess
 
         # 1. Initialize Git repository inside the install directory
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), capture_output=True, check=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, capture_output=True, check=True)
 
         # 2. Write a file inside the install directory under a package folder
         pkg_dir = self.install_dir / "pkg_a"
@@ -1145,7 +1145,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # 4. Verify only pkg_a was committed, and pkg_b remains untracked
         status_res = subprocess.run(
-            ["git", "-C", str(self.install_dir), "status", "--porcelain"],
+            ["git", "-C", self.install_dir.as_posix(), "status", "--porcelain"],
             capture_output=True,
             text=True,
             check=True
@@ -1156,7 +1156,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Verify the commit message of the scoped commit
         log_res = subprocess.run(
-            ["git", "-C", str(self.install_dir), "log", "-1", "--pretty=%B"],
+            ["git", "-C", self.install_dir.as_posix(), "log", "-1", "--pretty=%B"],
             capture_output=True,
             text=True,
             check=True
@@ -1169,7 +1169,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Verify repo is clean now
         status_clean = subprocess.run(
-            ["git", "-C", str(self.install_dir), "status", "--porcelain"],
+            ["git", "-C", self.install_dir.as_posix(), "status", "--porcelain"],
             capture_output=True,
             text=True,
             check=True
@@ -1340,7 +1340,7 @@ class TestInstallRepo(unittest.TestCase):
             PackageSectionConfig(
                 name=pkg_missing,
                 install_method=InstallMethod.COPY,
-                target_directory=str(self.system_target_dir),
+                target_directory=self.system_target_dir,
                 enable_install=True,
             )
         )
@@ -1638,7 +1638,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(external_file.read_text(encoding="utf-8"), "setting=external_original\n")
         # 3. Collision backup was saved
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "app.conf").exists())
-        self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res.packages[0].plan.overwritten_backups if a.src_path is not None], ["app.conf"])
+        self.assertEqual([a.src_path.relative_to(self.system_target_dir).as_posix() for a in res.packages[0].plan.overwritten_backups if a.src_path is not None], ["app.conf"])
 
     @unittest.skipUnless(CAN_SYMLINK, "Symlinks require elevated privileges on Windows")
     def test_switch_method_from_symlink_to_copy_deletes_and_replaces_symlinks(self) -> None:
@@ -2718,8 +2718,8 @@ class TestInstallRepo(unittest.TestCase):
 
         err_msg = str(ctx.exception)
         self.assertIn("Cross-package destination conflicts detected (2 collision(s)):", err_msg)
-        self.assertIn(str(self.system_target_dir / ".config/app/setting.json"), err_msg)
-        self.assertIn(str(self.system_target_dir / "shared.txt"), err_msg)
+        self.assertIn((self.system_target_dir / ".config/app/setting.json").as_posix(), err_msg)
+        self.assertIn((self.system_target_dir / "shared.txt").as_posix(), err_msg)
         self.assertIn("pkg_a", err_msg)
         self.assertIn("pkg_b", err_msg)
         self.assertIn("pkg_c", err_msg)
@@ -3106,7 +3106,7 @@ class TestInstallRepo(unittest.TestCase):
 
         reloaded = load_state_registry(state_file)
         self.assertEqual(reloaded.get_package_state(pkg), "installed")
-        self.assertIn("test.conf", [str(p) for p in reloaded.get_package_deployed_files(pkg)])
+        self.assertIn(Path("test.conf"), reloaded.get_package_deployed_files(pkg))
 
     def test_prepare_install_preflight_guard_failure(self) -> None:
         """Verifies prepare_install runs pre-flight checks and aborts before touching host system."""

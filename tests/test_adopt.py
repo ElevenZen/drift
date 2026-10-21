@@ -75,24 +75,24 @@ class TestAdopt(unittest.TestCase):
         self.backup_dir.mkdir()
 
         # Initialize install repo as a git repository
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, check=True, capture_output=True)
         # Commit a dummy state.toml to establish HEAD
         with open(self.install_dir / "state.toml", "w", encoding="utf-8") as f:
             f.write("# dummy")
-        subprocess.run(["git", "add", "state.toml"], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "state.toml"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Initialize main workspace repo as a git repository (for cleanliness check)
-        subprocess.run(["git", "init"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "init"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.workspace_path, check=True, capture_output=True)
         # Commit a dummy file
         with open(self.workspace_path / ".gitignore", "w", encoding="utf-8") as f:
             f.write("install/\nbackup/\n")
-        subprocess.run(["git", "add", ".gitignore"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial workspace commit"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", ".gitignore"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial workspace commit"], cwd=self.workspace_path, check=True, capture_output=True)
 
         config_dir = self.workspace_path / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -156,8 +156,8 @@ class TestAdopt(unittest.TestCase):
         # Clean tracked file should pass
         clean_file = src_pkg_dir / "clean.txt"
         clean_file.write_text("tracked content", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "add clean.txt"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add clean.txt"], cwd=self.workspace_path, check=True, capture_output=True)
         assert_source_file_clean(clean_file, force=False, pkg=pkg)
 
         # Modify file to make it dirty
@@ -180,14 +180,14 @@ class TestAdopt(unittest.TestCase):
         # Setup a tracked file in Git HEAD
         tracked_file = pkg_install_dir / "tracked.txt"
         tracked_file.write_text("original content", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Tracked files"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Tracked files"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Setup a Deletion
         deleted_file = pkg_install_dir / "deleted.txt"
         deleted_file.write_text("will be deleted", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "To delete"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "To delete"], cwd=self.install_dir, check=True, capture_output=True)
         deleted_file.unlink()
 
         # Setup an Addition (Untracked) at the very end
@@ -211,11 +211,11 @@ class TestAdopt(unittest.TestCase):
         # 1. Setup tracked file
         orig_file = pkg_install_dir / "old_name.txt"
         orig_file.write_text("hello", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 2. Perform git rename
-        subprocess.run(["git", "mv", "pkg_a/old_name.txt", "pkg_a/new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "mv", "pkg_a/old_name.txt", "pkg_a/new_name.txt"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Get package drifts
         plan = plan_package_adopt(self.workspace_config, pkg)
@@ -234,8 +234,8 @@ class TestAdopt(unittest.TestCase):
         # 1. Create original file and commit
         tracked_file = pkg_install_dir / "file.txt"
         tracked_file.write_text("line 1\nline 2\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "original file"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "original file"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 2. Modify file in install base
         tracked_file.write_text("line 1 modified\nline 2\n", encoding="utf-8")
@@ -356,11 +356,11 @@ class TestAdopt(unittest.TestCase):
         # 2. Setup old file in install/ (matching repo format) and commit
         install_old_file = pkg_install_dir / "dot-old_name.txt"
         install_old_file.write_text("template content\ntemplate content\ntemplate content\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 3. Rename and modify file inside install/
-        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=self.install_dir, check=True, capture_output=True)
         (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content\ntemplate content modified\n", encoding="utf-8")
 
         # 4. Adopt the rename
@@ -395,11 +395,11 @@ class TestAdopt(unittest.TestCase):
         # 1. Setup old file in install/ and commit, but NO template in src/
         install_old_file = pkg_install_dir / "dot-old_name.txt"
         install_old_file.write_text("template content\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 2. Rename and modify file inside install/
-        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=self.install_dir, check=True, capture_output=True)
         (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content modified\n", encoding="utf-8")
 
         # 3. Generate the patch (with old_rel_path=None to represent addition)
@@ -521,8 +521,8 @@ class TestAdopt(unittest.TestCase):
         install_old_file = pkg_install_dir / "dot-old.txt"
         install_old_file.write_text("old content", encoding="utf-8")
         
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init old"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init old"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 2. Rename on disk in install/ (but target_existing_src will trigger a conflict in non-interactive mode!)
         install_new_file = pkg_install_dir / "dot-new.txt"
@@ -537,7 +537,7 @@ class TestAdopt(unittest.TestCase):
 
         # 4. Check git status. Both pkg_a/dot-old.txt and pkg_a/dot-new.txt should be unstaged (not in staged index)
         # because the rename conflicted and was skipped, triggering selective git restore --staged.
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         # They should appear as unstaged (M, D, ?, etc.) but NOT staged (staged would be in the first column)
         # We can check that there are no staged changes (staged changes start with 'M ', 'D ', 'R ', 'A ', etc.)
         for line in res.stdout.splitlines():
@@ -676,8 +676,8 @@ class TestAdopt(unittest.TestCase):
         )
 
         # Commit initial files in workspace source repo
-        subprocess.run(["git", "-C", str(self.workspace_path), "add", "."], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(self.workspace_path), "commit", "-m", "add pkg_sub_adopt source"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", self.workspace_path.as_posix(), "add", "."], check=True, capture_output=True)
+        subprocess.run(["git", "-C", self.workspace_path.as_posix(), "commit", "-m", "add pkg_sub_adopt source"], check=True, capture_output=True)
 
         # Stage / install structure
         pkg_install_dir = self.install_dir / pkg
@@ -686,8 +686,8 @@ class TestAdopt(unittest.TestCase):
         (pkg_install_dir / "dot-config" / "app.conf").write_text("setting=original\n", encoding="utf-8")
 
         # Initial commit in install repo
-        subprocess.run(["git", "-C", str(self.install_dir), "add", "."], capture_output=True)
-        subprocess.run(["git", "-C", str(self.install_dir), "commit", "-m", "init"], capture_output=True)
+        subprocess.run(["git", "-C", self.install_dir.as_posix(), "add", "."], capture_output=True)
+        subprocess.run(["git", "-C", self.install_dir.as_posix(), "commit", "-m", "init"], capture_output=True)
 
         # Create drifts in install/
         # 1. Modify app.conf
@@ -730,11 +730,11 @@ class TestAdopt(unittest.TestCase):
         install_script.write_text("#!/bin/bash\necho hello\n", encoding="utf-8")
         install_script.chmod(0o644)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src script"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src script"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init script"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init script"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Drift permissions in install/
         install_script.chmod(0o755)
@@ -747,7 +747,7 @@ class TestAdopt(unittest.TestCase):
             self.assertTrue(bool(src_script.stat().st_mode & 0o111))
 
         # Check install/ git status - nothing should be staged
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         for line in res.stdout.splitlines():
             if len(line) >= 2:
                 self.assertIn(line[0], [" ", "?"])
@@ -767,14 +767,14 @@ class TestAdopt(unittest.TestCase):
         install_file = pkg_install_dir / "app.conf"
         install_file.write_text("TEMPLATE_VAR=RENDERED_VALUE\nEXTRA_LINE=1\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src app.conf"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src app.conf"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init app.conf"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init app.conf"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Record HEAD commit sha before adopt
-        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
 
         # Modify install_file so that patch cannot apply cleanly to src_file template
         install_file.write_text("CONFLICTING_MODIFICATION=VALUE\nEXTRA_LINE=999\n", encoding="utf-8")
@@ -783,11 +783,11 @@ class TestAdopt(unittest.TestCase):
         run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=False))
 
         # HEAD commit in install/ repo MUST NOT have changed (install was not committed)
-        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
         self.assertEqual(head_before, head_after)
 
         # In install/ repo, the modified file must remain as an UNSTAGED drift (' M')
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertIn(" M pkg_conflict/app.conf", res.stdout)
         self.assertNotIn("M  pkg_conflict/app.conf", res.stdout)
 
@@ -815,11 +815,11 @@ class TestAdopt(unittest.TestCase):
         (install_conflict / "server.conf").write_text("HOST=localhost\nPORT=8080\n", encoding="utf-8")
 
         # Commit clean initial state in workspace and install
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init multi-pkg src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init multi-pkg src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init multi-pkg install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init multi-pkg install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Drift in install/
         (install_clean / "config.json").write_text('{"version": 2}', encoding="utf-8")
@@ -849,7 +849,7 @@ class TestAdopt(unittest.TestCase):
         # In install/ repo:
         # pkg_clean should be committed (not in status)
         # pkg_conflict/server.conf should be UNSTAGED (' M')
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertNotIn(pkg_clean, res.stdout)
         self.assertIn(f" M {pkg_conflict}/server.conf", res.stdout)
         self.assertNotIn(f"M  {pkg_conflict}/server.conf", res.stdout)
@@ -868,13 +868,13 @@ class TestAdopt(unittest.TestCase):
         (src_pkg / "template_file.conf.envst").write_text("KEY=$VAL\nLINE=A\n", encoding="utf-8")
         (install_pkg / "template_file.conf").write_text("KEY=RENDERED\nLINE=A\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init partial src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init partial src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init partial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init partial install"], cwd=self.install_dir, check=True, capture_output=True)
 
-        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
 
         # Drift in install/: static_file is clean, template_file has conflict
         (install_pkg / "static_file.txt").write_text("static v2", encoding="utf-8")
@@ -891,14 +891,14 @@ class TestAdopt(unittest.TestCase):
         self.assertEqual(resolved.packages[0].skipped_files, [])
 
         # HEAD commit in install/ DID change because static_file was adopted and committed
-        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
         self.assertNotEqual(head_before, head_after)
 
         # Clean file was adopted into source and committed in install/
         self.assertEqual((src_pkg / "static_file.txt").read_text(encoding="utf-8"), "static v2")
 
         # Conflict file is UNSTAGED
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertIn(f" M {pkg}/template_file.conf", res.stdout)
         self.assertNotIn(f"M  {pkg}/template_file.conf", res.stdout)
         self.assertNotIn("static_file.txt", res.stdout)
@@ -922,11 +922,11 @@ class TestAdopt(unittest.TestCase):
         install_script.write_text("#!/bin/bash\nexport THEME=Dark\n", encoding="utf-8")
         install_script.chmod(0o644)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init template perm src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init template perm src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init template perm install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init template perm install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Drift mode to 0o755 in install/
         install_script.chmod(0o755)
@@ -941,7 +941,7 @@ class TestAdopt(unittest.TestCase):
         self.assertTrue(bool(src_template.stat().st_mode & 0o111))
 
         # install/ repo should be committed and clean
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertEqual(res.stdout.strip(), "")
 
     def test_adopt_interactive_skip_unstages_file_and_skips_commit(self) -> None:
@@ -957,13 +957,13 @@ class TestAdopt(unittest.TestCase):
         (src_pkg / "notes.txt").write_text("notes v1", encoding="utf-8")
         (install_pkg / "notes.txt").write_text("notes v1", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init notes src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init notes src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init notes install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init notes install"], cwd=self.install_dir, check=True, capture_output=True)
 
-        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
 
         # Drift in install/
         (install_pkg / "notes.txt").write_text("notes v2", encoding="utf-8")
@@ -975,11 +975,11 @@ class TestAdopt(unittest.TestCase):
         self.assertEqual(list(resolved), [])
 
         # HEAD commit in install/ did not advance
-        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
         self.assertEqual(head_before, head_after)
 
         # File remains as UNSTAGED drift in install/
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertIn(f" M {pkg}/notes.txt", res.stdout)
         self.assertNotIn(f"M  {pkg}/notes.txt", res.stdout)
 
@@ -996,13 +996,13 @@ class TestAdopt(unittest.TestCase):
         (src_pkg / "base.txt").write_text("base", encoding="utf-8")
         (install_pkg / "base.txt").write_text("base", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init add skip src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init add skip src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init add skip install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init add skip install"], cwd=self.install_dir, check=True, capture_output=True)
 
-        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
 
         # Add new untracked file in install/
         (install_pkg / "wild_addition.txt").write_text("wild content", encoding="utf-8")
@@ -1014,11 +1014,11 @@ class TestAdopt(unittest.TestCase):
         self.assertEqual(list(resolved), [])
 
         # install/ repo HEAD did not advance
-        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
         self.assertEqual(head_before, head_after)
 
         # File is untracked '??', NOT staged 'A '
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertIn(f"?? {pkg}/wild_addition.txt", res.stdout)
         self.assertNotIn(f"A  {pkg}/wild_addition.txt", res.stdout)
 
@@ -1035,13 +1035,13 @@ class TestAdopt(unittest.TestCase):
         (src_pkg / "delete_me.txt").write_text("del content", encoding="utf-8")
         (install_pkg / "delete_me.txt").write_text("del content", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init del skip src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init del skip src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init del skip install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init del skip install"], cwd=self.install_dir, check=True, capture_output=True)
 
-        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
 
         # Delete file in install/
         (install_pkg / "delete_me.txt").unlink()
@@ -1053,11 +1053,11 @@ class TestAdopt(unittest.TestCase):
         self.assertEqual(list(resolved), [])
 
         # install/ repo HEAD did not advance
-        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
         self.assertEqual(head_before, head_after)
 
         # File is unstaged deletion ' D', NOT staged 'D '
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertIn(f" D {pkg}/delete_me.txt", res.stdout)
         self.assertNotIn(f"D  {pkg}/delete_me.txt", res.stdout)
 
@@ -1074,13 +1074,13 @@ class TestAdopt(unittest.TestCase):
         (src_pkg / "service.conf.envst").write_text("PORT=$MY_PORT\nKEY=ABC\n", encoding="utf-8")
         (install_pkg / "service.conf").write_text("PORT=8000\nKEY=ABC\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init conflict interactive src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init conflict interactive src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init conflict interactive install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init conflict interactive install"], cwd=self.install_dir, check=True, capture_output=True)
 
-        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
 
         # Conflicting modification in install/
         (install_pkg / "service.conf").write_text("COMPLETELY_DIFFERENT=999\nOTHER=ZZZ\n", encoding="utf-8")
@@ -1092,11 +1092,11 @@ class TestAdopt(unittest.TestCase):
         self.assertEqual(list(resolved), [])
 
         # install/ repo HEAD did not advance
-        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
         self.assertEqual(head_before, head_after)
 
         # File is unstaged modification ' M', NOT staged 'M '
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         self.assertIn(f" M {pkg}/service.conf", res.stdout)
         self.assertNotIn(f"M  {pkg}/service.conf", res.stdout)
 
@@ -1119,11 +1119,11 @@ class TestAdopt(unittest.TestCase):
         (install_pkg / "app.conf").write_text("setting=original\n", encoding="utf-8")
 
         # Initial commit in src and install
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src subfolder"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src subfolder"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install subfolder"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install subfolder"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 1. Modify existing file on host (in install/)
         (install_pkg / "app.conf").write_text("setting=modified_on_host\n", encoding="utf-8")
@@ -1157,11 +1157,11 @@ class TestAdopt(unittest.TestCase):
         (src_pkg / "source_name.txt").write_text("content to rename", encoding="utf-8")
         (install_pkg / "source_name.txt").write_text("content to rename", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init dry run rename src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init dry run rename src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init dry run rename install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init dry run rename install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Rename file on host (in install/)
         (install_pkg / "source_name.txt").unlink()
@@ -1179,7 +1179,7 @@ class TestAdopt(unittest.TestCase):
         self.assertFalse((src_pkg / "renamed_dest.txt").exists())
 
         # Git index in install/ must remain unstaged (no staged changes)
-        status_res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        status_res = subprocess.run(["git", "status", "--porcelain"], cwd=self.install_dir, capture_output=True, text=True)
         for line in status_res.stdout.splitlines():
             if len(line) >= 2:
                 self.assertIn(line[0], [" ", "?"])
@@ -1277,11 +1277,11 @@ render_command = "bash -c 'cat %i %s'"
         install_app = install_pkg / "app.txt"
         install_app.write_text("hello original app\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src pkg_adopt_engine"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_adopt_engine"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install pkg_adopt_engine"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_adopt_engine"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 2. Host modifications:
         # - modify config.ini
@@ -1335,14 +1335,14 @@ render_command = "bash -c 'cat %i %s'"
         install_doc = install_pkg / "document.md"
         install_doc.write_text("# Document Title\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src pkg_adopt_rename_engine"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_adopt_rename_engine"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install pkg_adopt_rename_engine"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_adopt_rename_engine"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Host renames document.md -> manual.md
-        subprocess.run(["git", "mv", f"{pkg}/document.md", f"{pkg}/manual.md"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "mv", f"{pkg}/document.md", f"{pkg}/manual.md"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Run adopt
         res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
@@ -1367,11 +1367,11 @@ render_command = "bash -c 'cat %i %s'"
         (src_pkg / "config.txt").write_text("line1\nline2\n", encoding="utf-8")
         (install_pkg / "config.txt").write_text("line1\nline2\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src pkg_edit_opt"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_edit_opt"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install pkg_edit_opt"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_edit_opt"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Modify install
         (install_pkg / "config.txt").write_text("line1\nline2_modified\n", encoding="utf-8")
@@ -1398,11 +1398,11 @@ render_command = "bash -c 'cat %i %s'"
         (src_pkg / "config.txt").write_text("orig\n", encoding="utf-8")
         (install_pkg / "config.txt").write_text("orig\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src pkg_sbs_opt"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_sbs_opt"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install pkg_sbs_opt"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_sbs_opt"], cwd=self.install_dir, check=True, capture_output=True)
 
         (install_pkg / "config.txt").write_text("modified\n", encoding="utf-8")
 
@@ -1425,13 +1425,13 @@ render_command = "bash -c 'cat %i %s'"
         (src_pkg / "old_name.txt").write_text(content_orig, encoding="utf-8")
         (install_pkg / "old_name.txt").write_text(content_orig, encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src pkg_rename_edit"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_rename_edit"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install pkg_rename_edit"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_rename_edit"], cwd=self.install_dir, check=True, capture_output=True)
 
-        subprocess.run(["git", "mv", f"{pkg}/old_name.txt", f"{pkg}/new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "mv", f"{pkg}/old_name.txt", f"{pkg}/new_name.txt"], cwd=self.install_dir, check=True, capture_output=True)
         (install_pkg / "new_name.txt").write_text(content_mod, encoding="utf-8")
 
         with patch("builtins.input", return_value="2"), \
@@ -1455,11 +1455,11 @@ render_command = "bash -c 'cat %i %s'"
             (src_pkg / "file.txt").write_text("initial\n", encoding="utf-8")
             (install_pkg / "file.txt").write_text("initial\n", encoding="utf-8")
 
-            subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init src pkg_debug_log"], cwd=str(self.workspace_path), check=True, capture_output=True)
+            subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init src pkg_debug_log"], cwd=self.workspace_path, check=True, capture_output=True)
 
-            subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init install pkg_debug_log"], cwd=str(self.install_dir), check=True, capture_output=True)
+            subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init install pkg_debug_log"], cwd=self.install_dir, check=True, capture_output=True)
 
             (install_pkg / "file.txt").write_text("changed_text\n", encoding="utf-8")
 
@@ -1483,11 +1483,11 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "file_a.txt").write_text("orig_a\n", encoding="utf-8")
         (install_pkg / "file_b.txt").write_text("orig_b\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src pkg_sibling"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_sibling"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install pkg_sibling"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_sibling"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 1. Dirty file_a in src/
         (src_pkg / "file_a.txt").write_text("dirty_uncommitted_a\n", encoding="utf-8")
@@ -1533,11 +1533,11 @@ render_command = "bash -c 'cat %i %s'"
         (src_pkg / "del_me.txt").write_text("orig_del\n", encoding="utf-8")
         (install_pkg / "del_me.txt").write_text("orig_del\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src pkg_del_dirty"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_del_dirty"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install pkg_del_dirty"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_del_dirty"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Dirty del_me.txt in src/
         (src_pkg / "del_me.txt").write_text("dirty_uncommitted_del\n", encoding="utf-8")
@@ -1580,11 +1580,11 @@ render_command = "bash -c 'cat %i %s'"
         (src_pkg1 / "config.txt").write_text("v1\n", encoding="utf-8")
         (install_pkg1 / "config.txt").write_text("v1\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init plan test src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init plan test src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init plan test install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init plan test install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Introduce drifts: modification in pkg1, addition in pkg2
         (install_pkg1 / "config.txt").write_text("v2_modified\n", encoding="utf-8")
@@ -1614,7 +1614,7 @@ render_command = "bash -c 'cat %i %s'"
 
         # Verify staging index in install/ was completely restored during planning
         res_cached = subprocess.run(
-            ["git", "-C", str(self.install_dir), "diff", "--cached", "--quiet"],
+            ["git", "-C", self.install_dir.as_posix(), "diff", "--cached", "--quiet"],
             capture_output=True
         )
         self.assertEqual(res_cached.returncode, 0, "Index should be clean after planning")
@@ -1629,7 +1629,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual((src_pkg2 / "new_tool.sh").read_text(encoding="utf-8"), "#!/bin/sh\necho hi\n")
 
         # Working tree in install/ should now be clean and committed
-        status_res = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain"], capture_output=True, text=True)
+        status_res = subprocess.run(["git", "-C", self.install_dir.as_posix(), "status", "--porcelain"], capture_output=True, text=True)
         self.assertEqual(status_res.stdout.strip(), "")
 
     def test_plan_package_adopt_rename_with_precomputed_patch(self) -> None:
@@ -1646,14 +1646,14 @@ render_command = "bash -c 'cat %i %s'"
         (src_pkg / "old_name.conf").write_text(initial_content, encoding="utf-8")
         (install_pkg / "old_name.conf").write_text(initial_content, encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init rename plan src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init rename plan src"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init rename plan install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init rename plan install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Perform git rename and modification in install/
-        subprocess.run(["git", "-C", str(self.install_dir), "mv", f"{pkg}/old_name.conf", f"{pkg}/new_name.conf"], check=True)
+        subprocess.run(["git", "-C", self.install_dir.as_posix(), "mv", f"{pkg}/old_name.conf", f"{pkg}/new_name.conf"], check=True)
         modified_content = "line1=apple\nline2=banana\nline3=cherry_modified\nline4=date\nline5=elderberry\n"
         (install_pkg / "new_name.conf").write_text(modified_content, encoding="utf-8")
 
@@ -1670,7 +1670,7 @@ render_command = "bash -c 'cat %i %s'"
 
         # Index in install/ must be clean (un-staged)
         res_cached = subprocess.run(
-            ["git", "-C", str(self.install_dir), "diff", "--cached", "--quiet"],
+            ["git", "-C", self.install_dir.as_posix(), "diff", "--cached", "--quiet"],
             capture_output=True
         )
         self.assertEqual(res_cached.returncode, 0)
@@ -1715,10 +1715,10 @@ render_command = "bash -c 'cat %i %s'"
         old_dir.mkdir(parents=True, exist_ok=True)
         (old_dir / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src keep del"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install keep del"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src keep del"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install keep del"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Delete the empty folder in install/
         shutil.rmtree(old_dir)
@@ -1739,16 +1739,16 @@ render_command = "bash -c 'cat %i %s'"
         dir_a.mkdir(parents=True, exist_ok=True)
         (dir_a / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src keep rename"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install keep rename"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src keep rename"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install keep rename"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Rename dir_a to dir_b using git mv
         (install_pkg / "dir_b").mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "-C", str(self.install_dir), "mv", f"{pkg}/dir_a/{DRIFT_KEEP_FILE_NAME}", f"{pkg}/dir_b/{DRIFT_KEEP_FILE_NAME}"], check=True)
+        subprocess.run(["git", "-C", self.install_dir.as_posix(), "mv", f"{pkg}/dir_a/{DRIFT_KEEP_FILE_NAME}", f"{pkg}/dir_b/{DRIFT_KEEP_FILE_NAME}"], check=True)
         # Unstage so it's a working tree change
-        subprocess.run(["git", "-C", str(self.install_dir), "restore", "--staged", "--", pkg], check=True)
+        subprocess.run(["git", "-C", self.install_dir.as_posix(), "restore", "--staged", "--", pkg], check=True)
 
         plan = plan_package_adopt(self.workspace_config, pkg)
         # Renames should NOT contain keep files
@@ -1769,8 +1769,8 @@ render_command = "bash -c 'cat %i %s'"
         keep_file.parent.mkdir(parents=True, exist_ok=True)
         keep_file.write_bytes(b"")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install corrupt keep"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install corrupt keep"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Modify keep file to have non-empty content
         keep_file.write_text("corrupted content", encoding="utf-8")
@@ -1891,8 +1891,8 @@ render_command = "bash -c 'cat %i %s'"
         (src_dir / "user_file.txt").write_text("user content", encoding="utf-8")
 
         # Commit source file so it passes cleanliness guard
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src non empty"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src non empty"], cwd=self.workspace_path, check=True, capture_output=True)
 
         set_test_mode(True, enable_logging=True)
         try:
@@ -1920,8 +1920,8 @@ render_command = "bash -c 'cat %i %s'"
         (src_dir / "file1.txt").write_text("content 1", encoding="utf-8")
         (src_dir / "file2.txt").write_text("content 2", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init interactive non empty"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init interactive non empty"], cwd=self.workspace_path, check=True, capture_output=True)
 
         # 1. Choice [1]: Discard deletion -> preserves files, returns True
         with patch("builtins.input", return_value="1"):
@@ -1975,11 +1975,11 @@ render_command = "bash -c 'cat %i %s'"
         # 2. Staged rename in pkg_rename
         orig = self.install_dir / pkg_rename / "old.txt"
         orig.write_text("rename me", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "commit orig"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit orig"], cwd=self.install_dir, check=True, capture_output=True)
         # Re-create spaced file after commit so it's untracked, and git mv orig
         (self.install_dir / pkg_space / "my file with spaces.txt").write_text("spaced v2", encoding="utf-8")
-        subprocess.run(["git", "mv", f"{pkg_rename}/old.txt", f"{pkg_rename}/new.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "mv", f"{pkg_rename}/old.txt", f"{pkg_rename}/new.txt"], cwd=self.install_dir, check=True, capture_output=True)
 
         self.assertEqual(get_drifted_packages(self.workspace_config), [pkg_rename, pkg_space])
 
@@ -2002,11 +2002,11 @@ render_command = "bash -c 'cat %i %s'"
             "-- old lua comment\n",
             encoding="utf-8",
         )
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "add old_script.lua"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add old_script.lua"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Rename and replace `-- old lua comment` with `++ counter comment` (becomes `+++ counter comment` in diff)
-        subprocess.run(["git", "mv", f"{pkg}/old_script.lua", f"{pkg}/new_script.lua"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "mv", f"{pkg}/old_script.lua", f"{pkg}/new_script.lua"], cwd=self.install_dir, check=True, capture_output=True)
         (pkg_install_dir / "new_script.lua").write_text(
             "local x = 1\n"
             "local a = 1\n"
@@ -2103,10 +2103,10 @@ render_command = "bash -c 'cat %i %s'"
         install_static = install_pkg / "static.toml"
         install_static.write_text("mode = 'v1'\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init j2 and static src"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init j2 and static install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init j2 and static src"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init j2 and static install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Drift port on line 5 of install/config.toml and mode in install/static.toml
         install_j2.write_text(
@@ -2182,10 +2182,10 @@ render_command = "bash -c 'cat %i %s'"
             (d / "conv.txt").write_text("v1", encoding="utf-8")
             (d / "div.txt").write_text("v1", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init conv src"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init conv install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init conv src"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init conv install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Modify conv.txt identically in src/, render/, and install/; modify div.txt only in install/
         (src_pkg / "conv.txt").write_text("v2-converged", encoding="utf-8")
@@ -2225,10 +2225,10 @@ render_command = "bash -c 'cat %i %s'"
             (d / "conv_mod.txt").write_text("v1", encoding="utf-8")
             (d / "div_mod.txt").write_text("v1", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init adopt conv src"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init adopt conv install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init adopt conv src"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init adopt conv install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Modify conv_mod.txt in render/ and install/ (e.g. template rendered in render/, reverse-synced in install/),
         # while leaving conv_mod.txt in src/ with an uncommitted local edit!
@@ -2329,8 +2329,8 @@ render_command = "bash -c 'cat %i %s'"
         )
         (src_sym / "sym.txt").write_text("sym_v1\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init live packages"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init live packages"], cwd=self.workspace_path, check=True, capture_output=True)
 
         # Deploy both packages (render -> stage -> apply)
         deploy_res = run_primitive_deploy_pipeline(self.workspace_config, [pkg_copy, pkg_sym])
@@ -2418,8 +2418,8 @@ render_command = "bash -c 'cat %i %s'"
         )
         (src_pkg / "msg.envst.txt").write_text("$GREETING v1\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init opt flags pkg"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init opt flags pkg"], cwd=self.workspace_path, check=True, capture_output=True)
 
         run_primitive_deploy_pipeline(self.workspace_config, [pkg])
 
@@ -2488,8 +2488,8 @@ render_command = "bash -c 'cat %i %s'"
         )
         (src_pkg / "data.txt").write_text("v1\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init hook dedup pkg"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init hook dedup pkg"], cwd=self.workspace_path, check=True, capture_output=True)
 
         # Deploy initial state (this fires pre_source once during deploy's render step; clear marker afterwards)
         run_primitive_deploy_pipeline(self.workspace_config, [pkg])
@@ -2504,8 +2504,8 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(len(marker_file.read_text(encoding="utf-8").splitlines()), 1)
 
         # Commit updated src/data.txt so source cleanliness guard passes for Case 2
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "commit v2 src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit v2 src"], cwd=self.workspace_path, check=True, capture_output=True)
         marker_file.unlink()
 
         # Case 2: Adopt with no_render=True -> pre_source was not triggered in prepare_adopt, so execute_package_adopt triggers it once
@@ -2516,8 +2516,8 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(len(marker_file.read_text(encoding="utf-8").splitlines()), 1)
 
         # Commit updated src/data.txt so source cleanliness guard passes for Case 3
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "commit v3 src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit v3 src"], cwd=self.workspace_path, check=True, capture_output=True)
         marker_file.unlink()
 
         # Case 3: Adopt with no_hooks=True -> pre_source is suppressed in both prepare_adopt and execute_package_adopt
@@ -2551,10 +2551,10 @@ render_command = "bash -c 'cat %i %s'"
         (src_pkg / "tmpl.conf.envst").write_text("KEY=$VAL\nLINE=1\n", encoding="utf-8")
         (install_pkg / "tmpl.conf").write_text("KEY=RENDERED\nLINE=1\n", encoding="utf-8")
 
-        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init status matrix src"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init status matrix install"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init status matrix src"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init status matrix install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # 1. UP_TO_DATE: No drifts in package or workspace
         res_up_to_date = run_primitive_adopt_drifts(
@@ -2721,7 +2721,7 @@ render_command = "bash -c 'cat %i %s'"
         ):
             proc = subprocess.run(
                 [sys.executable, "-c", f"import sys; sys.path.insert(0, 'src'); {import_stmt}"],
-                cwd=str(Path(__file__).resolve().parents[1]),
+                cwd=Path(__file__).resolve().parents[1],
                 capture_output=True,
                 text=True,
                 check=False,

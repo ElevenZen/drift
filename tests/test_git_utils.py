@@ -36,13 +36,13 @@ class TestGitUtilsUserConfig(unittest.TestCase):
         configure_repo_git_user(self.repo_dir, user_name="Test Bot", user_email="bot@example.com")
 
         res_name = run_command(
-            ["git", "-C", str(self.repo_dir), "config", "--local", "user.name"],
+            ["git", "-C", self.repo_dir.as_posix(), "config", "--local", "user.name"],
             text=True,
         )
         self.assertEqual(res_name.stdout.strip(), "Test Bot")
 
         res_email = run_command(
-            ["git", "-C", str(self.repo_dir), "config", "--local", "user.email"],
+            ["git", "-C", self.repo_dir.as_posix(), "config", "--local", "user.email"],
             text=True,
         )
         self.assertEqual(res_email.stdout.strip(), "bot@example.com")
@@ -52,13 +52,13 @@ class TestGitUtilsUserConfig(unittest.TestCase):
         configure_repo_git_user(self.repo_dir, user_name="Name Only")
 
         res_name = run_command(
-            ["git", "-C", str(self.repo_dir), "config", "--local", "user.name"],
+            ["git", "-C", self.repo_dir.as_posix(), "config", "--local", "user.name"],
             text=True,
         )
         self.assertEqual(res_name.stdout.strip(), "Name Only")
 
         res_email = run_command(
-            ["git", "-C", str(self.repo_dir), "config", "--local", "user.email"],
+            ["git", "-C", self.repo_dir.as_posix(), "config", "--local", "user.email"],
             text=True,
             check=False,
             suppress_output=True,
@@ -70,7 +70,7 @@ class TestGitUtilsUserConfig(unittest.TestCase):
         configure_repo_git_user(self.repo_dir, user_name=None, user_email=None)
 
         res_name = run_command(
-            ["git", "-C", str(self.repo_dir), "config", "--local", "user.name"],
+            ["git", "-C", self.repo_dir.as_posix(), "config", "--local", "user.name"],
             text=True,
             check=False,
             suppress_output=True,
@@ -177,8 +177,8 @@ class TestCommitStagedRepoChanges(unittest.TestCase):
         # Initial commit
         init_file = self.repo_dir / "init.txt"
         init_file.write_text("initial", encoding="utf-8")
-        run_command(["git", "-C", str(self.repo_dir), "add", "init.txt"])
-        run_command(["git", "-C", str(self.repo_dir), "commit", "-m", "initial commit"])
+        run_command(["git", "-C", self.repo_dir.as_posix(), "add", "init.txt"])
+        run_command(["git", "-C", self.repo_dir.as_posix(), "commit", "-m", "initial commit"])
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -189,11 +189,11 @@ class TestCommitStagedRepoChanges(unittest.TestCase):
         dirty_file = self.repo_dir / "init.txt"
         dirty_file.write_text("dirty unstaged", encoding="utf-8")
 
-        head_before = run_command(["git", "-C", str(self.repo_dir), "rev-parse", "HEAD"], text=True).stdout.strip()
+        head_before = run_command(["git", "-C", self.repo_dir.as_posix(), "rev-parse", "HEAD"], text=True).stdout.strip()
         committed = commit_staged_repo_changes(self.repo_dir, "Should not commit", "test repo")
         self.assertFalse(committed)
 
-        head_after = run_command(["git", "-C", str(self.repo_dir), "rev-parse", "HEAD"], text=True).stdout.strip()
+        head_after = run_command(["git", "-C", self.repo_dir.as_posix(), "rev-parse", "HEAD"], text=True).stdout.strip()
         self.assertEqual(head_before, head_after)
 
     def test_commit_staged_repo_changes_with_staged_changes(self) -> None:
@@ -201,21 +201,21 @@ class TestCommitStagedRepoChanges(unittest.TestCase):
         # Create staged file
         staged_file = self.repo_dir / "file_staged.txt"
         staged_file.write_text("staged content", encoding="utf-8")
-        run_command(["git", "-C", str(self.repo_dir), "add", "file_staged.txt"])
+        run_command(["git", "-C", self.repo_dir.as_posix(), "add", "file_staged.txt"])
 
         # Create unstaged file
         unstaged_file = self.repo_dir / "file_unstaged.txt"
         unstaged_file.write_text("unstaged content", encoding="utf-8")
 
-        head_before = run_command(["git", "-C", str(self.repo_dir), "rev-parse", "HEAD"], text=True).stdout.strip()
+        head_before = run_command(["git", "-C", self.repo_dir.as_posix(), "rev-parse", "HEAD"], text=True).stdout.strip()
         committed = commit_staged_repo_changes(self.repo_dir, "Commit staged only", "test repo")
         self.assertTrue(committed)
 
-        head_after = run_command(["git", "-C", str(self.repo_dir), "rev-parse", "HEAD"], text=True).stdout.strip()
+        head_after = run_command(["git", "-C", self.repo_dir.as_posix(), "rev-parse", "HEAD"], text=True).stdout.strip()
         self.assertNotEqual(head_before, head_after)
 
         # Staged file is committed, unstaged file remains untracked
-        res = run_command(["git", "-C", str(self.repo_dir), "status", "--porcelain"], text=True)
+        res = run_command(["git", "-C", self.repo_dir.as_posix(), "status", "--porcelain"], text=True)
         self.assertIn("?? file_unstaged.txt", res.stdout)
         self.assertNotIn("file_staged.txt", res.stdout)
 

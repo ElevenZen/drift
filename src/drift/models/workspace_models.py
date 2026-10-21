@@ -17,8 +17,9 @@ from ..core.file_action import (
 )
 from ..core.folder_diff import FolderDiff
 from ..core.serialization import SerializableModel
-from ..utils.config_utils import choose
+from ..utils.func_utils import choose, branch, when_not_none
 from ..utils.git_utils import GitStatusChanges
+from ..utils.path_utils import as_posix
 
 
 # =============================================================================
@@ -608,8 +609,8 @@ class HookResult(SerializableModel):
             hook_name=hook_name,
             status="SKIPPED",
             exit_code=0,
-            cwd=str(cwd) if cwd is not None else None,
-            hook_base_dir=str(hook_base_dir) if hook_base_dir is not None else None,
+            cwd=when_not_none(cwd, as_posix),
+            hook_base_dir=when_not_none(hook_base_dir, as_posix),
             duration_ms=0.0,
         )
 

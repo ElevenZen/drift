@@ -45,7 +45,7 @@ from typing import Optional, Type, cast
 
 from ..config.render_engine_config import RenderEngineConfig
 from ..core.constants import CONFIG_DIR_NAME
-from ..utils.config_utils import branch
+from ..utils.func_utils import branch
 from ..utils.process_utils import run_command
 from ..core.exceptions import DriftError, RenderError
 from ..utils.env_utils import python_envsubst

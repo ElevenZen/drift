@@ -87,8 +87,8 @@ def run_primitive_10_create_new_package(
         command="new",
         status="SUCCESS",
         package=package_name,
-        package_dir=str(package_dir),
-        config_file=str(config_file),
-        target_directory=str(target_directory) if target_directory else str(workspace_config.default_target_path),
+        package_dir=package_dir.as_posix(),
+        config_file=config_file.as_posix(),
+        target_directory=target_dir_path.as_posix() if target_dir_path else workspace_config.default_target_path.as_posix(),
         install_method=final_install_method,
     )

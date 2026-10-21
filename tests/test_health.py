@@ -242,7 +242,7 @@ exit 0
                 self.assertIn("bash", called_cmd[0].lower())
                 self.assertEqual(called_cmd[-1], PureWindowsPath(hook_script).as_posix())
             else:
-                self.assertEqual(called_cmd[0], str(hook_script))
+                self.assertEqual(called_cmd[0], hook_script.as_posix())
             self.assertEqual(res.status, PackageHealthStatus.HEALTHY)
 
     def test_primitive_health_checks_aggregation(self):
@@ -339,7 +339,7 @@ exit 0
         save_state_registry(registry)
 
         with patch("sys.stdout.write") as mock_stdout:
-            run_argparse_cli(["-C", str(self.drift_root), "health", pkg, "--json"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "health", pkg, "--json"])
             # Collect stdout calls
             output = "".join(call.args[0] for call in mock_stdout.call_args_list)
             data = json.loads(output)
@@ -402,7 +402,7 @@ exit 0
 
         # 1. From source succeeds when package exists only in src/
         with patch("sys.stdout.write") as mock_stdout:
-            run_argparse_cli(["-C", str(self.drift_root), "health", pkg, "--from", "source", "--json"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "health", pkg, "--from", "source", "--json"])
             output = "".join(call.args[0] for call in mock_stdout.call_args_list)
             data = json.loads(output)
             self.assertEqual(data["status"], "SUCCESS")
@@ -410,7 +410,7 @@ exit 0
 
         # 2. From install returns NOT_INSTALLED when package is not yet in install/
         with patch("sys.stdout.write") as mock_stdout:
-            run_argparse_cli(["-C", str(self.drift_root), "health", pkg, "--from", "install", "--json"])
+            run_argparse_cli(["-C", self.drift_root.as_posix(), "health", pkg, "--from", "install", "--json"])
             output = "".join(call.args[0] for call in mock_stdout.call_args_list)
             data = json.loads(output)
             self.assertEqual(data["packages"][0]["status"], "NOT_INSTALLED")
@@ -457,7 +457,7 @@ exit 0
         self.assertEqual(res_install.status, PackageHealthStatus.HEALTHY)
         self.assertIn("INSTALL_STATIC_OUTPUT", res_install.stdout)
         self.assertNotIn("SRC_OUTPUT", res_install.stdout)
-        self.assertEqual(res_install.hook_path, str(install_hook))
+        self.assertEqual(res_install.hook_path, install_hook.as_posix())
 
         # 2. from_stage="source" -> renders template and executes from render/
         res_src = run_one_package_health_probe(self.workspace_config, pkg, from_stage="source")
