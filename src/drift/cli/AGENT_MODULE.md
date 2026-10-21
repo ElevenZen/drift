@@ -29,6 +29,7 @@
 * `handle_<command>(ctx: DriftCLIContext, ...)` in [`cli_handlers.py`](cli_handlers.py): Normalizes CLI arguments (e.g. `RollbackPolicy.from_value`, `PackageStage` tier parsing) and dispatches to `actions.execute_<command>(...)`.
 * `check_sudo_and_root(drift_root: Path) -> None` in [`actions.py`](actions.py): Enforces the CLI Sudo Guard (blocks running `drift` under `sudo` on user-owned workspaces).
 * `assert_workspace_healthy(drift_root: Path, json_mode: bool = False) -> WorkspaceHealthReport`: Runs pre-flight workspace health checks before executing commands.
+* `handle_enable` / `handle_disable` share `_handle_packages_enable`; `execute_packages_enable(drift_root, packages, enabled, local, dry_run, json_mode) -> PackageEnableResult` loads the config with `quiet=True` and prints `res.to_json()`, the `--dry-run` diff via `print_unified_diff(diff, use_rich)` (Rich-colored `+`/`-`/`@@`/header lines, plain fallback; Rich strips styles on non-TTY), or `res.format_text()`.
 * `execute_<command>(...)` in [`actions.py`](actions.py): Loads `WorkspaceConfig`, invokes the corresponding primitive in `src/drift/primitives/`, formats Rich/text or `--json` output, and exits with the appropriate [`ExitCode`](../core/constants.py).
 
 ### [`typer_backend.py`](typer_backend.py), [`argparse_backend.py`](argparse_backend.py) & [`__init__.py`](__init__.py) — Dual CLI Backends

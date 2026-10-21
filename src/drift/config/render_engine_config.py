@@ -34,6 +34,7 @@ from ..core.exceptions import ConfigError
 from ..core.mixins import AlwaysTruthy
 from ..utils.config_utils import (
     branch,
+    choose,
     parse_command_tokens,
     parse_optional_config_path,
     validate_known_keys,
@@ -47,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 def parse_render_command(raw_cmd: Any, engine_name: str = "") -> List[str]:
     """Parses a raw render_command value (string or sequence of strings) into a List[str]."""
-    ctx = branch(bool(engine_name), lambda: f"for render engine '{engine_name}'", lambda: "")
+    ctx = choose(bool(engine_name), f"for render engine '{engine_name}'", "")
     return parse_command_tokens(raw_cmd, field_name="render_command", context=ctx)
 
 
@@ -57,7 +58,7 @@ def parse_render_input_file(
     engine_name: str = "",
 ) -> Optional[Path]:
     """Parses, resolves, and validates a render engine's input_file against base_dir."""
-    ctx = branch(bool(engine_name), lambda: f"for render engine '{engine_name}'", lambda: "")
+    ctx = choose(bool(engine_name), f"for render engine '{engine_name}'", "")
     return parse_optional_config_path(
         raw_input,
         field_name="input_file",
@@ -161,7 +162,7 @@ class RenderEngineConfig(AlwaysTruthy):
         return replace(
             self,
             input_file=when_none(override.input_file, self.input_file),
-            suffix=branch(bool(override.suffix), lambda: override.suffix, lambda: self.suffix),
+            suffix=choose(bool(override.suffix), override.suffix, self.suffix),
             render_command=branch(
                 bool(override.render_command),
                 lambda: list(override.render_command),

@@ -1588,6 +1588,29 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(branch(lambda: 1 == 1, lambda: 10, lambda: 20), 10)
         self.assertEqual(branch(lambda: 1 == 2, lambda: 10, lambda: 20), 20)
 
+        # choose() utility tests (eager values returned verbatim, never invoked)
+        from drift.utils import choose
+        self.assertEqual(choose(True, "yes", "no"), "yes")
+        self.assertEqual(choose(False, "yes", "no"), "no")
+        self.assertEqual(choose(lambda: 1 == 1, 10, 20), 10)
+        self.assertEqual(choose(lambda: 1 == 2, 10, 20), 20)
+        # Truthiness of non-bool predicates
+        self.assertEqual(choose("", "t", "f"), "f")
+        self.assertEqual(choose([0], "t", "f"), "t")
+        self.assertEqual(choose(0, "t", "f"), "f")
+        # Callable values (classes, functions, lambdas) are returned, not called
+        self.assertIs(choose(True, str, bytes), str)
+        self.assertIs(choose(False, str, bytes), bytes)
+        fn = lambda: "called"  # noqa: E731
+        self.assertIs(choose(True, fn, None), fn)
+        # Falsy / None values are returned as-is
+        self.assertIsNone(choose(True, None, "x"))
+        self.assertEqual(choose(False, "x", 0), 0)
+        # Predicate callable is invoked exactly once
+        pred_calls: List[int] = []
+        self.assertEqual(choose(lambda: (pred_calls.append(1), True)[1], "a", "b"), "a")
+        self.assertEqual(pred_calls, [1])
+
         # when_not_none() and when_none() utility tests (values, 0-arg and 1-arg callables, lazy evaluation, falsy non-None)
         side_effects: List[str] = []
         opt_none: Optional[str] = None

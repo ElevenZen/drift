@@ -9,8 +9,10 @@ Layer 2: Workspace Discovery & High-Level Pipeline Loaders
     - load_workspace_config_files_layered(): Sequential layered TOML loading & deep-merging
 
 Layer 1: Low-Level Template Rendering & Migration Guards
-    - render_workspace_config(): Python envsubst template renderer
-    - load_workspace_config_file_with_render(): Static TOML or template file loader
+    - locate_workspace_config_file(): Static file > .envst.toml template > None precedence
+    - parse_workspace_config_content(): Renders (if .envst) and parses in-memory TOML content
+    - render_workspace_config_content() / render_workspace_config(): Python envsubst template renderer
+    - load_workspace_config_file_with_render(): locate -> read -> parse composition
     - assert_no_legacy_workspace_config(): Guard prohibiting deprecated drift.toml files
     - resolve_and_interpolate_workspace_config(): 6-tier variable stitching & section interpolation
 ===============================================================================
@@ -54,36 +56,65 @@ from .workspace_config import WorkspaceConfig
 logger = logging.getLogger(__name__)
 
 
+def render_workspace_config_content(content: str, source_desc: str = "") -> str:
+    """Renders drift_workspace.envst.toml template content using python_envsubst."""
+    from ..render.render_core import python_envsubst
+    rendered_content = python_envsubst(content, error_cls=ConfigError)
+    logger.debug(f"Rendered workspace config from template '{source_desc}':\n{rendered_content}")
+    return rendered_content
+
+
 def render_workspace_config(render_input_path: Path) -> str:
     """Renders the drift_workspace.envst.toml template using python_envsubst,
     returning the rendered output.
     """
-    from ..render.render_core import python_envsubst
     content = render_input_path.read_text(encoding="utf-8")
-    rendered_content = python_envsubst(content, error_cls=ConfigError)
-    logger.debug(f"Rendered workspace config from template '{render_input_path}':\n{rendered_content}")
-    return rendered_content
+    return render_workspace_config_content(content, source_desc=str(render_input_path))
+
+
+def check_is_envst_workspace_config(path: Path) -> bool:
+    """Returns True if path names an .envst.toml workspace config template."""
+    return path.name.endswith(".envst.toml")
+
+
+def locate_workspace_config_file(rendered_config_path: Path) -> Optional[Path]:
+    """Locates the on-disk source file for a workspace config path.
+
+    Returns the static file if it exists, else its .envst.toml template counterpart if it
+    exists, else None. This precedence is shared by loading and editing.
+    """
+    candidates = (rendered_config_path, add_envst_path(rendered_config_path))
+    return next((p for p in candidates if p.is_file()), None)
+
+
+def parse_workspace_config_content(content: str, source_path: Path) -> dict:
+    """Parses raw workspace config content, rendering it first if source_path is an .envst template.
+
+    Raises:
+        ConfigError: If rendering fails or the content is not valid TOML.
+    """
+    text = branch(
+        check_is_envst_workspace_config(source_path),
+        lambda: render_workspace_config_content(content, source_desc=str(source_path)),
+        lambda: content,
+    )
+    try:
+        return parse_toml(text)
+    except Exception as e:
+        raise ConfigError(f"Failed to parse TOML in '{source_path}': {e}") from e
 
 
 def load_workspace_config_file_with_render(rendered_config_path: Path) -> Optional[dict]:
     """Loads and parses the TOML file at path.
 
     Checks the static file first, then falls back to rendering its .envst.toml counterpart.
-    Propagates FileNotFoundError if neither exists.
+    Returns None if neither exists.
     """
-    envst_path = add_envst_path(rendered_config_path)
-    if rendered_config_path.exists():
-        logger.debug(f"Workspace config is being loaded from: '{rendered_config_path}'")
-        content = rendered_config_path.read_text(encoding="utf-8")
-    elif envst_path.exists():
-        logger.debug(f"Workspace config is being rendered from template: '{envst_path}'")
-        content = render_workspace_config(envst_path)
-    else:
+    located = locate_workspace_config_file(rendered_config_path)
+    if located is None:
         return None
-    try:
-        return parse_toml(content)
-    except Exception as e:
-        raise ConfigError(f"Failed to parse TOML in '{rendered_config_path}': {e}") from e
+    logger.debug(f"Workspace config is being loaded from: '{located}'")
+    return parse_workspace_config_content(located.read_text(encoding="utf-8"), located)
 
 
 def assert_no_legacy_workspace_config(drift_root: Path) -> None:

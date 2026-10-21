@@ -74,6 +74,12 @@ from .workspace_gc import (
 from .new_package import (
     run_primitive_10_create_new_package,
 )
+from .workspace_enable import (
+    PackageEnableOptions,
+    prepare_packages_enable,
+    execute_packages_enable,
+    run_primitive_packages_enable,
+)
 from .add_resource import (
     run_primitive_11_add_resources,
     prepare_add_resources,
@@ -187,6 +193,10 @@ __all__ = [
     "run_primitive_8_rollback_recovery",
     "run_primitive_9_purge_workspace_garbage",
     "run_primitive_10_create_new_package",
+    "PackageEnableOptions",
+    "prepare_packages_enable",
+    "execute_packages_enable",
+    "run_primitive_packages_enable",
     "run_primitive_11_add_resources",
     "prepare_add_resources",
     "execute_add_resources",

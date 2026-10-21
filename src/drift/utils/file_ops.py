@@ -14,7 +14,8 @@ Atomic Operations (temp-file + rename, never leaves partial state):
         copy_permissions(src, dst, sudo) [internal]
         _atomic_copy_local(src, dst, line_ending, follow_symlinks) [private]
         _atomic_copy_elevated(src, dst) [private]
-    write_file(dst, content, sudo, permission) — Atomic write from string/bytes.
+    write_file(dst, content, sudo, permission) — Atomic write from string/bytes
+        (permission=None preserves an existing file's mode; new files get 0o666 & ~umask).
 
 Direct Operations:
     copy_symlink(src, dst, sudo) — Recreate symlink pointing to src's target.
@@ -45,6 +46,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 from ..core.constants import LineEnding
+from .config_utils import branch, choose, when_none
 from .path_utils import is_relative_to
 from .file_inspect import is_binary_file, normalize_newlines, is_mode_only_change, is_concrete_dir
 from .process_utils import run_command
@@ -387,6 +389,46 @@ def copy_file(
 # Atomic write
 # ---------------------------------------------------------------------------
 
+def _resolve_write_permission(dst: Path, permission: Optional[int]) -> Optional[int]:
+    """Resolves the mode to apply after an atomic write.
+
+    Returns `permission` when given; otherwise the current mode of an existing regular-file
+    `dst` (symlinks are replaced, so their target's mode is not inherited); otherwise None,
+    meaning "keep the umask-derived default of a newly created file".
+    """
+    if permission is not None:
+        return permission
+    try:
+        st_mode = dst.lstat().st_mode
+    except OSError as exc:
+        logger.debug(f"Could not read existing permissions of '{dst}': {exc}")
+        return None
+    return choose(stat.S_ISREG(st_mode), stat.S_IMODE(st_mode), None)
+
+
+def _to_bytes(content: Union[str, bytes]) -> bytes:
+    """Encodes str content as UTF-8; passes bytes through unchanged."""
+    return branch(isinstance(content, str), lambda: str(content).encode("utf-8"), lambda: bytes(content))
+
+
+def _create_umask_temp_file(dst: Path, temp_dir: Optional[Path]) -> Path:
+    """Creates an empty temp file for `dst` with mode 0o666 & ~umask (like a normal new file).
+
+    `tempfile.NamedTemporaryFile` always creates 0o600 files, which would leak into the final
+    file through `os.replace`; `os.open(..., 0o666)` lets the process umask apply instead.
+    """
+    base_dir = Path(when_none(temp_dir, tempfile.gettempdir))
+    for _ in range(100):
+        candidate = base_dir / f".tmp_{dst.name}_{os.urandom(4).hex()}"
+        try:
+            fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666)
+        except FileExistsError:
+            continue
+        os.close(fd)
+        return candidate
+    raise FileExistsError(f"Could not create a unique temporary file for '{dst}' in '{base_dir}'.")
+
+
 def write_file(
     dst: Path,
     content: Union[str, bytes],
@@ -395,29 +437,31 @@ def write_file(
 ) -> None:
     """Writes string or bytes content to dst file atomically with directory creation, sudo handling, and permission setting.
 
+    Permission semantics:
+        - `permission` given: the written file gets exactly that mode.
+        - `permission=None` and `dst` is an existing regular file: its current mode is preserved.
+        - `permission=None` and `dst` is new (or a symlink being replaced): `0o666 & ~umask`.
+
     Raises:
         IsADirectoryError: If dst exists and is a concrete directory.
     """
     if is_concrete_dir(dst):
         raise IsADirectoryError(f"Cannot write file to '{dst}': destination exists and is a directory.")
     ensure_dir(dst.parent, sudo=sudo)
+    final_permission = _resolve_write_permission(dst, permission)
     clear_readonly(dst)
 
     # Use dst.parent for temporary file if it is writable; otherwise fallback to system temp dir (None)
     temp_dir = dst.parent if (dst.parent.exists() and os.access(dst.parent, os.W_OK)) else None
     temp_path = None
     try:
-        with tempfile.NamedTemporaryFile(dir=temp_dir, prefix=f".tmp_{dst.name}_", delete=False) as tf:
-            temp_path = Path(tf.name)
-            if isinstance(content, str):
-                tf.write(content.encode("utf-8"))
-            else:
-                tf.write(content)
-        if permission is not None:
+        temp_path = _create_umask_temp_file(dst, temp_dir)
+        temp_path.write_bytes(_to_bytes(content))
+        if final_permission is not None:
             try:
-                temp_path.chmod(permission)
+                temp_path.chmod(final_permission)
             except OSError as exc:
-                logger.warning(f"Failed to set permissions ({oct(permission)}) on '{dst}': {exc}")
+                logger.warning(f"Failed to set permissions ({oct(final_permission)}) on '{dst}': {exc}")
         if sys.platform == "win32" or not sudo:
             clear_readonly(dst)
             os.replace(temp_path, dst)

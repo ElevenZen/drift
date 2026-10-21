@@ -40,6 +40,7 @@ from ..core.exceptions import ConfigError
 from ..core.mixins import AlwaysTruthy
 from ..utils.config_utils import (
     branch,
+    choose,
     parse_command_tokens,
     parse_optional_config_path,
     validate_known_keys,
@@ -222,7 +223,7 @@ def fetch_workspace_secrets(
         res = run_command(cmd, cwd=cwd, text=True, suppress_output=True)
     except subprocess.CalledProcessError as exc:
         stderr_msg = (exc.stderr or "").strip()
-        detail = branch(bool(stderr_msg), lambda: f": {stderr_msg}", lambda: f" (exit code {exc.returncode})")
+        detail = choose(bool(stderr_msg), f": {stderr_msg}", f" (exit code {exc.returncode})")
         raise ConfigError(f"Failed to execute decrypt_command under [secrets]{detail}") from exc
     except (FileNotFoundError, OSError) as exc:
         raise ConfigError(f"Failed to execute decrypt_command under [secrets]: {exc}") from exc

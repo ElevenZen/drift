@@ -288,6 +288,50 @@ def build_completion_schema() -> CompletionSchema:
                     ),
                 ]
             ),
+            "enable": CommandSpec(
+                name="enable",
+                description="Enable package(s) in [packages.enable] of drift_workspace.toml (format-preserving edit)",
+                positionals=[
+                    PositionalSpec(
+                        name="packages",
+                        description="One or more package names to enable (DEFAULT sets the default)",
+                        source_type=SourceType.DYNAMIC_PACKAGES,
+                        nargs="+",
+                        repeatable=True,
+                        required=True
+                    )
+                ],
+                options=[
+                    OptionSpec(
+                        flags=["--local"],
+                        description="Edit machine-local drift_workspace.local.toml instead (created if missing)",
+                        dest="local"
+                    ),
+                    OptionSpec(["-n", "--dry-run"], "Preview the configuration change as a unified diff without writing"),
+                ]
+            ),
+            "disable": CommandSpec(
+                name="disable",
+                description="Disable package(s) in [packages.enable] of drift_workspace.toml (does not uninstall)",
+                positionals=[
+                    PositionalSpec(
+                        name="packages",
+                        description="One or more package names to disable (DEFAULT sets the default)",
+                        source_type=SourceType.DYNAMIC_PACKAGES,
+                        nargs="+",
+                        repeatable=True,
+                        required=True
+                    )
+                ],
+                options=[
+                    OptionSpec(
+                        flags=["--local"],
+                        description="Edit machine-local drift_workspace.local.toml instead (created if missing)",
+                        dest="local"
+                    ),
+                    OptionSpec(["-n", "--dry-run"], "Preview the configuration change as a unified diff without writing"),
+                ]
+            ),
             "adopt": CommandSpec(
                 name="adopt",
                 description="Adopt active system drifts and incorporate them back into source templates",

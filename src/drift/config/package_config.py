@@ -63,7 +63,7 @@ from ..utils.env_utils import (
 )
 from ..utils.file_inspect import check_can_symlink
 from ..utils.config_utils import (
-    branch,
+    choose,
     get_first_from,
     parse_bool_value,
     parse_config_path,
@@ -223,7 +223,7 @@ class PackageSectionConfig(AlwaysTruthy):
         if dependencies is not None and not isinstance(dependencies, PackageDependencies):
             raise ConfigError(f"dependencies must be a PackageDependencies instance, got {type(dependencies).__name__}")
 
-        pkg_ctx = branch(bool(name), lambda: f"for package '{name}'", lambda: "")
+        pkg_ctx = choose(bool(name), f"for package '{name}'", "")
         self.name = name
         self.source_directory = parse_config_path(
             source_directory,
@@ -311,7 +311,7 @@ class PackageSectionConfig(AlwaysTruthy):
         )
 
         name = str(data.get("name") or package_name)
-        pkg_ctx = branch(bool(name), lambda: f"for package '{name}'", lambda: "")
+        pkg_ctx = choose(bool(name), f"for package '{name}'", "")
 
         raw_deps = data.get("dependencies", [])
         deps = PackageDependencies.from_list(raw_deps, package_name=name)

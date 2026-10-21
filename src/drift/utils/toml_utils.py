@@ -329,13 +329,46 @@ def _parse_inline_table(val_str: str) -> dict:
     elements = split_array_elements(content)
     table: dict = {}
     for elem in elements:
-        if '=' in elem:
-            k, v = elem.split('=', 1)
-            key = k.strip()
-            if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
-                key = key[1:-1]
-            table[key] = parse_toml_value(v.strip())
+        eq = _find_unquoted(elem, "=")
+        if eq > 0:
+            key = _unquote_simple_key(elem[:eq].strip())
+            table[key] = parse_toml_value(elem[eq + 1:].strip())
     return table
+
+
+def _find_unquoted(raw: str, targets: str, start: int = 0) -> int:
+    """Returns the index of the first char in `targets` outside quoted strings, or -1."""
+    state = _ParserState()
+    escaped = False
+    i = start
+    n = len(raw)
+    while i < n:
+        char = raw[i]
+        if escaped:
+            escaped = False
+            i += 1
+            continue
+        if char == "\\" and (state.in_double_quote or state.in_triple_double):
+            escaped = True
+            i += 1
+            continue
+        consumed = state.consume_quotes(raw, i)
+        if consumed is not None:
+            i += consumed
+            continue
+        if not state.in_string and char in targets:
+            return i
+        i += 1
+    return -1
+
+
+def _unquote_simple_key(key: str) -> str:
+    """Strips quotes from a basic (\"...\") or literal ('...') quoted key, decoding basic escapes."""
+    if len(key) >= 2 and key[0] == key[-1] == '"':
+        return _unescape_string(key[1:-1])
+    if len(key) >= 2 and key[0] == key[-1] == "'":
+        return key[1:-1]
+    return key
 
 
 def _unescape_string(inner: str) -> str:
@@ -637,10 +670,10 @@ def _apply_logical_line(
         return _navigate_toml_table(root, keys, is_array_entry=False)
 
     # 3. Key-value assignment: `key = val`
-    if '=' in logical_line:
-        key_part, val_part = logical_line.split('=', 1)
-        key = key_part.strip()
-        val = parse_toml_value(val_part.strip())
+    eq = _find_unquoted(logical_line, "=")
+    if eq > 0:
+        key = _unquote_simple_key(logical_line[:eq].strip())
+        val = parse_toml_value(logical_line[eq + 1:].strip())
         target = root if cursor is None else cursor
         target[key] = val
         return cursor

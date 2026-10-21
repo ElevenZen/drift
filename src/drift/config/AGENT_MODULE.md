@@ -13,6 +13,7 @@
 1. **Leaf Config Schemas**: [`render_engine_config.py`](render_engine_config.py), [`secrets_config.py`](secrets_config.py), [`package_requirements.py`](package_requirements.py), [`package_hooks.py`](package_hooks.py)
 2. **Core Config Domain Models**: [`workspace_config.py`](workspace_config.py) $\rightarrow$ [`package_config.py`](package_config.py)
 3. **Layered Ingestion & DAG Loaders**: [`workspace_loader.py`](workspace_loader.py) $\rightarrow$ [`package_loader.py`](package_loader.py)
+4. **Config Authoring (Edit Planning)**: [`workspace_enable_edit.py`](workspace_enable_edit.py) (depends on `workspace_loader.py` and `utils/toml_edit.py`)
 
 ---
 
@@ -50,7 +51,14 @@
   * `.fetch_secrets() -> Dict[str, str]`: Delegates to `fetch_workspace_secrets(self.drift_root, self.secrets)`.
   * Properties: `.source_path`, `.render_path`, `.install_path`, `.backup_path`, `.default_target_path`.
   * Discovery helpers: `.is_package_enabled(pkg) -> bool`, `.get_package_names_from_source_dir() -> List[str]`, `.filter_source_packages_by_target(target_pkgs=()) -> List[str]`, `.filter_render_packages_by_target(...)`, `.filter_install_packages_by_target(...)`.
+* `locate_workspace_config_file(rendered_config_path) -> Optional[Path]` (static file > `.envst.toml` template > `None`) & `parse_workspace_config_content(content, source_path) -> dict` (renders via `python_envsubst` when `source_path` is `.envst.toml`, then parses; raises `ConfigError`). `load_workspace_config_file_with_render` composes locate $\rightarrow$ read $\rightarrow$ parse.
 * `load_workspace_config(drift_root: Path, check_legacy: bool = True, config_files_override=None, quiet: bool = False) -> WorkspaceConfig`: Full ingestion pipeline loading `drift_workspace.toml` (or `.envst.toml`), merging `.local.toml`, fetching workspace secrets via `fetch_workspace_secrets`, applying `config/drift_workspace.py` (`apply_workspace_hook`), and resolving `[env]` via `resolve_and_interpolate_workspace_config`.
+
+### [`workspace_enable_edit.py`](workspace_enable_edit.py) — `[packages.enable]` Edit Planning & Verification
+* `plan_workspace_enable_edit(drift_root, updates: Mapping[str, bool], local=False) -> WorkspaceEnableEdit`: Read-only pipeline for `drift enable/disable`: resolve target (`resolve_workspace_enable_target`) $\rightarrow$ first parse $\rightarrow$ `assert_packages_enable_header_editable` $\rightarrow$ `set_toml_table_bools` $\rightarrow$ second parse $\rightarrow$ `assert_workspace_enable_edit_verified` $\rightarrow$ `check_shadowed_packages`.
+* `assert_workspace_enable_edit_verified(before, after, updates)`: Raises `ConfigError` unless `after == build_expected_enable_dict(before, updates)`.
+* `render_workspace_enable_diff(edit, drift_root) -> str`: Unified diff (`a/config/...` or `/dev/null` for new local files).
+* `read_config_text(path)`: Byte-level UTF-8 read preserving CRLF.
 
 ### [`package_config.py`](package_config.py) & [`package_loader.py`](package_loader.py) — Package Configuration
 * `PackageDependency(name: str, optional: bool = False)` & `PackageDependencies(items: List[PackageDependency])` (`.required_names`, `.optional_names`, `.all_names`).
@@ -73,6 +81,7 @@
 1. **Boundary Normalization at `from_dict`**: All path fields, enums (`InstallMethod`, `RollbackPolicy`), and key allowlists (`validate_known_keys`) must be normalized and validated inside `from_dict` so downstream code never performs defensive string parsing.
 2. **Configuration Key & Alias Discipline**: Canonical keys follow `<what_you_want_to_do>_<limitation/where/when>`. Aliases exist strictly for singular/plural variance or standard abbreviations.
 3. **Global Engines Only for Phase 1 Package Config**: `load_package_config_from_source_dir` must only use `workspace_config.render_engine_configs` to compile `drift_package.<suffix>.toml`.
+4. **Verified Config Edits Only**: Any code that writes workspace config files must go through `plan_workspace_enable_edit`-style parse $\rightarrow$ edit $\rightarrow$ re-parse verification and never round-trip via `dump_toml` (which would drop comments and templates).
 
 ---
 
@@ -83,4 +92,5 @@
   PYTHONPATH=src python3 -m unittest tests/test_config.py
   PYTHONPATH=src python3 -m unittest tests/test_package_dependencies.py
   PYTHONPATH=src python3 -m unittest tests/test_requirements.py
+  PYTHONPATH=src python3 -m unittest tests/test_workspace_enable.py
   ```

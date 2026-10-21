@@ -11,6 +11,7 @@ from .actions import (
     execute_install_commit,
     execute_reverse_sync,
     execute_new_package,
+    execute_packages_enable,
     execute_uninstall,
     execute_status,
     execute_gc,
@@ -148,6 +149,41 @@ def handle_new(
             install_method=resolved_method,
             json_mode=cli_ctx.json_mode
         )
+
+
+def _handle_packages_enable(ctx: Any, packages: Sequence[str], enabled: bool, local: bool, dry_run: bool) -> None:
+    cli_ctx = _extract_cli_context(ctx)
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        drift_root = cli_ctx.get_drift_root()
+        execute_packages_enable(
+            drift_root,
+            list(packages or ()),
+            enabled=enabled,
+            local=local,
+            dry_run=dry_run,
+            json_mode=cli_ctx.json_mode,
+            use_rich=cli_ctx.use_rich,
+        )
+
+
+def handle_enable(
+    ctx: Any,
+    packages: Sequence[str],
+    local: bool = False,
+    dry_run: bool = False,
+) -> None:
+    """Enable package(s) in [packages.enable] of drift_workspace.toml."""
+    _handle_packages_enable(ctx, packages, enabled=True, local=local, dry_run=dry_run)
+
+
+def handle_disable(
+    ctx: Any,
+    packages: Sequence[str],
+    local: bool = False,
+    dry_run: bool = False,
+) -> None:
+    """Disable package(s) in [packages.enable] of drift_workspace.toml (does not uninstall)."""
+    _handle_packages_enable(ctx, packages, enabled=False, local=local, dry_run=dry_run)
 
 
 def handle_add(
@@ -578,6 +614,8 @@ CLI_HANDLERS: Dict[str, Callable[..., Any]] = {
     "init": handle_init,
     "new": handle_new,
     "add": handle_add,
+    "enable": handle_enable,
+    "disable": handle_disable,
     "adopt": handle_adopt,
     "plan": handle_plan,
     "deploy": handle_deploy,

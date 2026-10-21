@@ -17,6 +17,21 @@ class TestCompletionGenerators(unittest.TestCase):
     def setUp(self):
         self.schema = build_completion_schema()
 
+    def test_enable_disable_in_all_shells(self):
+        """Verifies enable/disable commands and their --local/--dry-run flags appear in every shell script."""
+        for cmd in ("enable", "disable"):
+            spec = self.schema.commands[cmd]
+            self.assertEqual(spec.positionals[0].nargs, "+")
+            flags = {f for opt in spec.options for f in opt.flags}
+            self.assertTrue({"--local", "-n", "--dry-run"} <= flags)
+        for shell in ("bash", "zsh", "fish", "nu"):
+            with self.subTest(shell=shell):
+                script = generate_completion_script(shell, self.schema)
+                self.assertIn("enable", script)
+                self.assertIn("disable", script)
+                self.assertTrue("--local" in script or "-l local" in script)
+                self.assertNotIn("\\'DEFAULT\\'", script)
+
     def test_bash_generator_output(self):
         """Verifies Bash script generation and structural components."""
         script = generate_completion_script("bash", self.schema)

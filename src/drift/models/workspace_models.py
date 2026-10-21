@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, List, Optional, Union
+from typing import Dict, Iterable, List, Optional, Union
 
 from ..core.constants import InstallMethod
 from ..core.file_action import (
@@ -17,6 +17,7 @@ from ..core.file_action import (
 )
 from ..core.folder_diff import FolderDiff
 from ..core.serialization import SerializableModel
+from ..utils.config_utils import choose
 from ..utils.git_utils import GitStatusChanges
 
 
@@ -52,6 +53,71 @@ class NewPackageResult(SerializableModel):
     target_directory: str = ""
     install_method: InstallMethod = InstallMethod.DEFAULT
     error_message: Optional[str] = None
+
+
+# =============================================================================
+# Package Enablement (drift enable / drift disable)
+# =============================================================================
+
+@dataclass
+class PackageEnableResult(SerializableModel):
+    command: str = "enable"  # "enable", "disable"
+    status: str = "SUCCESS"  # "SUCCESS", "UNCHANGED", "FAILED"
+    enabled: bool = True
+    config_file: str = ""
+    created_file: bool = False
+    dry_run: bool = False
+    actions: Dict[str, str] = field(default_factory=dict)  # package -> "updated" / "inserted" / "unchanged"
+    shadowed_packages: List[str] = field(default_factory=list)
+    diff: str = ""
+    error_message: Optional[str] = None
+
+    @property
+    def changed_packages(self) -> List[str]:
+        return [pkg for pkg, action in self.actions.items() if action != "unchanged"]
+
+    @property
+    def unchanged_packages(self) -> List[str]:
+        return [pkg for pkg, action in self.actions.items() if action == "unchanged"]
+
+    def _format_next_step_hint(self) -> Optional[str]:
+        targets = " ".join(p for p in self.changed_packages if p != "DEFAULT")
+        if not targets:
+            return None
+        if self.enabled:
+            return f"💡 Run 'drift deploy {targets}' to deploy."
+        return f"💡 Disabling does not uninstall. Run 'drift uninstall {targets}' to remove deployed files."
+
+    def format_text(self) -> str:
+        """Formats the result for human-readable terminal output (plain text).
+
+        Dry runs show the unified diff (or a no-op notice); real runs show per-package
+        outcomes, local-override shadowing warnings, and a deploy/uninstall hint.
+        """
+        state = choose(self.enabled, "enabled", "disabled")
+        cfg = self.config_file
+        if self.dry_run:
+            return choose(
+                bool(self.diff),
+                self.diff,
+                f"ℹ️  No changes: all packages are already {state} in {cfg}.",
+            )
+
+        verb = state.capitalize()
+        lines: List[str] = []
+        if self.created_file:
+            lines.append(f"📝 Created {cfg}")
+        lines.extend(f"✅ {verb} '{pkg}' in {cfg}" for pkg in self.changed_packages)
+        lines.extend(f"ℹ️  '{pkg}' is already {state} in {cfg}" for pkg in self.unchanged_packages)
+        lines.extend(
+            f"⚠️  '{pkg}' is overridden by drift_workspace.local.toml; "
+            "use --local to change the effective value on this machine."
+            for pkg in self.shadowed_packages
+        )
+        hint = self._format_next_step_hint()
+        if hint:
+            lines.append(hint)
+        return "\n".join(lines)
 
 
 # =============================================================================

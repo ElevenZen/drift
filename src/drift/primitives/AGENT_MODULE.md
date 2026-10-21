@@ -15,7 +15,7 @@
 2. **Core Forward & Backward Pipeline Primitives (Layer 3b)**:
    * [`reverse_sync.py`](reverse_sync.py) (**P1**), [`render_repo.py`](render_repo.py) (**P2, P3**), [`stage_repo.py`](stage_repo.py) (**P4**), [`install_repo.py`](install_repo.py) (**P5, P6**), [`uninstall_repo.py`](uninstall_repo.py) (**P7**)
 3. **Recovery, Maintenance & Authoring Primitives (Layer 3c)**:
-   * [`rollback_repo.py`](rollback_repo.py) (**P8**), [`workspace_gc.py`](workspace_gc.py) (**P9**), [`new_package.py`](new_package.py) (**P10**), [`add_resource.py`](add_resource.py) (**P11**), [`package_health.py`](package_health.py) (**P12**), [`workspace_repair.py`](workspace_repair.py) (**P14**), [`workspace_diff.py`](workspace_diff.py) (**P15**), [`workspace_status.py`](workspace_status.py) (**P16**)
+   * [`workspace_enable.py`](workspace_enable.py) (`drift enable` / `drift disable`), [`rollback_repo.py`](rollback_repo.py) (**P8**), [`workspace_gc.py`](workspace_gc.py) (**P9**), [`new_package.py`](new_package.py) (**P10**), [`add_resource.py`](add_resource.py) (**P11**), [`package_health.py`](package_health.py) (**P12**), [`workspace_repair.py`](workspace_repair.py) (**P14**), [`workspace_diff.py`](workspace_diff.py) (**P15**), [`workspace_status.py`](workspace_status.py) (**P16**)
 4. **Composite Multi-Stage Orchestrators (Layer 4)**:
    * [`adopt_repo.py`](adopt_repo.py) (`drift adopt`), [`plan_repo.py`](plan_repo.py) (**P17** `drift plan`), [`deploy_repo.py`](deploy_repo.py) (`drift deploy`), [`workspace_clone.py`](workspace_clone.py) (**P13** `drift clone`)
 
@@ -90,6 +90,7 @@
 * **P14 ([`workspace_repair.py`](workspace_repair.py) & [`workspace_check.py`](workspace_check.py))**: `check_existing_workspace_status(drift_root, quiet=False) -> WorkspaceHealthReport`, `repair_drift_workspace(drift_root, dry_run=False) -> WorkspaceHealthReport`, `build_repair_result(report, dry_run=False) -> RepairResult`.
 * **P15 ([`workspace_diff.py`](workspace_diff.py))**: `run_primitive_15_workspace_diff(workspace_config, target_pkgs=(), diff_type=WorkspaceDiffType.PENDING, stat_only=False, side_by_side=False) -> DiffResult`.
 * **P16 ([`workspace_status.py`](workspace_status.py))**: `run_primitive_status(workspace_config, target_pkgs=(), list_only=False) -> StatusResult`.
+* **Enable/Disable ([`workspace_enable.py`](workspace_enable.py))**: `prepare_packages_enable(workspace_config, packages, options) -> WorkspaceEnableEdit` (read-only: `normalize_enable_package_names`, `assert_packages_enable_targets_exist`, `plan_workspace_enable_edit`), `execute_packages_enable(workspace_config, edit, options) -> PackageEnableResult` (atomic `write_file` with original mode; no write on dry-run or no-op), `run_primitive_packages_enable(...)`. `PackageEnableOptions(enabled, local=False, dry_run=False)`. Config authoring only: never renders, deploys, or uninstalls.
 * **Init ([`workspace_init.py`](workspace_init.py))**: `init_drift_workspace(drift_root, force=False) -> WorkspaceConfig` (initializes `drift_root` literally; never redirects to the enclosing Git toplevel).
 
 ---
@@ -113,4 +114,5 @@
   PYTHONPATH=src python3 -m unittest tests/test_gc.py
   PYTHONPATH=src python3 -m unittest tests/test_adopt.py
   PYTHONPATH=src python3 -m unittest tests/test_plan.py
+  PYTHONPATH=src python3 -m unittest tests/test_workspace_enable.py
   ```

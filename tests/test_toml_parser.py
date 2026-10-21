@@ -183,6 +183,32 @@ class TestFallbackTomlParser(unittest.TestCase):
     def setUp(self) -> None:
         self.parsers = [parse_toml, _parse_toml_fallback]
 
+    def test_quoted_assignment_keys_are_unquoted(self) -> None:
+        """Quoted keys (including keys containing '=') must be unquoted by every parser."""
+        toml_str = (
+            '[packages.enable]\n'
+            '"my.pkg" = true\n'
+            '\'lit.key\' = false\n'
+            '"q\\"k" = true\n'
+            '"a=b" = false\n'
+            'bare = true\n'
+            'inline = { "x=y" = 1, \'c.d\' = 2 }\n'
+        )
+        for parser in self.parsers:
+            with self.subTest(parser=parser.__name__):
+                parsed = parser(toml_str)
+                self.assertEqual(
+                    parsed["packages"]["enable"],
+                    {
+                        "my.pkg": True,
+                        "lit.key": False,
+                        'q"k': True,
+                        "a=b": False,
+                        "bare": True,
+                        "inline": {"x=y": 1, "c.d": 2},
+                    },
+                )
+
     def test_parse_toml_basic(self) -> None:
         toml_str = """
         # Global Comment

@@ -61,7 +61,7 @@
 * `PackageDeployPreview` & `WorkspaceDeployPreview`: Full-cycle dry-run simulation models for Primitive 17 (`drift plan`) with `.format_text(show_all=False, verbose=False)`.
 
 ### [`workspace_models.py`](workspace_models.py) — Primitives 9–16 & Hook Models
-* `GcResult` (Primitive 9 `drift gc`), `NewPackageResult` (Primitive 10 `drift new`), `AddResourcePlan` & `AddResourceResult` (Primitive 11 `drift add`).
+* `GcResult` (Primitive 9 `drift gc`), `NewPackageResult` (Primitive 10 `drift new`), `PackageEnableResult` (`drift enable` / `drift disable`: `status` `SUCCESS`/`UNCHANGED`, per-package `actions`, `shadowed_packages`, `diff`, `format_text()`), `AddResourcePlan` & `AddResourceResult` (Primitive 11 `drift add`).
 * `PackageHealthStatus`, `PackageHealthResult`, `HealthResult` (Primitive 12 `drift health`).
 * `CloneResult` (Primitive 13 `drift clone`), `RepairCheckDetail` & `RepairResult` (Primitive 14 `drift repair`), `ComponentStatus`, `CheckResult`, `WorkspaceHealthReport` (`workspace_check`).
 * `WorkspaceDiffType`, `FileDiffDetail`, `PackageDiffDetail`, `DiffResult` (Primitive 15 `drift diff`).

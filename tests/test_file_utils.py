@@ -1223,6 +1223,117 @@ class TestFileUtils(unittest.TestCase):
             set_test_mode(True, enable_logging=False)
 
 
+@unittest.skipIf(sys.platform == "win32", "POSIX permission bits")
+class TestWriteFilePermissions(unittest.TestCase):
+    """Locks down write_file permission semantics (explicit / preserve existing / umask default)."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name).resolve()
+        self.old_umask = os.umask(0o022)
+
+    def tearDown(self) -> None:
+        os.umask(self.old_umask)
+        self.temp_dir.cleanup()
+
+    @staticmethod
+    def _mode(path: Path) -> int:
+        import stat
+        return stat.S_IMODE(path.stat().st_mode)
+
+    def test_new_file_uses_umask_default_not_0600(self) -> None:
+        from drift.utils.file_ops import write_file
+        for umask, expected in ((0o022, 0o644), (0o077, 0o600), (0o002, 0o664), (0o000, 0o666)):
+            with self.subTest(umask=oct(umask)):
+                os.umask(umask)
+                dst = self.root / f"new_{umask:o}.txt"
+                write_file(dst, "x")
+                self.assertEqual(self._mode(dst), expected)
+
+    def test_existing_file_mode_preserved_when_permission_none(self) -> None:
+        from drift.utils.file_ops import write_file
+        for mode in (0o600, 0o640, 0o644, 0o755, 0o444):
+            with self.subTest(mode=oct(mode)):
+                dst = self.root / f"existing_{mode:o}.txt"
+                dst.write_text("old", encoding="utf-8")
+                dst.chmod(mode)
+                write_file(dst, "new")
+                self.assertEqual(dst.read_text(encoding="utf-8"), "new")
+                self.assertEqual(self._mode(dst), mode)
+
+    def test_explicit_permission_wins_for_new_and_existing(self) -> None:
+        from drift.utils.file_ops import write_file
+        new_dst = self.root / "explicit_new.txt"
+        write_file(new_dst, "x", permission=0o700)
+        self.assertEqual(self._mode(new_dst), 0o700)
+
+        existing = self.root / "explicit_existing.txt"
+        existing.write_text("old", encoding="utf-8")
+        existing.chmod(0o644)
+        write_file(existing, "x", permission=0o600)
+        self.assertEqual(self._mode(existing), 0o600)
+
+    def test_symlink_destination_is_replaced_without_inheriting_target_mode(self) -> None:
+        from drift.utils.file_ops import write_file
+        target = self.root / "target.txt"
+        target.write_text("target", encoding="utf-8")
+        target.chmod(0o700)
+        link = self.root / "link.txt"
+        link.symlink_to(target)
+
+        write_file(link, "replaced")
+        self.assertFalse(link.is_symlink())
+        self.assertEqual(link.read_text(encoding="utf-8"), "replaced")
+        self.assertEqual(self._mode(link), 0o644)
+        # Symlink target is untouched
+        self.assertEqual(target.read_text(encoding="utf-8"), "target")
+        self.assertEqual(self._mode(target), 0o700)
+
+    def test_two_pass_rewrite_keeps_mode_and_leaves_no_temp_files(self) -> None:
+        from drift.utils.file_ops import write_file
+        dst = self.root / "two_pass.txt"
+        write_file(dst, "a")
+        dst.chmod(0o640)
+        write_file(dst, "a")
+        write_file(dst, b"b")
+        self.assertEqual(dst.read_bytes(), b"b")
+        self.assertEqual(self._mode(dst), 0o640)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["two_pass.txt"])
+
+    def test_str_and_bytes_content_preserved_verbatim(self) -> None:
+        from drift.utils.file_ops import write_file
+        dst = self.root / "crlf.txt"
+        write_file(dst, "a\r\nb\r\n")
+        self.assertEqual(dst.read_bytes(), b"a\r\nb\r\n")
+        write_file(dst, "é".encode("utf-8"))
+        self.assertEqual(dst.read_bytes(), "é".encode("utf-8"))
+
+    def test_failed_write_cleans_temp_and_keeps_original(self) -> None:
+        from drift.utils import file_ops
+        dst = self.root / "keep.txt"
+        dst.write_text("original", encoding="utf-8")
+        with patch.object(file_ops.os, "replace", side_effect=OSError("boom")):
+            with self.assertRaises(OSError):
+                file_ops.write_file(dst, "new")
+        self.assertEqual(dst.read_text(encoding="utf-8"), "original")
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["keep.txt"])
+
+    def test_umask_restored_after_write(self) -> None:
+        from drift.utils.file_ops import write_file
+        os.umask(0o027)
+        write_file(self.root / "u.txt", "x")
+        current = os.umask(0o027)
+        self.assertEqual(current, 0o027)
+
+    def test_resolve_write_permission_handles_lstat_permission_error(self) -> None:
+        """If dst.lstat() raises PermissionError (e.g. root-only parent dir before sudo mv), falls back to None."""
+        from drift.utils.file_ops import _resolve_write_permission
+        dst = self.root / "restricted.txt"
+        with patch.object(Path, "lstat", side_effect=PermissionError("EACCES")):
+            self.assertIsNone(_resolve_write_permission(dst, None))
+            self.assertEqual(_resolve_write_permission(dst, 0o600), 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()
 

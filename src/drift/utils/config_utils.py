@@ -60,6 +60,30 @@ def branch(
     return lambda1() if cond else lambda2()
 
 
+def choose(
+    predicate: Union[bool, Callable[[], Any]],
+    value1: T,
+    value2: T,
+) -> T:
+    """Eager counterpart of `branch()`: returns value1 if predicate is truthy, otherwise value2.
+
+    Both values are evaluated by the caller before the call and are returned verbatim
+    (callables such as classes or functions are never invoked). Use `branch()` instead
+    when either side is expensive, has side effects, or is only valid under its condition
+    (e.g. file I/O, dict lookups, type conversions that may raise).
+
+    Args:
+        predicate: A boolean condition or zero-argument callable returning a truthy/falsy value.
+        value1: Value returned when predicate is truthy.
+        value2: Value returned when predicate is falsy.
+
+    Returns:
+        value1 if predicate is truthy, otherwise value2.
+    """
+    cond = predicate() if callable(predicate) else bool(predicate)
+    return value1 if cond else value2
+
+
 @overload
 def when_not_none(a: None, b: Any) -> None: ...
 

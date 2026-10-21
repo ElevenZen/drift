@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-1420%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-1499%20passed-brightgreen)](tests/)
 
 > **WARNING: Drift is still very glitchy and in early development stage, it's for experimental usage only. Backward compatibility is not considered. File syntax, deployment rules, function signatures may change at any time.**
 
@@ -72,8 +72,8 @@ drift init
 drift new git -t '~'
 drift add git ~/.gitconfig              # -> src/git/dot-gitconfig
 
-# 3. Enable the package on this machine: add `git = true` under [packages.enable]
-$EDITOR config/drift_workspace.local.toml
+# 3. Enable the package on this machine (writes config/drift_workspace.local.toml)
+drift enable --local git
 
 # 4. Commit your source, preview, then deploy
 git add -A && git commit -m "Add git package"

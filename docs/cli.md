@@ -13,6 +13,8 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`init`** | — | `-f` | Initialize a new Drift workspace repository |
 | **`new`** | `<pkg>` | `-t`, `-m`, `-f` | Scaffold a new package and `drift_package.toml` |
 | **`add`** | `<pkg> <paths...>` | `-n`, `--no-hooks` | Import host files with `dot-` prefix translation |
+| **`enable`** | `<packages...>` | `--local`, `-n` | Enable packages in `[packages.enable]` (format-preserving edit) |
+| **`disable`** | `<packages...>` | `--local`, `-n` | Disable packages in `[packages.enable]` (does not uninstall) |
 | **`status`** | `[packages...]` | `--json` | Audit template evolution and active host drift |
 | **`diff`** | `[packages...]` | `-t`, `-s`, `--stat`, `-y` | Visualize diffs across `src/`, `render/`, `install/` |
 | **`deploy`** | `[packages...]` | `-f`, `-r`, `-c`, `-n`, `--rollback` | Sentinel-guarded render, stage, apply, and GC |
@@ -93,6 +95,21 @@ Import physical active system configuration files or directories into your decla
 *   **Bypass Lifecycle Hooks**: Passing `--no-hooks` (or `--no-hook`) bypasses execution of the `pre_source` hook.
 *   **Dot-Prefix Translation**: Files and directories starting with `.` are automatically translated to `dot-` prefixes (e.g., `.config/nvim/init.lua` $\rightarrow$ `dot-config/nvim/init.lua`).
 *   **Symlink Resolution Policy**: If an input path is a symlink pointing outside the state database, Drift resolves the target and copies physical contents for reproducibility.
+
+---
+
+### C2. Package Enablement: `drift enable|disable <packages...> [--local] [-n] [--json]`
+Toggle `[packages.enable]` entries without opening an editor.
+*   **Command Signature**: `drift enable <packages...> [--local] [-n / --dry-run] [--json]` (same for `disable`)
+*   **Target File**: `config/drift_workspace.toml`, or its `.envst.toml` template when only the template exists (same precedence as the config loader).
+*   **`--local`**: Edits `config/drift_workspace.local.toml` (or `.local.envst.toml`) instead; the file is created with a `[packages.enable]` section if missing.
+*   **Format-Preserving Edit**: Only the affected lines change. Comments, blank lines, `${VAR}` expressions, key quoting, and CRLF line endings are kept. New keys are inserted after the last key of `[packages.enable]`.
+*   **Verified Write**: The file is parsed before and after the edit. If the re-parsed result differs from the original by anything other than the requested `[packages.enable]` changes, the command aborts with a configuration error and writes nothing.
+*   **Dry-Run Mode**: `-n / --dry-run` prints a unified diff of the change (`--json` includes it in the `diff` field) and writes nothing.
+*   **Package Validation**: `enable` requires `src/<pkg>/`. `disable` also accepts packages that only exist in `render/`, `install/`, or `[packages.enable]`. `DEFAULT` sets the fallback policy.
+*   **Shadowing Warning**: If a base-file change is overridden by `drift_workspace.local.toml`, a warning suggests `--local`.
+*   **Config Only**: Neither command deploys or uninstalls. Follow with `drift deploy` or `drift uninstall`.
+*   **Not Editable Automatically**: `[packages.enable]` written as an inline table or dotted keys, or values spanning multiple lines, are rejected with a request to edit manually.
 
 ---
 

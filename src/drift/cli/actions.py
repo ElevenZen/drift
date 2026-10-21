@@ -27,6 +27,7 @@ Requires a healthy workspace (calls assert_workspace_healthy):
   execute_gc              -> P9  run_primitive_9_purge_workspace_garbage
   execute_new_package     -> P10 run_primitive_10_create_new_package
   execute_add             -> P11 run_primitive_11_add_resources
+  execute_packages_enable ->     run_primitive_packages_enable (drift enable / disable)
   execute_deploy          ->     run_primitive_deploy_pipeline
   execute_adopt           ->     run_primitive_adopt_drifts
   execute_diff            -> P15 run_primitive_15_workspace_diff
@@ -78,6 +79,7 @@ from ..models import (
     AdoptResult,
     PackageAdoptResult,
     NewPackageResult,
+    PackageEnableResult,
     AddResourceResult,
     RollbackResult,
     RepairResult,
@@ -395,6 +397,71 @@ def execute_new_package(
     )
     if json_mode:
         print(res.to_json())
+
+
+_DIFF_LINE_STYLES = (
+    (("+++", "---"), "bold"),
+    (("+",), "green"),
+    (("-",), "red"),
+    (("@@",), "cyan"),
+)
+
+
+def _style_unified_diff_line(line: str, escape: Any) -> str:
+    """Wraps one unified-diff line in Rich markup based on its prefix (headers first)."""
+    style = next((s for prefixes, s in _DIFF_LINE_STYLES if line.startswith(prefixes)), None)
+    escaped = escape(line)
+    if style is None:
+        return escaped
+    return f"[{style}]{escaped}[/{style}]"
+
+
+def print_unified_diff(diff: str, use_rich: bool = True) -> None:
+    """Prints a unified diff, colored via Rich when available (plain text otherwise).
+
+    Rich strips styles automatically when stdout is not a terminal.
+    """
+    if use_rich:
+        try:
+            from rich.console import Console
+            from rich.markup import escape
+        except ImportError:
+            pass
+        else:
+            console = Console(highlight=False, soft_wrap=True)
+            for line in diff.splitlines():
+                console.print(_style_unified_diff_line(line, escape))
+            return
+    print(diff)
+
+
+def execute_packages_enable(
+    drift_root: Path,
+    packages: Sequence[str],
+    enabled: bool,
+    local: bool = False,
+    dry_run: bool = False,
+    json_mode: bool = False,
+    use_rich: bool = True,
+) -> PackageEnableResult:
+    """Core function to enable/disable packages in drift_workspace.toml, shared by both CLI backends."""
+    from ..primitives.workspace_enable import PackageEnableOptions, run_primitive_packages_enable
+
+    options = PackageEnableOptions(enabled=enabled, local=local, dry_run=dry_run)
+    prepare_cli_environment(drift_root)
+    assert_workspace_healthy(drift_root, command_name=options.command_name)
+    # quiet=True: the "no packages enabled" warning is noise when the user is enabling one.
+    workspace_config = WorkspaceConfig.from_workspace_dir(drift_root, quiet=True)
+    res = run_primitive_packages_enable(workspace_config, packages, options)
+    if json_mode:
+        print(res.to_json())
+    elif res.dry_run and res.diff:
+        print_unified_diff(res.diff, use_rich=use_rich)
+    else:
+        text = res.format_text()
+        if text:
+            print(text)
+    return res
 
 
 def execute_uninstall(

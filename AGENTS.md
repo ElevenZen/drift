@@ -2,8 +2,10 @@
 
 ## 1. Programming Paradigm & Code Style
 * **Functional Programming Preference**: Always prefer functional-style constructs (`filter()`, `map()`, comprehensions, generator expressions, and pure function composition) over procedural `for`-loops across all codebase implementations and refactorings.
-* **Functional Control-Flow & Null-Safety Helpers (`branch`, `when_not_none`, `when_none`, `partition`)**:
-  * Prefer [`branch(pred, lambda1, lambda2)`](src/drift/utils/config_utils.py) over Python's inline ternary `X if cond else Y` syntax in newly written or refactored code.
+* **Functional Control-Flow & Null-Safety Helpers (`branch`, `choose`, `when_not_none`, `when_none`, `partition`)**:
+  * Prefer [`branch(pred, lambda1, lambda2)`](src/drift/utils/config_utils.py) or [`choose(pred, value1, value2)`](src/drift/utils/config_utils.py) over Python's inline ternary `X if cond else Y` syntax in newly written or refactored code.
+  * Use **`choose()`** when both values are cheap, already computed, and safe to evaluate unconditionally (constants, f-strings, attribute reads). Values are returned verbatim, so classes and functions can be chosen without being called.
+  * Use **`branch()`** when laziness matters: either side is expensive, has side effects, or is only valid under its condition (file I/O, dict lookups, path resolution, conversions that may raise).
   * Prefer [`when_not_none(a, b)`](src/drift/utils/config_utils.py) (choose or derive `b` when `a is not None`) and [`when_none(a, b)`](src/drift/utils/config_utils.py) (choose fallback `b` when `a is None`) over inline ternary null checks or untyped boolean short-circuit idioms like `(a and b)`.
   * Prefer [`partition(pred, items)`](src/drift/utils/config_utils.py) to split iterables into `(true_list, false_list)` in a single functional pass.
 * **Modular Pipeline Extraction**: Extract filtering, transformation, and validation predicates into clean, single-responsibility helper functions to keep data pipelines declarative and readable.

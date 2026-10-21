@@ -70,6 +70,7 @@ from .workspace_models import (
     HookResult,
     NewPackageResult,
     PackageDiffDetail,
+    PackageEnableResult,
     PackageHealthResult,
     PackageHealthStatus,
     PackageStatus,
@@ -135,6 +136,7 @@ __all__ = [
     # Workspace Primitives & Commands
     "GcResult",
     "NewPackageResult",
+    "PackageEnableResult",
     "AddResourcePlan",
     "AddResourceResult",
     "PackageStatus",

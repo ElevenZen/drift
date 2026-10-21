@@ -339,6 +339,13 @@ zsh = true
 docker = false
 ```
 
+You can also toggle entries from the CLI with a format-preserving edit (comments and layout are kept):
+```bash
+drift enable nvim zsh            # edits config/drift_workspace.toml
+drift disable --local docker     # edits config/drift_workspace.local.toml (created if missing)
+drift enable -n tmux             # preview the change as a diff
+```
+
 ### 2. Wildcard `DEFAULT` Policy
 The special `DEFAULT` key establishes the fallback behavior for any package folder found in `src/` that is not explicitly enumerated in `[packages.enable]`:
 * **Opt-Out Model (`DEFAULT = true`)**: All packages in `src/` are active by default unless explicitly set to `false`.

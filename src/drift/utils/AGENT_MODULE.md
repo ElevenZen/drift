@@ -10,7 +10,7 @@
 ---
 
 ## 2. Internal Dependency Order (Bottom-Up)
-1. **Pure Data & Parsing**: [`toml_utils.py`](toml_utils.py), [`config_utils.py`](config_utils.py), [`path_utils.py`](path_utils.py), [`host_facts.py`](host_facts.py)
+1. **Pure Data & Parsing**: [`toml_utils.py`](toml_utils.py) $\rightarrow$ [`toml_edit.py`](toml_edit.py), [`config_utils.py`](config_utils.py), [`path_utils.py`](path_utils.py), [`host_facts.py`](host_facts.py)
 2. **Environment & Process**: [`process_utils.py`](process_utils.py), [`env_utils.py`](env_utils.py), [`python_hook_utils.py`](python_hook_utils.py)
 3. **Filesystem & Git Operations**: [`file_inspect.py`](file_inspect.py), [`file_ops.py`](file_ops.py), [`git_utils.py`](git_utils.py), [`editor_utils.py`](editor_utils.py), [`workspace_root.py`](workspace_root.py)
 
@@ -53,7 +53,7 @@
 * `remove_with_parents(file_path: Path, limit_dir: Optional[Path] = None) -> None`: Removes file and prunes empty parent directories up to `limit_dir`.
 * `create_symlink(src: Path, dst: Path, sudo: bool = False) -> None` & `copy_symlink(src: Path, dst: Path, sudo: bool = False) -> None`: Creates or clones relative/target symlinks.
 * `copy_file(src: Path, dst: Path, sudo: bool = False, convert_line_endings: Optional[bool] = None, ...) -> None`: Copies file preserving permissions and optional line-ending normalization.
-* `write_file(dst: Path, content: Union[str, bytes], sudo: bool = False, mode: Optional[int] = None, ...) -> None`: Writes content to `dst` (with elevated temp-file staging when `sudo=True`).
+* `write_file(dst: Path, content: Union[str, bytes], sudo: bool = False, permission: Optional[int] = None) -> None`: Atomically writes content to `dst` (temp file + `os.replace`, or `sudo mv`). `permission=None` preserves an existing regular file's mode; new files (or replaced symlinks) get `0o666 & ~umask`.
 * `copy_tree(src: Path, dst: Path, sudo: bool = False) -> None` & `move_tree(src: Path, dst: Path, sudo: bool = False) -> None`: Copies or moves directory trees or files.
 
 ### [`env_utils.py`](env_utils.py) — 6-Tier Environment Resolution, Kahn's DAG & Scoping
@@ -70,9 +70,16 @@
 * `python_envsubst(text: str, env: Optional[Mapping[str, str]] = None) -> str`: Pure-Python `envsubst` supporting `$VAR`, `${VAR}`, `${VAR:-default}`, `${VAR:+alt}`, and `\$` escaping.
 * `read_plain_secrets_file(file_path: Path, required: bool = False) -> Dict[str, str]`, `parse_env_text(content: str, strict: bool = False, source_desc: str = "env") -> Dict[str, str]`, `parse_secrets_env(drift_root: Path) -> Dict[str, str]`, `parse_env_file(file_path: Path) -> Dict[str, str]`, `env_scope(...)`.
 
+### [`toml_edit.py`](toml_edit.py) — Format-Preserving TOML Text Editing
+* `set_toml_table_bools(text, table_keys, updates: Mapping[str, bool], create_table_if_missing=False) -> TomlBoolEditResult`: Line-surgical boolean edits inside a `[table]` section. Rewrites only the value token of existing single-line keys (keeping indentation, key quoting, `=` spacing, trailing comments), inserts missing keys after the section's last assignment, keeps CRLF and a missing final newline as-is, and raises `ValueError` on multi-line values, dotted-key conflicts, or a missing table (unless `create_table_if_missing`).
+* `scan_toml_logical_lines(text) -> List[TomlLogicalLine]` & `find_toml_table_span(lines, table_keys) -> Optional[TomlTableSpan]`: Tokenizer-aware structure discovery (reuses `_ParserState` / `_strip_line_comment`), ignoring commented headers and header-like text inside multiline strings.
+* `format_toml_key(key) -> str` & `split_toml_dotted_key(raw) -> List[str]`: Bare-vs-quoted key emission and unquoted-dot key splitting.
+* `TomlEditAction` (`UPDATED` / `INSERTED` / `UNCHANGED`), `TomlLineKind`, `TomlLogicalLine`, `TomlTableSpan`, `TomlBoolEditResult`.
+
 ### [`config_utils.py`](config_utils.py) & [`toml_utils.py`](toml_utils.py) — Config Predicates & TOML Engine
 * `partition(pred: Callable[[T], bool], items: Iterable[T]) -> Tuple[List[T], List[T]]`: Splits items into `(truthy_list, falsy_list)`.
 * `branch(predicate: Union[bool, Callable[[], Any]], lambda1: Callable[[], T], lambda2: Callable[[], T]) -> T`: Evaluates `predicate` and invokes `lambda1()` if truthy, otherwise `lambda2()`.
+* `choose(predicate: Union[bool, Callable[[], Any]], value1: T, value2: T) -> T`: Eager counterpart of `branch()`; returns `value1` / `value2` verbatim (callable values are never invoked). Use `branch()` when either side is expensive, side-effecting, or only valid under its condition.
 * `when_not_none(a: Optional[S], b: Union[Callable[[S], Optional[T]], Callable[[], Optional[T]], Optional[T]]) -> Optional[T]`: Chooses/invokes `b` when `a is not None`, otherwise returns `None`.
 * `when_none(a: Optional[S], b: Union[Callable[[], T], T]) -> Union[S, T]`: Chooses/invokes fallback `b` when `a is None`, otherwise returns `a`.
 * `get_first_from(data: Mapping, keys: Sequence[str], default=None) -> Any`: Returns value for the first matching key alias.
@@ -123,5 +130,6 @@
   PYTHONPATH=src python3 -m unittest tests/test_path_utils.py
   PYTHONPATH=src python3 -m unittest tests/test_env_utils.py
   PYTHONPATH=src python3 -m unittest tests/test_toml_utils.py
+  PYTHONPATH=src python3 -m unittest tests/test_toml_edit.py
   PYTHONPATH=src python3 -m unittest tests/test_host_facts.py
   ```
