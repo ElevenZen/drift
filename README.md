@@ -63,6 +63,8 @@ Drift keeps four tiers, each with a single responsibility:
 
 ## 🚀 Five-Minute Tour
 
+### 1. Forward Flow: Package & Deploy
+
 ```bash
 # 1. Create a workspace (an empty directory, or a subfolder of an existing repo)
 mkdir my-config && cd my-config
@@ -79,11 +81,15 @@ drift enable --local git
 git add -A && git commit -m "Add git package"
 drift plan
 drift deploy                            # original file is backed up to backup/git/overwritten/
+```
 
-# 5. Something edits the live file...
+### 2. Reverse Flow: Simulate Drift & Adopt
+
+```bash
+# 1. Something edits the live file on the host...
 printf '[alias]\n\tst = status\n' >> ~/.gitconfig
 
-# 6. ...Drift notices, and you decide
+# 2. ...Drift notices, blocks accidental overwrite, and lets you adopt the edit back
 drift status                            # [B] System: DRIFTED
 drift diff -s git                       # exactly what changed on the host
 drift deploy                            # halts: system drift detected
@@ -117,6 +123,7 @@ Standalone `zipapp` binaries, wheels, `pipx` / `uv tool`, and manual completion 
 | :--- | :--- |
 | `drift init` / `drift clone <url>` | Create or bootstrap a workspace |
 | `drift new <pkg>` / `drift add <pkg> <paths>` | Scaffold a package / import host files |
+| `drift enable <pkgs>` / `drift disable <pkgs>` | Toggle packages in `[packages.enable]` (`--local`) |
 | `drift plan [pkgs]` | Preview the full deployment |
 | `drift deploy [pkgs]` | Compile, stage, and deliver |
 | `drift status [pkgs]` / `drift diff [pkgs]` | Inspect template, pending, and host drift |
