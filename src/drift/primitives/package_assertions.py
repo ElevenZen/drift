@@ -42,7 +42,7 @@ Pre-flight Assertion Guards:
 
     - assert_required_package_dependencies_exist(pkg_dependencies_map, universe_names)
         * Validates that all required dependencies exist within the available package universe.
-        * Aggregates all missing dependencies across packages and raises ConfigError.
+        * Aggregates all missing dependencies across packages and raises MissingDependencyError.
 
     - assert_no_cyclic_package_dependencies(pkg_dependencies_map)
         * Validates that package dependencies form a valid DAG with no cyclic dependencies.
@@ -50,7 +50,12 @@ Pre-flight Assertion Guards:
 
     - assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata)
         * Validates that removing packages will not leave remaining installed packages with unsatisfied dependencies.
-        * Aggregates all broken dependencies across remaining packages and raises ConfigError.
+        * Aggregates all broken dependencies across remaining packages and raises MissingDependencyError.
+
+    - assert_target_packages_enabled(workspace_config, target_packages, adhoc, force, command_name)
+        * Inspects explicitly targeted packages via check_disabled_target_packages.
+        * Blocks deployment or planning of disabled packages unless adhoc=True or force=True.
+        * Raises PackageDisabledError(packages=[...]) if any disabled packages are detected.
 
     - resolve_package_install_order(pkg_dependencies_map)
         * Resolves topological install order from package dependency declarations.
@@ -76,6 +81,8 @@ Layers:
         assert_required_package_dependencies_exist
         assert_no_cyclic_package_dependencies
         assert_no_broken_dependencies_on_uninstall
+        check_disabled_target_packages
+        assert_target_packages_enabled
         resolve_package_install_order
         resolve_package_uninstall_order
         resolve_target_package_order
@@ -113,6 +120,8 @@ from ..core.exceptions import (
     HookMissingError,
     InstallCollisionError,
     MidwayTransactionError,
+    MissingDependencyError,
+    PackageDisabledError,
     PackageInstallDirMissingError,
     TargetPermissionError,
 )
@@ -476,18 +485,24 @@ def assert_required_package_dependencies_exist(
             to all package names in pkg_dependencies_map.
 
     Raises:
-        ConfigError: If any required dependency is missing from the universe.
+        MissingDependencyError: If any required dependency is missing from the universe.
     """
     available = set(universe_names) if universe_names is not None else set(pkg_dependencies_map.keys())
-    missing_errors: List[str] = [
-        f"  • Package '{pkg_name}' requires: {sorted(set(deps.required_names) - available)}"
+    missing_map: Dict[str, List[str]] = {
+        pkg_name: sorted(missing)
         for pkg_name, deps in sorted(pkg_dependencies_map.items())
-        if set(deps.required_names) - available
-    ]
-    if missing_errors:
-        raise ConfigError(
+        if (missing := set(deps.required_names) - available)
+    }
+    if missing_map:
+        missing_errors: List[str] = [
+            f"  • Package '{pkg_name}' requires: {missing_deps}"
+            for pkg_name, missing_deps in missing_map.items()
+        ]
+        raise MissingDependencyError(
             f"Missing required package dependencies among installable packages {sorted(available)}:\n"
-            + "\n".join(missing_errors)
+            + "\n".join(missing_errors),
+            packages=list(missing_map.keys()),
+            missing_dependencies=missing_map,
         )
 
 
@@ -524,18 +539,24 @@ def assert_no_broken_dependencies_on_uninstall(
         remaining_metadata: Mapping of package name to PackageConfig for packages that will remain installed.
 
     Raises:
-        ConfigError: If any remaining package has a required dependency on an uninstalled package.
+        MissingDependencyError: If any remaining package has a required dependency on an uninstalled package.
     """
     uninstalling_set = set(packages_to_uninstall)
-    broken_deps: List[str] = [
-        f"  • Remaining package '{pkg}' requires uninstalled package(s): {sorted(set(meta.package.dependencies.required_names) & uninstalling_set)}"
+    broken_map: Dict[str, List[str]] = {
+        pkg: sorted(broken)
         for pkg, meta in sorted(remaining_metadata.items())
-        if set(meta.package.dependencies.required_names) & uninstalling_set
-    ]
-    if broken_deps:
-        raise ConfigError(
+        if (broken := set(meta.package.dependencies.required_names) & uninstalling_set)
+    }
+    if broken_map:
+        broken_deps: List[str] = [
+            f"  • Remaining package '{pkg}' requires uninstalled package(s): {broken}"
+            for pkg, broken in broken_map.items()
+        ]
+        raise MissingDependencyError(
             f"Cannot uninstall package(s) {sorted(uninstalling_set)} because remaining installed package(s) depend on them:\n"
-            + "\n".join(broken_deps)
+            + "\n".join(broken_deps),
+            packages=list(broken_map.keys()),
+            missing_dependencies=broken_map,
         )
 
 
@@ -662,4 +683,42 @@ def resolve_target_package_order(
 
     sorted_universe = resolve_package_install_order(full_deps)
     return list(filter(will_install_names.__contains__, sorted_universe))
+
+
+def check_disabled_target_packages(
+    workspace_config: WorkspaceConfig,
+    target_packages: Sequence[str],
+) -> List[str]:
+    """Read-only inspection returning any explicitly requested packages that are disabled in workspace config."""
+    return list(filter(lambda pkg: not workspace_config.is_package_enabled(pkg), target_packages))
+
+
+def assert_target_packages_enabled(
+    workspace_config: WorkspaceConfig,
+    target_packages: Sequence[str],
+    adhoc: bool = False,
+    force: bool = False,
+    command_name: str = "deploy",
+) -> None:
+    """Safeguard: Blocks deploying or planning explicitly targeted packages that are disabled in workspace config,
+    unless `adhoc=True` or `force=True` is specified.
+    """
+    if adhoc or force or not target_packages:
+        return
+
+    disabled_pkgs = check_disabled_target_packages(workspace_config, target_packages)
+    if not disabled_pkgs:
+        return
+
+    pkgs_str = ", ".join(disabled_pkgs)
+    pkg_cmd_str = shlex.join(disabled_pkgs)
+    err_msg = (
+        f"🛑 [SAFEGUARD] Cannot {command_name} disabled package(s): {pkgs_str}!\n"
+        "Package(s) are currently disabled in workspace configuration ('[packages.enable]').\n\n"
+        f"👉 Run 'drift enable {pkg_cmd_str}' (or 'drift enable --local {pkg_cmd_str}') to enable in workspace config.\n"
+        f"👉 Run 'drift {command_name} --adhoc {pkg_cmd_str}' to {command_name} temporarily without enabling in config.\n"
+        f"👉 Run 'drift {command_name} --force {pkg_cmd_str}' to bypass all safeguards."
+    )
+    raise PackageDisabledError(err_msg, packages=disabled_pkgs)
+
 

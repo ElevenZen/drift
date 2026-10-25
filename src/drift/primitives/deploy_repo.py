@@ -29,18 +29,23 @@ from .install_repo import (
     InstallOptions,
 )
 from .workspace_gc import run_primitive_9_purge_workspace_garbage, purge_redundant_wal_folders
+from .package_assertions import assert_target_packages_enabled
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.exceptions import (
     DriftDetectedError,
     DriftError,
     HookExecutionError,
+    MidwayCrashError,
     MidwayTransactionError,
-    is_drift_error,
+    MissingDependencyError,
+    PackageDisabledError,
+    SafeguardError,
     is_logged,
     mark_logged,
 )
 from ..core.constants import STATE_REGISTRY_FILE_NAME, ExitCode, InstallMethod, RollbackPolicy
 from ..core.state_registry import load_state_registry
+from ..utils.func_utils import branch, choose, when_none, when_not_none
 from ..models import (
     NextActionType,
     DeployOptions,
@@ -188,10 +193,10 @@ def execute_render_step(
             options=RenderOptions.resolve(hook_flags),
         )
         if render_res.status == "FAILED":
-            raise RuntimeError(render_res.error_message or f"{failed_step} failed.")
+            raise mark_logged(RuntimeError(render_res.error_message or f"{failed_step} failed."))
         return CompletedStep(1, "template_rendering")
     except Exception as e:
-        if is_drift_error(e) or is_logged(e):
+        if is_logged(e):
             logger.error(f"❌ [CRITICAL] {failed_step} failed.")
         else:
             logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
@@ -216,7 +221,7 @@ def execute_render_commit_step(
         )
         return CompletedStep(2, "render_commit")
     except Exception as e:
-        if is_drift_error(e) or is_logged(e):
+        if is_logged(e):
             logger.error(f"❌ [CRITICAL] {failed_step} failed.")
         else:
             logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
@@ -243,7 +248,7 @@ def prepare_staging_step(
             options=StageOptions(force=force, no_deps=no_deps),
         )
     except Exception as e:
-        if is_drift_error(e) or is_logged(e):
+        if is_logged(e):
             logger.error(f"❌ [CRITICAL] {failed_step} failed.")
         else:
             logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
@@ -277,7 +282,7 @@ def execute_staging_step(
         return stage_result, CompletedStep(3, "sandbox_staging")
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), list(target_pkgs))
-        raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
+        raise mark_logged(MidwayCrashError(f"Midway crash: {failed_step} failed.", packages=list(target_pkgs))) from e
 
 
 def resolve_packages_to_install(
@@ -343,7 +348,7 @@ def prepare_physical_install_step(
             state_registry=stage_plan.state_registry,
         )
     except Exception as e:
-        if is_drift_error(e) or is_logged(e):
+        if is_logged(e):
             logger.error(f"❌ [CRITICAL] {failed_step} failed.")
         else:
             logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
@@ -399,7 +404,7 @@ def execute_physical_install_step(
             ) from e
 
         print_emergency_recovery_card(failed_step, str(e), list(target_pkgs))
-        raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
+        raise mark_logged(MidwayCrashError(f"Midway crash: {failed_step} failed.", packages=list(target_pkgs))) from e
 
 
 def execute_install_commit_step(
@@ -418,7 +423,7 @@ def execute_install_commit_step(
         )
         return CompletedStep(5, "install_commit")
     except Exception as e:
-        if is_drift_error(e) or is_logged(e):
+        if is_logged(e):
             logger.error(f"❌ [CRITICAL] {failed_step} failed.")
         else:
             logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
@@ -530,6 +535,63 @@ def execute_sequential_compile_and_apply(
     return installed_packages, completed_steps
 
 
+def check_disabled_installed_packages(
+    workspace_config: WorkspaceConfig,
+) -> List[str]:
+    """Read-only inspection returning packages marked 'installed' in state.toml that are disabled in workspace config."""
+    state_file = workspace_config.install_path / STATE_REGISTRY_FILE_NAME
+    if not state_file.is_file():
+        return []
+    state_registry = load_state_registry(state_file)
+    installed_pkgs = [pkg for pkg, _ in state_registry.filter_by_states(["installed"])]
+    return list(
+        filter(
+            lambda pkg: not workspace_config.is_package_enabled(pkg),
+            installed_pkgs,
+        )
+    )
+
+
+def format_deploy_summary(
+    deployed_packages: Sequence[PackageInstallResult],
+    gc_result: Optional[GcResult] = None,
+) -> str:
+    """Formats the final deployment summary line showing installed and (when --gc ran) uninstalled packages."""
+    installed_pkgs = list(map(lambda p: p.package, deployed_packages))
+    uninstalled_pkgs = when_none(
+        when_not_none(gc_result, lambda res: list(res.uninstalled_orphans)),
+        lambda: [],
+    )
+    parts = list(
+        filter(
+            bool,
+            (
+                choose(bool(installed_pkgs), f"installed: {', '.join(installed_pkgs)}", ""),
+                choose(bool(uninstalled_pkgs), f"uninstalled (gc): {', '.join(uninstalled_pkgs)}", ""),
+            ),
+        )
+    )
+    return choose(
+        bool(parts),
+        f"✨ Deployment completed ({'; '.join(parts)}).",
+        "✨ Deployment completed: all packages are already up-to-date (no changes detected).",
+    )
+
+
+def format_disabled_installed_packages_hint(
+    disabled_installed_pkgs: Sequence[str],
+) -> Optional[str]:
+    """Formats a non-destructive hint when disabled packages remain installed on the host."""
+    if not disabled_installed_pkgs:
+        return None
+    pkgs_csv = ", ".join(disabled_installed_pkgs)
+    pkgs_args = shlex.join(disabled_installed_pkgs)
+    return (
+        f"💡 Hint: Installed package(s) [{pkgs_csv}] are currently disabled in workspace config. "
+        f"Run 'drift deploy --gc', 'drift gc', or 'drift uninstall {pkgs_args}' to uninstall them."
+    )
+
+
 def execute_deploy_pipeline(
     workspace_config: WorkspaceConfig,
     packages_to_deploy: Sequence[str] = (),
@@ -540,55 +602,72 @@ def execute_deploy_pipeline(
     Args:
         workspace_config: The workspace configuration instance.
         packages_to_deploy: Specific package name(s) to deploy, or empty/omitted for all active packages.
-        options: Optional DeployOptions controlling force, reinstall, no_deps, rollback, and hook flags.
+        options: Optional DeployOptions controlling force, adhoc, gc, reinstall, no_deps, rollback, and hook flags.
 
     Returns:
         DeployResult containing detailed status and deployed packages.
     """
-    opts = options or DeployOptions()
+    opts = when_none(options, lambda: DeployOptions())
 
     # 0. Pre-flight checks: Verify render/ and install/ repositories can commit successfully
     logger.info("🔍 Running pre-flight Git configuration checks...")
     assert_repo_can_commit(workspace_config.render_path)
     assert_repo_can_commit(workspace_config.install_path)
 
-    # Discover target active packages from source directory
-    target_pkgs = workspace_config.filter_source_packages_by_target(target_packages=packages_to_deploy or None)
-    if not target_pkgs:
-        logger.info("No active packages selected or enabled for deployment. Skipping.")
-        return DeployResult(
-            command="deploy",
-            status="SUCCESS",
-            is_global_deploy=(not packages_to_deploy),
-            target_packages=[],
-            deployed_packages=[]
+    # Discover target packages from source directory and enforce disabled-package safeguard
+    target_pkgs = workspace_config.filter_source_packages_by_target(
+        target_packages=branch(bool(packages_to_deploy), lambda: list(packages_to_deploy), lambda: None)
+    )
+    if packages_to_deploy:
+        assert_target_packages_enabled(
+            workspace_config=workspace_config,
+            target_packages=target_pkgs,
+            adhoc=opts.adhoc,
+            force=opts.force,
+            command_name="deploy",
         )
 
-    # Pre-flight midway transaction state check before rendering templates
-    assert_no_midway_deploy_state(workspace_config, target_pkgs, force=opts.force)
-    purge_redundant_wal_folders(workspace_config, target_pkgs=target_pkgs, log_level=logging.DEBUG)
+    if target_pkgs:
+        # Pre-flight midway transaction state check before rendering templates
+        assert_no_midway_deploy_state(workspace_config, target_pkgs, force=opts.force)
+        purge_redundant_wal_folders(workspace_config, target_pkgs=target_pkgs, log_level=logging.DEBUG)
 
-    # Deploy Pipeline Execution (Render -> Render-Commit -> Sentinel Audit -> Stage & Install Plan -> Stage & Install Execute)
-    deployed_packages, completed_steps = execute_sequential_compile_and_apply(
-        workspace_config,
-        target_pkgs,
-        options=opts,
+        # Deploy Pipeline Execution (Render -> Render-Commit -> Sentinel Audit -> Stage & Install Plan -> Stage & Install Execute)
+        deployed_packages, completed_steps = execute_sequential_compile_and_apply(
+            workspace_config,
+            target_pkgs,
+            options=opts,
+        )
+    else:
+        logger.info("No active packages selected or enabled for deployment. Skipping.")
+        deployed_packages, completed_steps = [], []
+
+    # Optional Stage 3 Garbage Collection (only when --gc is explicitly requested)
+    gc_res: Optional[GcResult] = branch(
+        opts.gc,
+        lambda: (
+            logger.info("🧹 Performing deployment garbage collection..."),
+            run_primitive_9_purge_workspace_garbage(
+                workspace_config,
+                dry_run=False,
+                flags=opts.get_hook_flags(settings=workspace_config.settings),
+            ),
+        )[1],
+        lambda: None,
     )
 
-    # Call garbage collection on global deploy
-    gc_res: Optional[GcResult] = None
-    if not packages_to_deploy:
-        logger.info("🧹 Performing global deployment garbage collection...")
-        gc_res = run_primitive_9_purge_workspace_garbage(
-            workspace_config,
-            dry_run=False,
-            flags=opts.get_hook_flags(settings=workspace_config.settings),
-        )
+    disabled_installed = branch(
+        opts.gc,
+        lambda: [],
+        lambda: list(filter(lambda p: p not in target_pkgs, check_disabled_installed_packages(workspace_config))),
+    )
 
-    if deployed_packages:
-        logger.info(f"✨ Successfully completed deployment for package(s): {', '.join(p.package for p in deployed_packages)}")
-    else:
-        logger.info("✨ Deployment completed: all packages are already up-to-date (no changes detected).")
+    if target_pkgs or opts.gc:
+        logger.info(format_deploy_summary(deployed_packages, gc_res))
+
+    hint_msg = format_disabled_installed_packages_hint(disabled_installed)
+    if hint_msg is not None:
+        logger.info(hint_msg)
 
     return DeployResult(
         command="deploy",
@@ -596,8 +675,9 @@ def execute_deploy_pipeline(
         is_global_deploy=(not packages_to_deploy),
         target_packages=target_pkgs,
         deployed_packages=deployed_packages,
+        disabled_installed_packages=disabled_installed,
         gc=gc_res,
-        completed_steps=completed_steps
+        completed_steps=completed_steps,
     )
 
 
@@ -611,7 +691,7 @@ def run_primitive_deploy_pipeline(
     Args:
         workspace_config: The workspace configuration instance.
         packages_to_deploy: Specific package name(s) to deploy, or None for all active packages.
-        options: Optional DeployOptions controlling force, reinstall, no_deps, rollback, and hook flags.
+        options: Optional DeployOptions controlling force, adhoc, gc, reinstall, no_deps, rollback, and hook flags.
 
     Returns:
         DeployResult containing detailed status, deployed packages, or failure details.
@@ -624,30 +704,47 @@ def run_primitive_deploy_pipeline(
         )
     except Exception as e:
         err_str = str(e)
-        is_drift = isinstance(e, DriftDetectedError)
-        is_midway = isinstance(e, MidwayTransactionError)
-        requires_rollback = "Midway crash" in err_str or is_midway
+        is_midway_crash = isinstance(e, MidwayCrashError)
+        cause = e.__cause__ if (isinstance(e.__cause__, DriftError) and not is_midway_crash) else e
+        is_drift = isinstance(cause, DriftDetectedError)
+        is_midway = isinstance(cause, MidwayTransactionError)
+        is_disabled_pkg = isinstance(cause, PackageDisabledError)
+        is_missing_dep = isinstance(cause, MissingDependencyError)
+        is_safeguard = isinstance(cause, SafeguardError)
+        requires_rollback = is_midway_crash or is_midway
         if is_drift:
             next_action = NextActionType.ADOPT_OR_FORCE
             rec_cmd = "drift adopt"
         elif requires_rollback:
             next_action = NextActionType.ROLLBACK
-            rollback_pkgs = list(getattr(e, "packages", None) or packages_to_deploy or ())
+            rollback_pkgs = list(getattr(cause, "packages", None) or packages_to_deploy or ())
             rec_cmd = f"drift rollback {shlex.join(rollback_pkgs)}".strip()
+        elif is_disabled_pkg:
+            next_action = NextActionType.FIX_TEMPLATE
+            safeguard_pkgs = list(getattr(cause, "packages", None) or packages_to_deploy or ())
+            rec_cmd = f"drift deploy --adhoc {shlex.join(safeguard_pkgs)}".strip()
+        elif is_missing_dep:
+            next_action = NextActionType.FIX_TEMPLATE
+            dep_pkgs = list(getattr(cause, "packages", None) or packages_to_deploy or ())
+            rec_cmd = f"drift deploy --no-deps {shlex.join(dep_pkgs)}".strip()
+        elif is_safeguard:
+            next_action = NextActionType.FIX_TEMPLATE
+            safeguard_pkgs = list(getattr(cause, "packages", None) or packages_to_deploy or ())
+            rec_cmd = f"drift deploy --force {shlex.join(safeguard_pkgs)}".strip()
         else:
             next_action = NextActionType.FIX_TEMPLATE
             rec_cmd = "drift deploy"
 
         fail = DeployFailure(
-            step_index=0 if (is_drift or is_midway) else 1,
-            step_name="sentinel_drift_check" if (is_drift or is_midway) else "pipeline_execution",
+            step_index=0 if (is_drift or is_midway or is_disabled_pkg) else 1,
+            step_name="sentinel_drift_check" if (is_drift or is_midway) else ("disabled_package_check" if is_disabled_pkg else "pipeline_execution"),
             package=packages_to_deploy[0] if (packages_to_deploy and len(packages_to_deploy) == 1) else None,
             error_message=err_str,
-            error_type=type(e).__name__,
+            error_type=type(cause).__name__,
             requires_rollback=requires_rollback,
             next_action_type=next_action,
             recommended_command=rec_cmd,
-            exit_code=getattr(e, "exit_code", ExitCode.GENERAL_ERROR),
+            exit_code=getattr(cause, "exit_code", ExitCode.GENERAL_ERROR),
         )
         return DeployResult(
             command="deploy",

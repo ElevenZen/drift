@@ -163,9 +163,15 @@ class TestAdopt(unittest.TestCase):
         # Modify file to make it dirty
         clean_file.write_text("dirty uncommitted change", encoding="utf-8")
 
-        # Clean check should raise RuntimeError with guidance message
-        with self.assertRaises(RuntimeError) as ctx:
+        # Clean check should raise DirtySourceFileError (SafeguardError & RuntimeError) with guidance message
+        from drift.core.exceptions import DirtySourceFileError, SafeguardError
+
+        with self.assertRaises(DirtySourceFileError) as ctx:
             assert_source_file_clean(clean_file, force=False, pkg=pkg)
+        self.assertIsInstance(ctx.exception, SafeguardError)
+        self.assertIsInstance(ctx.exception, RuntimeError)
+        self.assertEqual(ctx.exception.packages, [pkg])
+        self.assertEqual(ctx.exception.source_file, clean_file)
         self.assertIn("has uncommitted local modifications", str(ctx.exception))
         self.assertIn(f"drift adopt {pkg} --force", str(ctx.exception))
 
@@ -2332,7 +2338,9 @@ render_command = "bash -c 'cat %i %s'"
         subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init live packages"], cwd=self.workspace_path, check=True, capture_output=True)
 
-        # Deploy both packages (render -> stage -> apply)
+        # Enable and deploy both packages (render -> stage -> apply)
+        self.workspace_config.packages_enable[pkg_copy] = True
+        self.workspace_config.packages_enable[pkg_sym] = True
         deploy_res = run_primitive_deploy_pipeline(self.workspace_config, [pkg_copy, pkg_sym])
         self.assertEqual(deploy_res.status, "SUCCESS")
 
@@ -2421,6 +2429,7 @@ render_command = "bash -c 'cat %i %s'"
         subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init opt flags pkg"], cwd=self.workspace_path, check=True, capture_output=True)
 
+        self.workspace_config.packages_enable[pkg] = True
         run_primitive_deploy_pipeline(self.workspace_config, [pkg])
 
         # Edit live target file in target_dir AND update template in src_pkg to match ("$GREETING v2\n")
@@ -2492,6 +2501,7 @@ render_command = "bash -c 'cat %i %s'"
         subprocess.run(["git", "commit", "-m", "init hook dedup pkg"], cwd=self.workspace_path, check=True, capture_output=True)
 
         # Deploy initial state (this fires pre_source once during deploy's render step; clear marker afterwards)
+        self.workspace_config.packages_enable[pkg] = True
         run_primitive_deploy_pipeline(self.workspace_config, [pkg])
         if marker_file.exists():
             marker_file.unlink()

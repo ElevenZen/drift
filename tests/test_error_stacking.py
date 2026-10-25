@@ -43,7 +43,10 @@ class TestErrorStacking(unittest.TestCase):
             subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_dir, check=True, capture_output=True)
             subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_dir, check=True, capture_output=True)
 
-        self.workspace_config = WorkspaceConfig(drift_root=self.drift_root)
+        self.workspace_config = WorkspaceConfig(
+            drift_root=self.drift_root,
+            packages_enable={"pkg_a": True},
+        )
 
     def tearDown(self) -> None:
         self.stdout_patch.stop()
@@ -174,9 +177,59 @@ class TestErrorStacking(unittest.TestCase):
 
         logs = "\n".join(cm.output)
         self.assertIn("❌ [CRITICAL] Step 3 (Sandbox Staging Pre-flight) failed.", logs)
+        self.assertIn("Uncommitted modifications detected in install/pkg_a", logs)
         self.assertIn("👉 Problematic package(s): 'pkg_a'. Please resolve pre-flight issues and try 'drift deploy' again.", logs)
         self.assertIn("Step 3 (Sandbox Staging Pre-flight) failed.", str(ctx.exception))
         mock_recovery_card.assert_not_called()
+
+    @patch("drift.primitives.deploy_repo.prepare_stage_packages")
+    @patch("drift.primitives.deploy_repo.run_primitive_3_commit_render_repo")
+    @patch("drift.primitives.deploy_repo.run_primitive_2_render_packages")
+    def test_deploy_step3_unlogged_missing_dependency_error_logs_details_once(
+        self, mock_p2, mock_p3, mock_prepare
+    ) -> None:
+        """When Step 3a raises an unlogged MissingDependencyError, its message is logged and marked logged."""
+        from drift.core.exceptions import MissingDependencyError
+
+        mock_p2.return_value = MagicMock(status="SUCCESS")
+        missing_err = MissingDependencyError(
+            "Missing required package dependencies among installable packages ['pkg_a']: ['missing_dep']",
+            packages=["pkg_a"],
+            missing_dependencies={"pkg_a": ["missing_dep"]},
+        )
+        self.assertFalse(is_logged(missing_err))
+        mock_prepare.side_effect = missing_err
+
+        with self.assertLogs("drift.primitives.deploy_repo", level="ERROR") as cm:
+            with self.assertRaises(RuntimeError) as ctx:
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        self.assertTrue(is_logged(missing_err))
+        self.assertIs(ctx.exception.__cause__, missing_err)
+        logs = "\n".join(cm.output)
+        self.assertIn(
+            "❌ [CRITICAL] Step 3 (Sandbox Staging Pre-flight) failed. Error: "
+            "Missing required package dependencies among installable packages ['pkg_a']: ['missing_dep']",
+            logs,
+        )
+
+    @patch("drift.primitives.deploy_repo.run_primitive_2_render_packages")
+    def test_deploy_step1_failed_render_result_does_not_duplicate_error_message(
+        self, mock_render
+    ) -> None:
+        """When run_primitive_2_render_packages returns FAILED, Step 1 does not re-log render_res.error_message."""
+        mock_render.return_value = MagicMock(
+            status="FAILED",
+            error_message="Template rendering failed for package(s): 'pkg_a' (Render failed: syntax error)",
+        )
+
+        with self.assertLogs("drift.primitives.deploy_repo", level="ERROR") as cm:
+            with self.assertRaises(RuntimeError):
+                execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        logs = "\n".join(cm.output)
+        self.assertIn("❌ [CRITICAL] Step 1 (Template Rendering) failed.", logs)
+        self.assertNotIn("Template rendering failed for package(s)", logs)
 
     @patch("drift.primitives.deploy_repo.print_emergency_recovery_card")
     @patch("drift.primitives.deploy_repo.prepare_physical_install_step")

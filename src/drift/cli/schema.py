@@ -392,8 +392,13 @@ def build_completion_schema() -> CompletionSchema:
                 options=[
                     OptionSpec(
                         flags=["-f", "--force"],
-                        description="Simulate deployment with forced drift bypass",
+                        description="Simulate deployment bypassing all safeguards (includes --adhoc, --no-deps, host drift sentinel, and midway transaction locks)",
                         dest="force",
+                    ),
+                    OptionSpec(
+                        flags=["--adhoc", "--ad-hoc"],
+                        description="Allow planning disabled package(s) without enabling them in workspace config",
+                        dest="adhoc",
                     ),
                     OptionSpec(
                         flags=["-r", "--reinstall"],
@@ -443,7 +448,17 @@ def build_completion_schema() -> CompletionSchema:
                 options=[
                     OptionSpec(
                         flags=["-f", "--force"],
-                        description="Forcefully deploy and bypass system drift sentinel safeguards"
+                        description="Forcefully deploy bypassing all safeguards (includes --adhoc, --no-deps, host drift sentinel, and midway transaction locks)"
+                    ),
+                    OptionSpec(
+                        flags=["--adhoc", "--ad-hoc"],
+                        description="Allow deploying disabled package(s) without enabling them in workspace config",
+                        dest="adhoc",
+                    ),
+                    OptionSpec(
+                        flags=["--gc"],
+                        description="Run garbage collection after deployment to uninstall disabled or orphaned packages",
+                        dest="gc",
                     ),
                     OptionSpec(
                         flags=["-r", "--reinstall"],
@@ -529,7 +544,12 @@ def build_completion_schema() -> CompletionSchema:
                 options=[
                     OptionSpec(
                         flags=["-f", "--force"],
-                        description="Force uninstallation even if package is still active in drift_workspace.toml"
+                        description="Force uninstallation bypassing all safeguards (includes --adhoc enabled-package check and --no-deps reverse-dependency check)"
+                    ),
+                    OptionSpec(
+                        flags=["--adhoc", "--ad-hoc"],
+                        description="Allow uninstalling enabled package(s) without disabling them in workspace config",
+                        dest="adhoc",
                     ),
                     OptionSpec(["-n", "--dry-run"], "Preview uninstallation without making changes"),
                     OptionSpec(
@@ -781,7 +801,7 @@ def build_completion_schema() -> CompletionSchema:
                 options=[
                     OptionSpec(
                         flags=["-f", "--force"],
-                        description="Force staging and bypass uncommitted modifications check"
+                        description="Force staging bypassing all safeguards (includes --no-deps, uncommitted install modifications, and midway transaction locks)"
                     ),
                     OptionSpec(
                         flags=["--no-deps"],
@@ -811,7 +831,7 @@ def build_completion_schema() -> CompletionSchema:
                 options=[
                     OptionSpec(
                         flags=["-f", "--force"],
-                        description="Force deployment and bypass check"
+                        description="Force deployment bypassing all safeguards (includes --no-deps and midway transaction locks)"
                     ),
                     OptionSpec(
                         flags=["-n", "--dry-run"],

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 class UninstallOptions(AlwaysTruthy):
     """Configuration options controlling package uninstallation behavior."""
     force: bool = False
+    adhoc: bool = False
     dry_run: bool = False
     detach: bool = False
     no_deps: bool = False

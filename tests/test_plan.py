@@ -73,7 +73,14 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def _setup_package(self, pkg_name: str, files: dict, deps: Optional[list] = None, install_method: str = "copy") -> Path:
+    def _setup_package(
+        self,
+        pkg_name: str,
+        files: dict,
+        deps: Optional[list] = None,
+        install_method: str = "copy",
+        enabled: bool = True,
+    ) -> Path:
         """Helper to create a source package with drift_package.toml and content files."""
         pkg_dir = self.src_dir / pkg_name
         pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -96,6 +103,10 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
             fpath = pkg_dir / rel_path
             fpath.parent.mkdir(parents=True, exist_ok=True)
             fpath.write_text(content, encoding="utf-8")
+
+        if enabled:
+            with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
+                main(["-C", self.drift_root.as_posix(), "enable", pkg_name])
 
         return pkg_dir
 
@@ -170,7 +181,9 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         """, encoding="utf-8")
         (pkg_dir / "app.envst.conf").write_text("env=${APP_ENV}\n", encoding="utf-8")
 
-        # 3. Clean full deploy (Cold mutation pass)
+        # 3. Enable and clean full deploy (Cold mutation pass)
+        with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
+            main(["-C", self.drift_root.as_posix(), "enable", pkg_name])
         self._deploy_package_clean(pkg_name)
 
         # 4. Plan on deployed package (Warm idempotent pass)
@@ -510,6 +523,8 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         """, encoding="utf-8")
         (pkg_fail_dir / "fail.json").write_text("{}", encoding="utf-8")
         (pkg_fail_dir / "broken.txt.fail").write_text("broken", encoding="utf-8")
+        with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
+            main(["-C", self.drift_root.as_posix(), "enable", "pkg_fail"])
 
         # 2. pkg_dep depends on pkg_fail
         self._setup_package("pkg_dep", {"child.txt": "child\n"}, deps=["pkg_fail"])
@@ -567,6 +582,8 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         hook_script = hooks_dir / "pre_source.sh"
         hook_script.write_text(f"""#!/bin/sh\necho "hook_ran" > "{marker_file.as_posix()}"\n""", encoding="utf-8")
         hook_script.chmod(0o755)
+        with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
+            main(["-C", self.drift_root.as_posix(), "enable", pkg_name])
 
         workspace_config = load_workspace_config(self.drift_root)
 
@@ -863,6 +880,8 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
             (["--no-cache"], "no_cache", True),
             (["-f"], "force", True),
             (["--force"], "force", True),
+            (["--adhoc"], "adhoc", True),
+            (["--ad-hoc"], "adhoc", True),
             (["--no-deps"], "no_deps", True),
             (["--with-hooks"], "with_hooks", True),
             (["--no-hooks"], "no_hooks", True),
@@ -1010,6 +1029,66 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
             self.assertEqual(cm.exception.code, ExitCode.GENERAL_ERROR)
         cli_out = stdout.getvalue()
         self.assertIn("Real deploy pipeline will fail", cli_out)
+
+    def test_plan_disabled_package_blocked_by_default_and_allowed_by_adhoc_or_force(self) -> None:
+        """Verifies planning a disabled package is blocked by default and allowed when --adhoc or --force is passed."""
+        from drift.core.exceptions import PackageDisabledError, SafeguardError
+
+        self._setup_package("pkg_disabled_plan", {"conf.txt": "val=1\n"}, enabled=False)
+
+        workspace_config = load_workspace_config(self.drift_root)
+        self.assertFalse(workspace_config.is_package_enabled("pkg_disabled_plan"))
+
+        # 1. Default preview_deploy on disabled package -> FAILED with PackageDisabledError (SafeguardError) in global_errors
+        preview_blocked = preview_deploy(workspace_config, ["pkg_disabled_plan"])
+        self.assertEqual(preview_blocked.status, "FAILED")
+        self.assertEqual(len(preview_blocked.global_errors), 1)
+        self.assertIsInstance(preview_blocked.global_errors[0], PackageDisabledError)
+        self.assertIsInstance(preview_blocked.global_errors[0], SafeguardError)
+        self.assertEqual(preview_blocked.global_errors[0].packages, ["pkg_disabled_plan"])
+        self.assertIn("Cannot plan disabled package(s): pkg_disabled_plan", str(preview_blocked.global_errors[0]))
+        self.assertIn("--adhoc", str(preview_blocked.global_errors[0]))
+
+        # 2. preview_deploy with adhoc=True -> SUCCESS
+        preview_adhoc = preview_deploy(
+            workspace_config,
+            ["pkg_disabled_plan"],
+            options=DeployOptions(adhoc=True),
+        )
+        self.assertEqual(preview_adhoc.status, "SUCCESS")
+        self.assertIn("pkg_disabled_plan", preview_adhoc.package_previews)
+
+        # 3. preview_deploy with force=True -> SUCCESS
+        preview_force = preview_deploy(
+            workspace_config,
+            ["pkg_disabled_plan"],
+            options=DeployOptions(force=True),
+        )
+        self.assertEqual(preview_force.status, "SUCCESS")
+        self.assertIn("pkg_disabled_plan", preview_force.package_previews)
+
+        # 4. Dual CLI Backend verification (plan and deploy -n)
+        for runner in (main, run_argparse_cli):
+            with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    runner(["-C", self.drift_root.as_posix(), "plan", "pkg_disabled_plan"])
+                self.assertEqual(cm.exception.code, ExitCode.GENERAL_ERROR)
+
+            with patch("sys.stdout", io.StringIO()), patch("sys.stderr", io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    runner(["-C", self.drift_root.as_posix(), "deploy", "-n", "pkg_disabled_plan"])
+                self.assertEqual(cm.exception.code, ExitCode.GENERAL_ERROR)
+
+            for flag in ("--adhoc", "--ad-hoc", "--force"):
+                stdout = io.StringIO()
+                with patch("sys.stdout", stdout), patch("sys.stderr", io.StringIO()):
+                    runner(["-C", self.drift_root.as_posix(), "plan", flag, "pkg_disabled_plan"])
+                self.assertIn("pkg_disabled_plan", stdout.getvalue())
+
+                stdout_dep = io.StringIO()
+                with patch("sys.stdout", stdout_dep), patch("sys.stderr", io.StringIO()):
+                    runner(["-C", self.drift_root.as_posix(), "deploy", "-n", flag, "pkg_disabled_plan"])
+                self.assertIn("pkg_disabled_plan", stdout_dep.getvalue())
 
 
 if __name__ == "__main__":

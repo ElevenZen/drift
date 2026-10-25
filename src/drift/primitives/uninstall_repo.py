@@ -73,6 +73,7 @@ from ..core.constants import (
     BackupSubfolder,
     InstallMethod,
 )
+from ..core.exceptions import PackageEnabledError
 from ..core.file_action import (
     FileActionExecutionContext,
     FileActionType,
@@ -442,14 +443,18 @@ def prepare_uninstall_packages(
 
     # 2. Filter target packages and validate safeguards
     packages_to_uninstall, rejected_pkgs = filter_uninstallable_packages(
-        workspace_config, state_registry, package_names, force=opts.force
+        workspace_config, state_registry, package_names, force=(opts.force or opts.adhoc)
     )
 
     if rejected_pkgs:
         for pkg in rejected_pkgs:
             logger.error(f"🛡️  [SAFEGUARD] Package '{pkg}' is still active/enabled in workspace configuration.")
-        logger.error("   To safely uninstall, first disable it in drift_workspace.toml or use --force.")
-        raise RuntimeError(f"Safeguard abort: Package(s) {', '.join(rejected_pkgs)} are active.")
+        logger.error("   To safely uninstall, run 'drift disable <pkg>' first, or pass --adhoc (or --force).")
+        raise PackageEnabledError(
+            f"Safeguard abort: Package(s) {', '.join(rejected_pkgs)} are active. "
+            f"Run 'drift disable {' '.join(rejected_pkgs)}' or pass --adhoc / --force.",
+            packages=rejected_pkgs,
+        )
 
     if not packages_to_uninstall:
         return UninstallPlan(

@@ -17,11 +17,11 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`disable`** | `<packages...>` | `--local`, `-n` | Disable packages in `[packages.enable]` (does not uninstall) |
 | **`status`** | `[packages...]` | `--json` | Audit template evolution and active host drift |
 | **`diff`** | `[packages...]` | `-t`, `-s`, `--stat`, `-y` | Visualize diffs across `src/`, `render/`, `install/` |
-| **`deploy`** | `[packages...]` | `-f`, `-r`, `-c`, `-n`, `--rollback` | Sentinel-guarded render, stage, apply, and GC |
-| **`plan`** | `[packages...]` | `-a`, `-f`, `-r`, `-c`, `--with-hooks` | Full-cycle dry-run deployment preview in sandbox |
+| **`deploy`** | `[packages...]` | `-f`, `--adhoc`, `--gc`, `-r`, `-c`, `-n`, `--rollback` | Sentinel-guarded render, stage, and apply (`--gc` to purge orphans) |
+| **`plan`** | `[packages...]` | `-a`, `-f`, `--adhoc`, `-r`, `-c`, `--with-hooks` | Full-cycle dry-run deployment preview in sandbox |
 | **`rollback`** | `[packages...]` | `-f`, `--no-hooks` | Rollback failed deployments to last clean state |
 | **`adopt`** | `[packages...]` | `-i`, `--accept-conflicts`, `-f`, `-n` | Patch live host drifts back into `src/` templates |
-| **`uninstall`** | `<packages...>` | `-f`, `--detach`, `-n`, `--no-deps` | Uninstall packages or detach symlinks as copies |
+| **`uninstall`** | `<packages...>` | `-f`, `--adhoc`, `--detach`, `-n`, `--no-deps` | Uninstall packages or detach symlinks as copies |
 | **`gc`** | — | `-n`, `--no-hooks` | Purge orphan packages, zombie dirs, and stale WALs |
 | **`repair`** | — | `-n`, `--json` | Self-heal missing workspace folders and Git DBs |
 | **`clone`** | `<git_url> [dest]` | `-b`, `--depth`, `--no-repair` | Clone a Git repo and auto-repair the workspace |
@@ -144,12 +144,14 @@ Provides deep comparisons between configuration layers:
 
 ---
 
-### F. Safe Deployment: `drift deploy [packages...] [--force] [-r|--reinstall] [-c] [-n|--dry-run] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]`
+### F. Safe Deployment: `drift deploy [packages...] [--force] [--adhoc] [--gc] [-r|--reinstall] [-c] [-n|--dry-run] [--rollback <policy>] [--no-deps] [--no-hooks] [--json]`
 Deploys configurations using an atomic two-stage compilation and application engine.
 
 *   **Command Options**:
-    - `packages...`: Optional package name(s) to deploy. If omitted, performs a global deployment of all active packages.
-    - `--force / -f`: Bypasses the Stage 1 Sentinel Drift audit (overriding uncommitted host system changes), ignores midway failed states (`staging`/`installing` in `install/state.toml`), bypasses uncommitted modifications safeguards in `install/`, and automatically ignores missing required package dependencies. *(Note: Does **not** bypass `enable_install = false`).*
+    - `packages...`: Optional package name(s) to deploy. If omitted, performs a global deployment of all active (enabled) packages. Explicitly targeting a disabled package is blocked by default unless `--adhoc` or `--force` is passed.
+    - `--force / -f`: Bypasses all safety guards (includes `--adhoc` and `--no-deps`, plus Stage 1 Sentinel host drift audit, midway transaction locks in `install/state.toml`, and dirty `install/` checks). *(Note: Does **not** bypass `enable_install = false`).*
+    - `--adhoc / --ad-hoc`: Allows deploying packages that are currently disabled in `config/drift_workspace.toml` without permanently enabling them (while preserving Sentinel host drift and missing dependency safeguards).
+    - `--gc`: Runs workspace garbage collection (`drift gc`) after deployment to uninstall disabled/orphaned packages and prune zombie folders. Without `--gc`, disabled packages that were previously installed remain untouched on the host and trigger a non-destructive hint at the end of deployment.
     - `-r / --reinstall`: Force full reinstallation of all packages, bypassing stage change skipping. By default, Drift analyzes staging changes (`installed_files`, hook scripts, and `drift_package.toml`) and skips deploying packages whose stage outputs are unchanged. Passing `-r` or `--reinstall` forces all lifecycle hooks and physical file applications to execute regardless of stage changes.
     - `-c / --clean / --no-cache`: Bypasses the render cache and lockfile, forcing clean re-rendering of all templates and static assets during the compilation phase.
     - `-n / --dry-run`: Transparent alias to `drift plan`. Simulates the entire deployment lifecycle without modifying filesystem or Git state.
@@ -162,7 +164,7 @@ Deploys configurations using an atomic two-stage compilation and application eng
     - `--json`: Outputs a `DeployResult` in structured JSON format.
 
 #### Stage 0: Pre-flight Checks
-Verifies Git committability on `render/` and `install/`, discovers target packages, asserts that no targeted package is in an uncommitted midway transaction state (`assert_no_midway_deploy_state`), and purges any stale `backup/<pkg>/wal/` folders for targeted packages that are not in a rollback-eligible state (`purge_redundant_wal_folders`).
+Verifies that any explicitly requested `packages...` are enabled in `[packages.enable]` (unless `--adhoc` or `--force` is passed), verifies Git committability on `render/` and `install/`, discovers target packages, asserts that no targeted package is in an uncommitted midway transaction state (`assert_no_midway_deploy_state`), and purges any stale `backup/<pkg>/wal/` folders for targeted packages that are not in a rollback-eligible state (`purge_redundant_wal_folders`).
 
 #### Stage 1: Template Compilation & Sentinel Drift Audit
 1.  **Render**: Compiles `src/` templates into `render/` (`Primitive 2`).
@@ -180,15 +182,18 @@ Verifies Git committability on `render/` and `install/`, discovers target packag
 4.  **Physical Deployment (`Step 4b`)**: Clears any stale WAL (`clear_package_wal`), delivers files via atomic symlink/copy while recording reversible operations in `backup/<pkg>/wal/actions.json` (`execute_install`), and triggers automatic whole-batch rollback via `Primitive 8` if a fatal failure occurs under an active auto-rollback policy.
 5.  **Commit Install (`Step 5`)**: Scope-commits deployed configurations in `install/` (`Primitive 6`).
 
-#### Stage 3: Post-deploy Garbage Collection
-When deploying globally without specific package names, Drift automatically executes `drift gc` (`Primitive 9`).
+#### Stage 3: Optional Post-Deploy Garbage Collection (`--gc`) & Summary Output
+*   **With `--gc`**: Executes `drift gc` (`Primitive 9`) to uninstall any disabled/orphaned packages and prune zombie folders, and reports both installed and uninstalled packages in the final summary line:
+    `✨ Deployment completed (installed: shell, git; uninstalled (gc): vim).`
+*   **Without `--gc` (Default)**: Preserves any previously installed packages even if they are currently disabled in `[packages.enable]`. Reports installed packages (`✨ Deployment completed (installed: shell).`) and, if any installed packages are currently disabled in workspace config, emits a non-destructive hint:
+    `💡 Hint: Installed package(s) [vim] are currently disabled in workspace config. Run 'drift deploy --gc', 'drift gc', or 'drift uninstall vim' to remove them.`
 
 ---
 
 ### G. Full-Cycle Deployment Planning: `drift plan [packages...] [options] [--json]`
 Simulates the entire multi-stage deployment pipeline end-to-end in an ephemeral sandbox without mutating the host filesystem, intermediate databases, or Git repositories.
 
-*   **Command Signature**: `drift plan [packages...] [-a / --all] [-f / --force] [-r / --reinstall] [-c / --clean] [--with-hooks] [--no-hooks] [--no-deps] [--json]`
+*   **Command Signature**: `drift plan [packages...] [-a / --all] [-f / --force] [--adhoc] [-r / --reinstall] [-c / --clean] [--with-hooks] [--no-hooks] [--no-deps] [--json]`
 *   **Transparent Deploy Alias**: Running `drift deploy -n` or `drift deploy --dry-run` transparently routes to `drift plan`.
 *   **Architectural Specification**: For mathematical modeling, path masking algebra, and fault isolation proofs, consult [`docs/features/plan_engine.md`](features/plan_engine.md).
 
@@ -203,9 +208,10 @@ Simulates the entire multi-stage deployment pipeline end-to-end in an ephemeral 
     Discovers candidate files, checks destination directory writability, and runs batch pre-flight guards against intra-batch and cross-package destination collisions. Uses **Symlink Path Masking** (`source_dir_mask`) to evaluate existing host symlinks accurately against canonical `install/` destinations, preventing false conflict reports.
 
 #### Command Options & Flags
-*   `packages...`: Optional package name(s) to plan. If omitted, plans all active packages across the workspace.
+*   `packages...`: Optional package name(s) to plan. If omitted, plans all active packages across the workspace. Explicitly targeting a disabled package is blocked by default unless `--adhoc` or `--force` is passed.
 *   `-a / --all / --show-all`: Displays complete action details for all packages, including unchanged ones (which are collapsed into a single summary line by default).
-*   `-f / --force`: Simulates deployment with forced drift bypass. Prevents host drift from halting the preview with exit code `3`.
+*   `-f / --force`: Bypasses all safety guards during simulation (includes `--adhoc` and `--no-deps`, plus host drift sentinel and midway transaction locks). Prevents host drift from halting the preview with exit code `3`.
+*   `--adhoc / --ad-hoc`: Allows planning packages that are currently disabled in `config/drift_workspace.toml` without enabling them.
 *   `-r / --reinstall`: Simulates full reinstallation of all packages, bypassing staging delta skipping and previewing all file deliveries.
 *   `-c / --clean / --no-cache`: Bypasses render cache and lockfile, forcing clean re-rendering simulation.
 *   `--with-hooks`: Authorizes execution of pre-flight lifecycle hooks (`probe` and `pre_source`) in isolated scratch sandboxes to resolve dynamic requirements and generated templates for high-accuracy planning.
@@ -297,10 +303,11 @@ Incorporate runtime system and GUI changes back into your declarative source tem
 
 ---
 
-### J. Uninstallation & Detachment: `drift uninstall <packages...> [--force] [--detach] [-n] [--no-deps] [--no-hooks] [--json]`
+### J. Uninstallation & Detachment: `drift uninstall <packages...> [--force] [--adhoc] [--detach] [-n] [--no-deps] [--no-hooks] [--json]`
 *   **Command Options**:
     - `<packages...>`: Package name(s) to uninstall.
-    - `--force / -f`: Bypasses the active package safeguard (allowing uninstallation of packages that are still active/enabled in `config/drift_workspace.toml`) and bypasses remaining package broken dependency guards.
+    - `--force / -f`: Bypasses all safety guards (includes `--adhoc` and `--no-deps`: allows uninstalling enabled packages and ignores broken reverse dependencies on remaining installed packages).
+    - `--adhoc / --ad-hoc`: Allows uninstalling packages that are still enabled in `config/drift_workspace.toml` without disabling them first (while still enforcing reverse-dependency safeguards on remaining installed packages).
     - `--detach`: Decouples package management while keeping physical configuration files intact on the host system.
     - `-n / --dry-run`: Simulates uninstallation without deleting files from disk.
     - `--no-deps`: Bypasses the reverse dependency safeguard that verifies remaining installed packages will not have missing prerequisite dependencies.
@@ -420,18 +427,19 @@ Drift enforces a clear architectural distinction between **runtime safety safegu
 | Command | Primitive | Overrides with `--force` | Invariants Respected |
 | :--- | :--- | :--- | :--- |
 | **`drift new <pkg>`** | Primitive 10 | Existing `drift_package.toml` in `src/<pkg>/` | Package naming rules |
-| **`drift deploy`** | P4, P5, Pipeline | Sentinel drift, midway locks, dirty `install/`, missing deps | `enable_install = false` |
-| **`drift stage`** | Primitive 4 | Midway locks, dirty `install/`, missing deps | `enable_install = false` |
-| **`drift apply`** | Primitive 5 | Midway locks, missing required deps | `enable_install = false` |
+| **`drift deploy`** | P4, P5, Pipeline | `--adhoc`, `--no-deps`, Sentinel drift, midway locks, dirty `install/` | `enable_install = false` |
+| **`drift plan`** | Primitive 17 | `--adhoc`, `--no-deps`, Sentinel drift, midway locks | `enable_install = false` |
+| **`drift stage`** | Primitive 4 | `--no-deps`, midway locks, dirty `install/` | `enable_install = false` |
+| **`drift apply`** | Primitive 5 | `--no-deps`, midway locks | `enable_install = false` |
 | **`drift rollback`** | Primitive 8 | Eligibility check (resets clean `"installed"` to `HEAD`) | Tracked in `install/` |
 | **`drift adopt`** | Adopt Pipeline | Dirty Git working tree in `src/<pkg>/` | Valid patch application |
-| **`drift uninstall`** | Primitive 7 | Enabled-in-workspace & reverse-dependency guards | Installed status check |
+| **`drift uninstall`** | Primitive 7 | `--adhoc` (enabled pkg guard) & `--no-deps` (reverse deps) | Installed status check |
 | **`drift init`** | Workspace Init | Existing workspace templates and configs | Root path safety checks |
 
 * **Detailed `--force` Bypasses**:
-  * **`drift deploy --force`**: Commits a recoverable Drift Snapshot in `install/.git` to bypass Stage 1 Sentinel Drift audit, clears `"staging"`/`"installing"` mid-failure state locks in `state.toml`, ignores uncommitted modifications in `install/`, and bypasses missing required package dependencies.
-  * **`drift stage --force` / `drift apply --force`**: Bypasses `"staging"`/`"installing"` state locks in `state.toml`, uncommitted modifications in `install/` (during `stage`), and missing required package dependencies.
-  * **`drift uninstall --force`**: Allows uninstalling packages still marked enabled in `drift_workspace.toml` and bypasses the broken reverse-dependency check on remaining installed packages.
+  * **`drift deploy --force` / `drift plan --force`**: Includes `--adhoc` (allows deploying/planning disabled packages) and `--no-deps` (ignores missing required dependencies), commits a recoverable Drift Snapshot in `install/.git` to bypass Stage 1 Sentinel Drift audit (on `deploy`), clears `"staging"`/`"installing"` mid-failure state locks in `state.toml`, and ignores uncommitted modifications in `install/`.
+  * **`drift stage --force` / `drift apply --force`**: Includes `--no-deps`, and bypasses `"staging"`/`"installing"` state locks in `state.toml` and uncommitted modifications in `install/` (during `stage`).
+  * **`drift uninstall --force`**: Includes `--adhoc` (allows uninstalling packages still marked enabled in `drift_workspace.toml`) and `--no-deps` (bypasses the broken reverse-dependency check on remaining installed packages).
 
 ---
 

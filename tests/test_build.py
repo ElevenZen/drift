@@ -93,8 +93,19 @@ class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
             self.assertEqual(res_new.returncode, 0)
             self.assertTrue((workspace_dir / "src" / "test_pkg" / "drift_package.toml").exists())
 
-            # Add configuration file and deploy
+            # Add configuration file, enable package, and deploy
             (workspace_dir / "src" / "test_pkg" / "app.conf").write_text("setting = 42\n", encoding="utf-8")
+
+            res_enable = subprocess.run(
+                [sys.executable, zipapp_path.as_posix(), "enable", "test_pkg"],
+                cwd=workspace_dir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env
+            )
+            self.assertEqual(res_enable.returncode, 0)
 
             res_deploy = subprocess.run(
                 [sys.executable, zipapp_path.as_posix(), "deploy", "test_pkg"],

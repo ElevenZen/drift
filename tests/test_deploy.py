@@ -227,16 +227,22 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
     @patch("drift.primitives.deploy_repo.run_primitive_9_purge_workspace_garbage")
     def test_global_deploy_calls_gc(self, mock_gc) -> None:
-        """Verifies that global deploy (packages_to_deploy=()) calls GC at the end with resolved hook flags."""
+        """Verifies that global deploy skips GC by default and calls GC when DeployOptions(gc=True) is set."""
+        # 1. Default global deploy (gc=False) must NOT call GC
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=())
+        mock_gc.assert_not_called()
+
+        # 2. Global deploy with gc=True calls GC with resolved hook flags
+        opts_gc = DeployOptions(gc=True)
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=(), options=opts_gc)
         mock_gc.assert_called_once_with(
             self.workspace_config,
             dry_run=False,
-            flags=DeployOptions().get_hook_flags(settings=self.workspace_config.settings),
+            flags=opts_gc.get_hook_flags(settings=self.workspace_config.settings),
         )
 
         mock_gc.reset_mock()
-        opts_no_hooks = DeployOptions(no_hooks=True)
+        opts_no_hooks = DeployOptions(gc=True, no_hooks=True)
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=(), options=opts_no_hooks)
         mock_gc.assert_called_once_with(
             self.workspace_config,
@@ -380,6 +386,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("pkg_b initial content", encoding="utf-8")
+        self.workspace_config.packages_enable["pkg_b"] = True
 
         # Initial deploy of both packages
         res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
@@ -770,6 +777,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("content b", encoding="utf-8")
+        self.workspace_config.packages_enable["pkg_b"] = True
 
         pkg_a_dir = self.source_dir / "pkg_a"
         (pkg_a_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -830,6 +838,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("content b", encoding="utf-8")
+        self.workspace_config.packages_enable["pkg_b"] = True
 
         # Initial deployment
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
@@ -1111,6 +1120,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         dependencies = ["pkg_a"]
         """, encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("hello from pkg_b", encoding="utf-8")
+        self.workspace_config.packages_enable["pkg_b"] = True
 
         # 4. Targeted deploy of pkg_b only: Step 4a must resolve pkg_a from install_path_mask (canonical install/)
         res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_b"])
@@ -1132,6 +1142,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
         dependencies = ["pkg_a"]
         """, encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("v1 content b", encoding="utf-8")
+        self.workspace_config.packages_enable["pkg_b"] = True
 
         # 1. Initial clean deploy of both packages
         res0 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
@@ -1380,6 +1391,7 @@ target_directory = "{self.system_target_dir.as_posix()}"
             dependencies = {deps_str}
             """, encoding="utf-8")
             (d / f"{name}.txt").write_text(f"v1 {name}", encoding="utf-8")
+            self.workspace_config.packages_enable[name] = True
 
         # 1. Initial clean deploy of all 4 packages
         res0 = run_primitive_deploy_pipeline(
@@ -1443,6 +1455,275 @@ target_directory = "{self.system_target_dir.as_posix()}"
             (self.install_dir / "pkg_unrelated" / "pkg_unrelated.txt").read_text(encoding="utf-8"),
             "dirty unrelated",
         )
+
+    def test_deploy_disabled_package_blocked_by_default_and_allowed_by_adhoc_or_force(self) -> None:
+        """Two-Pass & Safeguard Matrix Test: Verifies disabled packages are blocked by default on targeted deploy,
+        allowed with --adhoc (while still enforcing Sentinel drift and dependency checks) and --force (bypasses all).
+        """
+        from drift.core.exceptions import (
+            ConfigError,
+            MissingDependencyError,
+            PackageDisabledError,
+            SafeguardError,
+        )
+
+        pkg_dis_dir = self.source_dir / "pkg_disabled"
+        pkg_dis_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dis_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_disabled"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+        """, encoding="utf-8")
+        (pkg_dis_dir / "disabled.txt").write_text("v1 disabled payload", encoding="utf-8")
+
+        # Explicitly disable pkg_disabled in workspace config
+        self.workspace_config.packages_enable["pkg_disabled"] = False
+
+        # 1. Default targeted deploy (adhoc=False, force=False) -> Blocked by PackageDisabledError (SafeguardError)
+        with self.assertRaises(PackageDisabledError) as cm:
+            execute_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_disabled"])
+        self.assertIsInstance(cm.exception, SafeguardError)
+        self.assertEqual(cm.exception.packages, ["pkg_disabled"])
+        self.assertIn("[SAFEGUARD] Cannot deploy disabled package(s): pkg_disabled", str(cm.exception))
+        self.assertIn("drift enable pkg_disabled", str(cm.exception))
+        self.assertIn("drift deploy --adhoc pkg_disabled", str(cm.exception))
+        self.assertFalse((self.install_dir / "pkg_disabled").exists())
+        self.assertFalse((self.system_target_dir / "disabled.txt").exists())
+
+        res_blocked = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_disabled"])
+        self.assertEqual(res_blocked.status, "FAILED")
+        assert res_blocked.failure is not None
+        self.assertEqual(res_blocked.failure.error_type, "PackageDisabledError")
+        self.assertEqual(res_blocked.failure.step_name, "disabled_package_check")
+        self.assertFalse(res_blocked.failure.requires_rollback)
+        self.assertEqual(res_blocked.failure.recommended_command, "drift deploy --adhoc pkg_disabled")
+
+        # 2. Pass 1 (Cold / Mutation Pass with adhoc=True): deploys disabled package without enabling in config
+        res_adhoc1 = run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_disabled"],
+            options=DeployOptions(adhoc=True),
+        )
+        self.assertEqual(res_adhoc1.status, "SUCCESS")
+        self.assertEqual([p.package for p in res_adhoc1.deployed_packages], ["pkg_disabled"])
+        self.assertEqual((self.system_target_dir / "disabled.txt").read_text(encoding="utf-8"), "v1 disabled payload")
+        self.assertEqual(load_state_registry(self.state_file).get_package_state("pkg_disabled"), "installed")
+        self.assertFalse(self.workspace_config.is_package_enabled("pkg_disabled"))
+
+        # 3. Pass 2 (Warm / Idempotent Pass with adhoc=True): zero changes, skips physical install
+        res_adhoc2 = run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_disabled"],
+            options=DeployOptions(adhoc=True),
+        )
+        self.assertEqual(res_adhoc2.status, "SUCCESS")
+        self.assertEqual(res_adhoc2.deployed_packages, [])
+
+        # 4. Isolation Check: adhoc=True does NOT bypass Sentinel host drift or missing dependencies
+        (self.system_target_dir / "disabled.txt").write_text("host drift on disabled pkg", encoding="utf-8")
+        with self.assertRaises(DriftDetectedError):
+            execute_deploy_pipeline(
+                self.workspace_config,
+                packages_to_deploy=["pkg_disabled"],
+                options=DeployOptions(adhoc=True),
+            )
+
+        # 5. force=True bypasses BOTH disabled-package safeguard AND Sentinel host drift
+        res_force = run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_disabled"],
+            options=DeployOptions(force=True),
+        )
+        self.assertEqual(res_force.status, "SUCCESS")
+        self.assertEqual((self.system_target_dir / "disabled.txt").read_text(encoding="utf-8"), "v1 disabled payload")
+
+        # 6. Dependency check isolation: adhoc=True still enforces missing dependency guard, force=True bypasses it
+        pkg_dep_dir = self.source_dir / "pkg_dis_dep"
+        pkg_dep_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dep_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_dis_dep"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+        dependencies = ["nonexistent_prereq"]
+        """, encoding="utf-8")
+        (pkg_dep_dir / "dep.txt").write_text("needs prereq", encoding="utf-8")
+        self.workspace_config.packages_enable["pkg_dis_dep"] = False
+
+        with patch("sys.stderr", StringIO()), self.assertRaises(RuntimeError) as cm_dep:
+            execute_deploy_pipeline(
+                self.workspace_config,
+                packages_to_deploy=["pkg_dis_dep"],
+                options=DeployOptions(adhoc=True),
+            )
+        cause = cm_dep.exception.__cause__
+        self.assertIsInstance(cause, MissingDependencyError)
+        self.assertIsInstance(cause, SafeguardError)
+        self.assertIsInstance(cause, ConfigError)
+        assert isinstance(cause, MissingDependencyError)
+        self.assertEqual(cause.packages, ["pkg_dis_dep"])
+        self.assertEqual(cause.missing_dependencies, {"pkg_dis_dep": ["nonexistent_prereq"]})
+
+        with patch("sys.stderr", StringIO()):
+            res_dep_fail = run_primitive_deploy_pipeline(
+                self.workspace_config,
+                packages_to_deploy=["pkg_dis_dep"],
+                options=DeployOptions(adhoc=True),
+            )
+        self.assertEqual(res_dep_fail.status, "FAILED")
+        assert res_dep_fail.failure is not None
+        self.assertEqual(res_dep_fail.failure.recommended_command, "drift deploy --no-deps pkg_dis_dep")
+
+        res_force_dep = run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_dis_dep"],
+            options=DeployOptions(force=True),
+        )
+        self.assertEqual(res_force_dep.status, "SUCCESS")
+
+    def test_global_deploy_preserves_disabled_installed_packages_and_gc_flag_uninstalls_them(self) -> None:
+        """Verifies default global deploy preserves disabled installed packages and emits a hint,
+        while DeployOptions(gc=True) uninstalls them and reports both installed and uninstalled packages.
+        """
+        from drift.core.constants import set_test_mode
+
+        pkg_b_dir = self.source_dir / "pkg_b"
+        pkg_b_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_b"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+        """, encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("pkg_b content", encoding="utf-8")
+        self.workspace_config.packages_enable["pkg_b"] = True
+
+        # 1. Deploy both pkg_a and pkg_b while enabled
+        res_init = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=())
+        self.assertEqual(res_init.status, "SUCCESS")
+        self.assertTrue((self.system_target_dir / "file.txt").is_file())
+        self.assertTrue((self.system_target_dir / "file_b.txt").is_file())
+
+        # 2. Disable pkg_b in workspace config (or simulate pkg_b having been deployed via --adhoc)
+        self.workspace_config.packages_enable["pkg_b"] = False
+        (self.pkg_dir / "file.txt").write_text("pkg_a v2", encoding="utf-8")
+
+        # 3. Default global deploy (gc=False): updates pkg_a, preserves pkg_b on host, and logs hint
+        set_test_mode(True, enable_logging=True)
+        try:
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()), \
+                 self.assertLogs("drift.primitives.deploy_repo", level="INFO") as cm:
+                res_no_gc = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=())
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        self.assertEqual(res_no_gc.status, "SUCCESS")
+        self.assertIsNone(res_no_gc.gc)
+        self.assertEqual(res_no_gc.disabled_installed_packages, ["pkg_b"])
+        self.assertTrue((self.system_target_dir / "file_b.txt").is_file())
+        self.assertEqual(load_state_registry(self.state_file).get_package_state("pkg_b"), "installed")
+        log_text = "\n".join(cm.output)
+        self.assertIn("✨ Deployment completed (installed: pkg_a).", log_text)
+        self.assertIn("💡 Hint: Installed package(s) [pkg_b] are currently disabled in workspace config.", log_text)
+        self.assertIn("drift deploy --gc", log_text)
+        self.assertIn("drift uninstall pkg_b", log_text)
+
+        # 4. Global deploy with gc=True: updates pkg_a and uninstalls disabled pkg_b
+        (self.pkg_dir / "file.txt").write_text("pkg_a v3", encoding="utf-8")
+        set_test_mode(True, enable_logging=True)
+        try:
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()), \
+                 self.assertLogs("drift.primitives.deploy_repo", level="INFO") as cm_gc:
+                res_gc = run_primitive_deploy_pipeline(
+                    self.workspace_config,
+                    packages_to_deploy=(),
+                    options=DeployOptions(gc=True),
+                )
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        self.assertEqual(res_gc.status, "SUCCESS")
+        self.assertIsNotNone(res_gc.gc)
+        assert res_gc.gc is not None
+        self.assertEqual(res_gc.gc.uninstalled_orphans, ["pkg_b"])
+        self.assertEqual(res_gc.disabled_installed_packages, [])
+        self.assertFalse((self.system_target_dir / "file_b.txt").exists())
+        self.assertIsNone(load_state_registry(self.state_file).get_package_state("pkg_b"))
+        gc_log_text = "\n".join(cm_gc.output)
+        self.assertIn("✨ Deployment completed (installed: pkg_a; uninstalled (gc): pkg_b).", gc_log_text)
+        self.assertNotIn("💡 Hint:", gc_log_text)
+
+    def test_global_deploy_when_all_packages_disabled_handles_hint_and_gc(self) -> None:
+        """Verifies global deploy when all packages are disabled still emits hint (without --gc) and runs GC (with --gc)."""
+        from drift.core.constants import set_test_mode
+
+        # 1. Deploy pkg_a initially
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertTrue((self.system_target_dir / "file.txt").is_file())
+
+        # 2. Disable all packages in workspace config
+        self.workspace_config.packages_enable["pkg_a"] = False
+        self.workspace_config.packages_enable_default = False
+
+        # 3. Global deploy without --gc: skips deployment, keeps pkg_a installed, and emits hint
+        res_skip = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=())
+        self.assertEqual(res_skip.status, "SUCCESS")
+        self.assertEqual(res_skip.target_packages, [])
+        self.assertEqual(res_skip.disabled_installed_packages, ["pkg_a"])
+        self.assertTrue((self.system_target_dir / "file.txt").is_file())
+
+        # 4. Global deploy with --gc: runs GC even though target_pkgs is empty, uninstalling pkg_a
+        set_test_mode(True, enable_logging=True)
+        try:
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()), \
+                 self.assertLogs("drift.primitives.deploy_repo", level="INFO") as cm_gc:
+                res_gc = run_primitive_deploy_pipeline(
+                    self.workspace_config,
+                    packages_to_deploy=(),
+                    options=DeployOptions(gc=True),
+                )
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        self.assertEqual(res_gc.status, "SUCCESS")
+        assert res_gc.gc is not None
+        self.assertEqual(res_gc.gc.uninstalled_orphans, ["pkg_a"])
+        self.assertFalse((self.system_target_dir / "file.txt").exists())
+        self.assertIn("✨ Deployment completed (uninstalled (gc): pkg_a).", "\n".join(cm_gc.output))
+
+    def test_format_deploy_summary_and_hint_unit(self) -> None:
+        """Unit test for format_deploy_summary and format_disabled_installed_packages_hint helpers."""
+        from drift.primitives.deploy_repo import format_deploy_summary, format_disabled_installed_packages_hint
+        from drift.models import PackageInstallPlan, PackageInstallResult, GcResult
+
+        pkg_res = PackageInstallResult(plan=PackageInstallPlan(package="shell"), status="SUCCESS")
+        gc_empty = GcResult(uninstalled_orphans=[])
+        gc_with_orphan = GcResult(uninstalled_orphans=["vim"])
+
+        self.assertEqual(
+            format_deploy_summary([], None),
+            "✨ Deployment completed: all packages are already up-to-date (no changes detected).",
+        )
+        self.assertEqual(
+            format_deploy_summary([pkg_res], gc_empty),
+            "✨ Deployment completed (installed: shell).",
+        )
+        self.assertEqual(
+            format_deploy_summary([], gc_with_orphan),
+            "✨ Deployment completed (uninstalled (gc): vim).",
+        )
+        self.assertEqual(
+            format_deploy_summary([pkg_res], gc_with_orphan),
+            "✨ Deployment completed (installed: shell; uninstalled (gc): vim).",
+        )
+
+        self.assertIsNone(format_disabled_installed_packages_hint([]))
+        hint = format_disabled_installed_packages_hint(["vim", "tmux"])
+        assert hint is not None
+        self.assertIn("[vim, tmux]", hint)
+        self.assertIn("drift deploy --gc", hint)
+        self.assertIn("drift uninstall vim tmux", hint)
 
 
 if __name__ == "__main__":

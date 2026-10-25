@@ -468,6 +468,7 @@ def execute_uninstall(
     drift_root: Path,
     package_names: Sequence[str] = (),
     force: bool = False,
+    adhoc: bool = False,
     dry_run: bool = False,
     detach: bool = False,
     json_mode: bool = False,
@@ -485,6 +486,7 @@ def execute_uninstall(
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
     options = UninstallOptions(
         force=force,
+        adhoc=adhoc,
         dry_run=dry_run,
         detach=detach,
         flags=flags,
@@ -686,6 +688,8 @@ def execute_deploy(
     drift_root: Path,
     package_names: Sequence[str] = (),
     force: bool = False,
+    adhoc: bool = False,
+    gc: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False,
     reinstall: bool = False,
@@ -703,6 +707,8 @@ def execute_deploy(
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode, no_cache=no_cache)
     options = DeployOptions(
         force=force,
+        adhoc=adhoc,
+        gc=gc,
         reinstall=reinstall,
         no_deps=no_deps,
         no_hooks=no_hooks,

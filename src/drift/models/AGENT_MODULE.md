@@ -42,7 +42,7 @@
 * `PackageInstallResult`, `InstallResult`, `InstallCommitResult`: Execution result containers.
 
 ### [`uninstall_models.py`](uninstall_models.py) — Primitive 7 (`drift uninstall`) Models
-* `UninstallOptions(force=False, dry_run=False, detach=False, no_deps=False, flags=None)`: Controls package uninstallation or symlink detachment.
+* `UninstallOptions(force=False, adhoc=False, dry_run=False, detach=False, no_deps=False, flags=None)`: Controls package uninstallation or symlink detachment (`adhoc` allows uninstalling enabled packages without bypassing reverse-dependency guards).
 * `PackageUninstallContext`: Self-contained uninstallation context built from `StateRegistry` (retaining `sudo`, `target_dir`, `install_method`, `deployed_files` even if `install/<pkg>/` is missing) with `.file_action_context` and `.package_envs()`.
 * `PackageUninstallPlan`, `UninstallPlan`, `RestoredBackup`, `PackageUninstallResult`, `UninstallResult`.
 
@@ -55,8 +55,8 @@
 * `PackageAdoptResult` & `AdoptResult`: Tracks `adopted_*`, `conflicted_files`, `skipped_files`, and `.format_text(dry_run=False, verbose=False)`.
 
 ### [`deploy_models.py`](deploy_models.py) — `drift deploy`, `drift rollback` & `drift plan` Models
-* `DeployOptions(force=False, dry_run=False, reinstall=False, clean=False, flags=None, no_deps=False, rollback=RollbackPolicy.AUTO)`.
-* `CompletedStep`, `DeployFailure(step_index, step_name, package, error_message, error_type, requires_rollback, next_action_type, ..., exit_code=ExitCode.GENERAL_ERROR)`, `DeployResult`. `DeployFailure.exit_code` carries the failing exception's `DriftError.exit_code` (e.g. `3` for `DriftDetectedError`) so CLI text and `--json` modes exit consistently.
+* `DeployOptions(force=False, adhoc=False, gc=False, dry_run=False, reinstall=False, clean=False, flags=None, no_deps=False, rollback=RollbackPolicy.AUTO)`.
+* `CompletedStep`, `DeployFailure(step_index, step_name, package, error_message, error_type, requires_rollback, next_action_type, ..., exit_code=ExitCode.GENERAL_ERROR)`, `DeployResult(..., disabled_installed_packages)`. `DeployFailure.exit_code` carries the failing exception's `DriftError.exit_code` (e.g. `3` for `DriftDetectedError`) so CLI text and `--json` modes exit consistently.
 * `RollbackResult(rolled_back_packages, skipped_packages, status, message)`: Result model for Primitive 8 (`drift rollback`).
 * `PackageDeployPreview` & `WorkspaceDeployPreview`: Full-cycle dry-run simulation models for Primitive 17 (`drift plan`) with `.format_text(show_all=False, verbose=False)`.
 

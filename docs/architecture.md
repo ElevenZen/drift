@@ -55,11 +55,11 @@ Drift separates configuration management into four physical tiers backed by `bac
 ### Workflow 1: Declarative Template Loop (`src/` $\rightarrow$ `render/` $\rightarrow$ `install/` $\rightarrow$ Host)
 1. Edit source templates in `src/<pkg>/` or environment variables in `config/`.
 2. Inspect template compilation changes via `drift diff --template` (**Diff A**: `src/` vs `render/`) or preview the full end-to-end deployment plan in an ephemeral sandbox via `drift plan`.
-3. Run `drift deploy`, which executes the 4-stage deployment pipeline:
-   * **Stage 0 (Pre-Flight & WAL Hygiene)**: Verifies Git committability on `render/` and `install/`, asserts no package is stuck in `"staging"` / `"installing"`, and purges stale `backup/<pkg>/wal/` folders for non-rollback-eligible packages ([`purge_redundant_wal_folders`](../src/drift/primitives/workspace_gc.py)).
+3. Run `drift deploy`, which executes the deployment pipeline:
+   * **Stage 0 (Pre-Flight & WAL Hygiene)**: Verifies that any explicitly requested packages are enabled in `[packages.enable]` (unless `--adhoc` or `--force` is passed), verifies Git committability on `render/` and `install/`, asserts no package is stuck in `"staging"` / `"installing"`, and purges stale `backup/<pkg>/wal/` folders for non-rollback-eligible packages ([`purge_redundant_wal_folders`](../src/drift/primitives/workspace_gc.py)).
    * **Stage 1 (Render, Reverse-Sync & Sentinel Drift Audit)**: Compiles `src/` $\rightarrow$ `render/` (**P2**), commits `render/` (**P3**), runs `reverse-sync` (**P1**: Host $\rightarrow$ `install/`), and auto-commits converged drifts ([`resolve_and_commit_converged_drifts`](../src/drift/primitives/adopt_repo.py)). If divergent host modifications remain in `install/`, deployment **halts immediately** with `DriftDetectedError` (Exit Code `3`).
    * **Stage 2 (Stage, Apply & Commit)**: Pre-validates both staging (`prepare_stage_packages`) and installation (`prepare_install` with `install_path_mask`) before mutating `install/`, then stages `render/` $\rightarrow$ `install/` (**P4**), deploys `install/` $\rightarrow$ Host (**P5**) with WAL recording and whole-batch auto-rollback on fatal failure, and commits `install/` (**P6**).
-   * **Stage 3 (Post-Deploy Garbage Collection)**: On global `drift deploy`, invokes **Primitive 9 (`drift gc`)** to uninstall newly disabled orphan packages and clean up zombie folders and redundant WAL directories.
+   * **Stage 3 (Optional Post-Deploy Garbage Collection via `--gc`)**: When `--gc` is passed, invokes **Primitive 9 (`drift gc`)** to uninstall disabled/orphan packages and clean up zombie folders and redundant WAL directories. Without `--gc`, disabled installed packages are preserved on the host and reported via a non-destructive hint.
 
 ### Workflow 2: Host Drift Audit & Adoption Loop (Host $\rightarrow$ `install/` $\rightarrow$ `src/`)
 1. When an application or user modifies a deployed file on the host, Stage 1 `reverse-sync` copies the change into `install/<pkg>/`, tripping the Sentinel guard.
@@ -127,7 +127,9 @@ Drift separates configuration management into four physical tiers backed by `bac
 | **`4`** | `ExitCode.RENDER_ERROR` | `RenderError`, `RenderCollisionError` | Template compilation failure or output path collision |
 | **`5`** | `ExitCode.COLLISION_ERROR` | `InstallCollisionError`, `CrossPackageCollisionError` | Target inside `drift_root` or cross-package conflict |
 
-* **`ExitCode.GENERAL_ERROR` (`1`) Subclasses**: Includes `HookMissingError`, `HookExecutionError`, `MidwayTransactionError`, `PackageInstallDirMissingError`, `TargetPermissionError`, and `AdminPrivilegeError`.
+* **`SafeguardError` Subclasses (Bypassable via `--force`, `--adhoc`, or `--no-deps`)**: `DriftDetectedError` (`ExitCode.DRIFT_DETECTED = 3`), `MissingDependencyError` (`ExitCode.CONFIG_ERROR = 2`), `MidwayTransactionError` (`1`), `DirtySourceFileError` (`1`), `PackageDisabledError` (`1`), and `PackageEnabledError` (`1`).
+* **Other `ExitCode.GENERAL_ERROR` (`1`) Subclasses**: `HookMissingError`, `HookExecutionError`, `MidwayCrashError`, `PackageInstallDirMissingError`, `TargetPermissionError`, and `AdminPrivilegeError`.
+* **Other `ExitCode.CONFIG_ERROR` (`2`) Subclasses**: `CyclicDependencyError` and `WorkspaceNotFoundError`.
 
 ---
 

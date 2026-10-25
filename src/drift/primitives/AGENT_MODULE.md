@@ -24,7 +24,8 @@
 ## 3. Module & Public API Catalog
 
 ### [`package_assertions.py`](package_assertions.py) — Pre-Flight Guards & Topological Dependency Sorters
-* **Read-Only Assertion Guards (`assert_*`)**:
+* **Read-Only Assertion Guards (`assert_*` / `check_*`)**:
+  * `check_disabled_target_packages(workspace_config, target_packages) -> List[str]` & `assert_target_packages_enabled(workspace_config, target_packages, adhoc=False, force=False, command_name="deploy") -> None`: Blocks explicit deployment/planning of disabled packages unless `adhoc=True` or `force=True` (`PackageDisabledError`).
   * `assert_packages_hooks_exist(pkg_metadata_map, stage=PackageStage.INSTALL) -> None`
   * `assert_install_pkg_dirs_clean(install_base, target_pkgs, force=False) -> None`
   * `assert_packages_not_in_midway_state(state_registry, target_pkgs, force=False, action_name="proceed") -> None`
@@ -32,9 +33,9 @@
   * `assert_packages_target_dirs_valid(pkg_metadata_map, drift_root) -> None`
   * `assert_packages_target_dirs_writable(pkg_metadata_map) -> None`
   * `assert_no_cross_package_conflicts(pkg_metadata_map, state_registry, install_base, source_base_override=None) -> None`: Raises `CrossPackageCollisionError` on intra-batch or inter-package destination collisions (excluding empty directories).
-  * `assert_required_package_dependencies_exist(pkg_dependencies_map, universe_names=None) -> None`
-  * `assert_no_cyclic_package_dependencies(pkg_dependencies_map) -> None`
-  * `assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata) -> None`
+  * `assert_required_package_dependencies_exist(pkg_dependencies_map, universe_names=None) -> None`: Raises `MissingDependencyError` when required dependencies are absent from the installable universe.
+  * `assert_no_cyclic_package_dependencies(pkg_dependencies_map) -> None`: Raises `CyclicDependencyError` on circular dependency graphs.
+  * `assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata) -> None`: Raises `MissingDependencyError` when remaining installed packages depend on a package being uninstalled.
 * **Topological Sorters (`resolve_*`)**:
   * `resolve_package_install_order(pkg_dependencies_map) -> List[str]` (prerequisites first)
   * `resolve_package_uninstall_order(pkg_dependencies_map) -> List[str]` (dependents first)
@@ -79,8 +80,8 @@
 * `prepare_adopt(workspace_config, package_names=(), options=None) -> AdoptPlan`, `plan_package_adopt(...) -> PackageAdoptPlan`, `execute_package_adopt(...) -> PackageAdoptResult`, `execute_adopt(workspace_config, plan: AdoptPlan) -> AdoptResult`, `run_primitive_adopt_drifts(workspace_config, package_names=(), options=None) -> AdoptResult`.
 
 ### [`deploy_repo.py`](deploy_repo.py) & [`plan_repo.py`](plan_repo.py) — Full-Cycle Deploy & Dry-Run Sandbox (Primitive 17)
-* `execute_deploy_pipeline(workspace_config, target_pkgs=(), options=None) -> DeployResult` & `run_primitive_deploy_pipeline(...)`: Executes the 4-stage deployment pipeline (Stage 0 WAL hygiene & midway check $\rightarrow$ Stage 1 Render + Reverse-Sync + Converged Drift Resolution + Sentinel Check $\rightarrow$ Stage 2 Pre-Stage Planning Guard + Stage + Apply + Commit $\rightarrow$ Stage 3 Global GC).
-* `preview_deploy(workspace_config, target_pkgs=(), options=None) -> WorkspaceDeployPreview` & `run_primitive_plan(...)`: Simulates full-cycle deployment inside `enter_plan_sandbox` without mutating workspace or host state.
+* `execute_deploy_pipeline(workspace_config, target_pkgs=(), options=None) -> DeployResult` & `run_primitive_deploy_pipeline(...)`: Executes the deployment pipeline (Disabled-package safeguard via `assert_target_packages_enabled` $\rightarrow$ Stage 0 WAL hygiene & midway check $\rightarrow$ Stage 1 Render + Reverse-Sync + Converged Drift Resolution + Sentinel Check $\rightarrow$ Stage 2 Pre-Stage Planning Guard + Stage + Apply + Commit $\rightarrow$ Optional Stage 3 Global GC when `opts.gc` is `True`, or disabled-installed package hint via `check_disabled_installed_packages` & `format_disabled_installed_packages_hint`, plus `format_deploy_summary`).
+* `preview_deploy(workspace_config, target_pkgs=(), options=None) -> WorkspaceDeployPreview` & `run_primitive_plan(...)`: Enforces `assert_target_packages_enabled` and simulates full-cycle deployment inside `enter_plan_sandbox` without mutating workspace or host state.
 
 ### [`new_package.py`](new_package.py), [`add_resource.py`](add_resource.py), [`package_health.py`](package_health.py) & `workspace_*.py` (Primitives 10–16 & Init)
 * **P10 ([`new_package.py`](new_package.py))**: `run_primitive_10_create_new_package(workspace_config, package_name, target_dir=None, install_method=None, force=False) -> NewPackageResult`.

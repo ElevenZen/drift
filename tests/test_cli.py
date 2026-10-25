@@ -1047,6 +1047,45 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                         runner(["-C", self.drift_root, cmd, "--rollback", "invalid_choice", "pkg_a"])
                     self.assertEqual(cm.exception.code, 1)
 
+    def test_cli_adhoc_and_gc_flags_across_backends(self) -> None:
+        """Verifies --adhoc/--ad-hoc on deploy/plan/uninstall and --gc on deploy across Typer and Argparse backends."""
+        from drift.cli import run_argparse_cli
+
+        # 1. --adhoc and --ad-hoc on deploy and uninstall
+        for flag in ("--adhoc", "--ad-hoc"):
+            for runner in (main, run_argparse_cli):
+                with patch("drift.cli.cli_handlers.execute_deploy") as mock_deploy:
+                    with patch("sys.stdout", StringIO()):
+                        runner(["-C", self.drift_root, "deploy", flag, "pkg_b"])
+                    self.assertTrue(mock_deploy.called)
+                    self.assertTrue(mock_deploy.call_args.kwargs.get("adhoc"))
+
+                with patch("drift.cli.cli_handlers.execute_uninstall") as mock_uninstall:
+                    with patch("sys.stdout", StringIO()):
+                        runner(["-C", self.drift_root, "uninstall", flag, "pkg_a"])
+                    self.assertTrue(mock_uninstall.called)
+                    self.assertTrue(mock_uninstall.call_args.kwargs.get("adhoc"))
+
+        # 2. --gc on deploy
+        for runner in (main, run_argparse_cli):
+            with patch("drift.cli.cli_handlers.execute_deploy") as mock_deploy:
+                with patch("sys.stdout", StringIO()):
+                    runner(["-C", self.drift_root, "deploy", "--gc"])
+                self.assertTrue(mock_deploy.called)
+                self.assertTrue(mock_deploy.call_args.kwargs.get("gc"))
+
+        # 3. Verify --help on deploy, plan, and uninstall documents --adhoc and --force inner parts
+        for cmd in ("deploy", "plan", "uninstall"):
+            for runner in (main, run_argparse_cli):
+                stdout = StringIO()
+                with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()):
+                    with self.assertRaises(SystemExit) as cm:
+                        runner([cmd, "--help"])
+                    self.assertEqual(cm.exception.code, 0)
+                help_out = stdout.getvalue()
+                self.assertIn_stripped("--adhoc", help_out)
+                self.assertIn_stripped("--no-deps", help_out)
+
 
 if __name__ == "__main__":
     unittest.main()

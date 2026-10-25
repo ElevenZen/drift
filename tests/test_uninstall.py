@@ -1035,6 +1035,99 @@ fi
         converted_targets = [a.dst_path for a in actions if a.action_type == FileActionType.CREATE_COPY]
         self.assertEqual(converted_targets, [target_file])
 
+    def test_uninstall_adhoc_allows_enabled_package_while_preserving_dependency_guard(self):
+        """Verifies UninstallOptions(adhoc=True) allows uninstalling an enabled package without disabling it,
+        while still enforcing reverse-dependency checks (which are only bypassed by --no-deps or --force).
+        """
+        from drift.core.exceptions import ConfigError
+
+        for pkg, deps in [("pkg_base", []), ("pkg_app", ["pkg_base"])]:
+            self.workspace_config.packages_enable[pkg] = True
+            pkg_install_dir = self.install_dir / pkg
+            pkg_install_dir.mkdir(parents=True, exist_ok=True)
+            (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            deps_str = ", ".join(f'"{d}"' for d in deps)
+            (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir.as_posix()}"
+            dependencies = [{deps_str}]
+            """, encoding="utf-8")
+            (self.system_target_dir / f"{pkg}.txt").write_text(f"deployed {pkg}", encoding="utf-8")
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        for pkg in ("pkg_base", "pkg_app"):
+            registry.set_package_state(pkg, "installed")
+            registry.sync_deployed_files(
+                pkg,
+                target_directory=self.system_target_dir,
+                install_method=InstallMethod.COPY,
+                deployable_files=[Path(f"{pkg}.txt")],
+            )
+        save_state_registry(registry)
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Install base and app"], cwd=self.install_dir, check=True, capture_output=True)
+
+        # 1. Default uninstall of enabled pkg_app -> blocked by PackageEnabledError (SafeguardError)
+        from drift.core.exceptions import MissingDependencyError, PackageEnabledError, SafeguardError
+
+        with self.assertRaises(PackageEnabledError) as cm_active:
+            run_primitive_7_uninstall_packages(self.workspace_config, ["pkg_app"])
+        self.assertIsInstance(cm_active.exception, SafeguardError)
+        self.assertEqual(cm_active.exception.packages, ["pkg_app"])
+        self.assertIn("Safeguard abort", str(cm_active.exception))
+        self.assertIn("--adhoc", str(cm_active.exception))
+
+        # 2. Uninstall of enabled pkg_base with adhoc=True -> passes active-package check,
+        #    but STILL blocked by MissingDependencyError (SafeguardError & ConfigError) because pkg_app depends on pkg_base!
+        with self.assertRaises(MissingDependencyError) as cm_dep:
+            run_primitive_7_uninstall_packages(
+                self.workspace_config,
+                ["pkg_base"],
+                options=UninstallOptions(adhoc=True),
+            )
+        self.assertIsInstance(cm_dep.exception, SafeguardError)
+        self.assertIsInstance(cm_dep.exception, ConfigError)
+        self.assertEqual(cm_dep.exception.packages, ["pkg_app"])
+        self.assertEqual(cm_dep.exception.missing_dependencies, {"pkg_app": ["pkg_base"]})
+        self.assertIn("pkg_app", str(cm_dep.exception))
+
+        # 3. Uninstall of enabled pkg_app (no dependents) with adhoc=True -> succeeds!
+        res_app = run_primitive_7_uninstall_packages(
+            self.workspace_config,
+            ["pkg_app"],
+            options=UninstallOptions(adhoc=True),
+        )
+        self.assertEqual(res_app.status, "SUCCESS")
+        self.assertFalse((self.system_target_dir / "pkg_app.txt").exists())
+        self.assertNotIn("pkg_app", load_state_registry(state_file).packages)
+
+        # 4. Re-register pkg_app as installed, then uninstall pkg_base with force=True ->
+        #    bypasses BOTH active-package safeguard AND reverse-dependency check!
+        reg2 = load_state_registry(state_file)
+        reg2.set_package_state("pkg_app", "installed")
+        save_state_registry(reg2)
+        (self.install_dir / "pkg_app" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (self.install_dir / "pkg_app" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_app"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir.as_posix()}"
+        dependencies = ["pkg_base"]
+        """, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Re-add pkg_app"], cwd=self.install_dir, check=True, capture_output=True)
+
+        res_force = run_primitive_7_uninstall_packages(
+            self.workspace_config,
+            ["pkg_base"],
+            options=UninstallOptions(force=True),
+        )
+        self.assertEqual(res_force.status, "SUCCESS")
+        self.assertNotIn("pkg_base", load_state_registry(state_file).packages)
+
 
 if __name__ == "__main__":
     unittest.main()

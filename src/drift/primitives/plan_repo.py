@@ -49,7 +49,11 @@ from ..models import (
 from ..render.render_cache import RenderCache
 from ..render.render_package import render_package, RenderOptions
 from ..hooks.lifecycle_hooks import HookExecFlags
-from .package_assertions import resolve_target_package_order, assert_no_cross_package_conflicts
+from .package_assertions import (
+    assert_no_cross_package_conflicts,
+    assert_target_packages_enabled,
+    resolve_target_package_order,
+)
 from .reverse_sync import prepare_reverse_sync
 from .stage_repo import plan_package_stage
 from .install_repo import (
@@ -434,10 +438,28 @@ def preview_deploy(
     """
     opts = options or DeployOptions()
 
-    # 1. Discover target active packages from source directory
+    # 1. Discover target active packages from source directory and enforce disabled-package safeguard
     discovered_pkgs = workspace_config.filter_source_packages_by_target(
         target_packages=target_pkgs or None
     )
+    if target_pkgs:
+        try:
+            assert_target_packages_enabled(
+                workspace_config=workspace_config,
+                target_packages=discovered_pkgs,
+                adhoc=opts.adhoc,
+                force=opts.force,
+                command_name=command_name,
+            )
+        except Exception as e:
+            return WorkspaceDeployPreview(
+                command=command_name,
+                status="FAILED",
+                packages_install_order=discovered_pkgs,
+                package_previews={},
+                global_errors=[e],
+            )
+
     if not discovered_pkgs:
         logger.info("No active packages selected or enabled for deployment planning.")
         return WorkspaceDeployPreview(

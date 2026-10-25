@@ -24,7 +24,13 @@ from drift.cli import main
 from drift.cli.argparse_backend import run_argparse_cli
 from drift.config.workspace_config import WorkspaceConfig
 from drift.core.constants import ExitCode
-from drift.core.exceptions import DriftDetectedError, DriftError, MidwayTransactionError
+from drift.core.exceptions import (
+    DriftDetectedError,
+    DriftError,
+    MidwayCrashError,
+    MidwayTransactionError,
+    SafeguardError,
+)
 from drift.core.state_registry import load_state_registry, save_state_registry
 from drift.models import DeployOptions, NextActionType
 from drift.primitives.deploy_repo import execute_deploy_pipeline, run_primitive_deploy_pipeline
@@ -102,6 +108,7 @@ class TestDeployGuardExceptions(_DeployWorkspaceTestCase):
             with self.assertRaises(DriftDetectedError) as cm:
                 execute_deploy_pipeline(self.config(), packages_to_deploy=[self.PKG])
         err = cm.exception
+        self.assertIsInstance(err, SafeguardError)
         self.assertIsInstance(err, RuntimeError)
         self.assertEqual(err.exit_code, ExitCode.DRIFT_DETECTED)
         self.assertEqual(err.packages, [self.PKG])
@@ -116,6 +123,7 @@ class TestDeployGuardExceptions(_DeployWorkspaceTestCase):
             with self.assertRaises(MidwayTransactionError) as cm:
                 execute_deploy_pipeline(self.config(), packages_to_deploy=[self.PKG])
         err = cm.exception
+        self.assertIsInstance(err, SafeguardError)
         self.assertIsInstance(err, RuntimeError)
         self.assertEqual(err.exit_code, ExitCode.GENERAL_ERROR)
         self.assertEqual(err.packages, [self.PKG])
@@ -182,6 +190,23 @@ class TestDeployResultClassification(_DeployWorkspaceTestCase):
         self.assertEqual(res.failure.exit_code, ExitCode.GENERAL_ERROR)
         self.assertEqual(res.failure.next_action_type, NextActionType.FIX_TEMPLATE)
 
+    def test_midway_crash_classified_by_type_not_message_text(self) -> None:
+        with patch("drift.primitives.deploy_repo.execute_deploy_pipeline",
+                   side_effect=RuntimeError("Midway crash (but not a typed MidwayCrashError)")):
+            res_untyped = self._run([self.PKG])
+        self.assertEqual(res_untyped.status, "FAILED")
+        self.assertFalse(res_untyped.failure.requires_rollback)
+        self.assertEqual(res_untyped.failure.next_action_type, NextActionType.FIX_TEMPLATE)
+
+        with patch("drift.primitives.deploy_repo.execute_deploy_pipeline",
+                   side_effect=MidwayCrashError("Step 4 failed.", packages=[self.PKG])):
+            res_typed = self._run(None)
+        self.assertEqual(res_typed.status, "FAILED")
+        self.assertTrue(res_typed.failure.requires_rollback)
+        self.assertEqual(res_typed.failure.error_type, "MidwayCrashError")
+        self.assertEqual(res_typed.failure.next_action_type, NextActionType.ROLLBACK)
+        self.assertEqual(res_typed.failure.recommended_command, f"drift rollback {self.PKG}")
+
     def test_other_drift_errors_keep_their_exit_codes(self) -> None:
         class _Collision(DriftError):
             exit_code = ExitCode.COLLISION_ERROR
@@ -190,6 +215,22 @@ class TestDeployResultClassification(_DeployWorkspaceTestCase):
             res = self._run([self.PKG])
         self.assertEqual(res.status, "FAILED")
         self.assertEqual(res.failure.exit_code, ExitCode.COLLISION_ERROR)
+
+    def test_wrapped_preflight_missing_dependency_preserves_exit_code_and_error_type(self) -> None:
+        from drift.core.exceptions import MissingDependencyError
+
+        missing_err = MissingDependencyError(
+            "Missing required package dependencies",
+            packages=[self.PKG],
+            missing_dependencies={self.PKG: ["missing_dep"]},
+        )
+        with patch("drift.primitives.deploy_repo.prepare_stage_packages", side_effect=missing_err):
+            res = self._run([self.PKG])
+        self.assertEqual(res.status, "FAILED")
+        self.assertEqual(res.failure.exit_code, ExitCode.CONFIG_ERROR)
+        self.assertEqual(res.failure.error_type, "MissingDependencyError")
+        self.assertFalse(res.failure.requires_rollback)
+        self.assertEqual(res.failure.recommended_command, f"drift deploy --no-deps {self.PKG}")
 
 
 # =============================================================================

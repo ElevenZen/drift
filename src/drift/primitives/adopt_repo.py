@@ -146,6 +146,7 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..config.render_engine_config import RenderEngineRegistry
 from ..core.constants import DRIFT_IGNORE_FILE_NAME, DRIFT_KEEP_FILE_NAME
+from ..core.exceptions import DirtySourceFileError
 from ..models import (
     AdoptStatus,
     ItemAdoptOutcome,
@@ -294,11 +295,13 @@ def assert_source_file_clean(
 
     rel_dirty = to_relative_path(src_file, git_root)
 
-    raise RuntimeError(
+    raise DirtySourceFileError(
         f"The source file '{rel_dirty}' has uncommitted local modifications!\n"
         f"Adopting system drift would overwrite uncommitted changes in this file.\n\n"
         f"👉 Run 'drift adopt {pkg} --force' (or -f) to overwrite existing file modifications.\n"
-        f"👉 Or commit / stash your changes before adopting."
+        f"👉 Or commit / stash your changes before adopting.",
+        packages=[pkg],
+        source_file=src_file,
     )
 
 

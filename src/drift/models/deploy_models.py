@@ -45,6 +45,8 @@ class NextActionType(str, Enum):
 class DeployOptions(AlwaysTruthy):
     """Configuration options controlling the full-cycle deployment and planning pipelines."""
     force: bool = False
+    adhoc: bool = False
+    gc: bool = False
     reinstall: bool = False
     no_deps: bool = False
     no_hooks: bool = False
@@ -98,6 +100,7 @@ class DeployResult(SerializableModel):
     is_global_deploy: bool = False
     target_packages: List[str] = field(default_factory=list)
     deployed_packages: List[PackageInstallResult] = field(default_factory=list)
+    disabled_installed_packages: List[str] = field(default_factory=list)
     gc: Optional[GcResult] = None
     failure: Optional[DeployFailure] = None
     completed_steps: List[CompletedStep] = field(default_factory=list)

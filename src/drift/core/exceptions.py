@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional, Sequence, List, Any, Mapping, TypeVar
 
 from .constants import ExitCode
@@ -73,8 +74,21 @@ class WorkspaceNotFoundError(ConfigError, FileNotFoundError):
     exit_code: int = ExitCode.CONFIG_ERROR
 
 
-class DriftDetectedError(DriftError, RuntimeError):
-    """Raised in stage_repo / deploy operations when unadopted live host drift or uncommitted install modifications block staging."""
+class SafeguardError(DriftError, RuntimeError):
+    """Base class for operational safeguards that protect against unintended actions and can be bypassed via CLI flags (--adhoc, --no-deps, or --force)."""
+    exit_code: int = ExitCode.GENERAL_ERROR
+
+    def __init__(
+        self,
+        message: str = "",
+        packages: Optional[Sequence[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, packages=packages, **kwargs)
+
+
+class DriftDetectedError(SafeguardError):
+    """Raised in stage_repo / deploy operations when unadopted live host drift or uncommitted install modifications block staging (bypassed via --force)."""
     exit_code: int = ExitCode.DRIFT_DETECTED
 
     def __init__(
@@ -101,8 +115,8 @@ class HookMissingError(DriftError, FileNotFoundError):
         self.hook_name = hook_name
 
 
-class MidwayTransactionError(DriftError, RuntimeError):
-    """Raised when package(s) are in an uncommitted midway transaction state ('staging' or 'installing')."""
+class MidwayTransactionError(SafeguardError):
+    """Raised when package(s) are in an uncommitted midway transaction state ('staging' or 'installing', bypassed via --force)."""
     exit_code: int = ExitCode.GENERAL_ERROR
 
     def __init__(
@@ -112,6 +126,63 @@ class MidwayTransactionError(DriftError, RuntimeError):
         **kwargs: Any,
     ) -> None:
         super().__init__(message, packages=packages, **kwargs)
+
+
+class MidwayCrashError(DriftError, RuntimeError):
+    """Raised when a state-mutating deployment step (staging or physical install) fails midway without automatic rollback."""
+    exit_code: int = ExitCode.GENERAL_ERROR
+
+    def __init__(
+        self,
+        message: str = "",
+        packages: Optional[Sequence[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, packages=packages, **kwargs)
+
+
+class DirtySourceFileError(SafeguardError):
+    """Raised during drift adoption when a target template file in src/ has uncommitted Git modifications (bypassed via --force)."""
+    exit_code: int = ExitCode.GENERAL_ERROR
+
+    def __init__(
+        self,
+        message: str = "",
+        packages: Optional[Sequence[str]] = None,
+        source_file: Optional[Path] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, packages=packages, **kwargs)
+        self.source_file: Optional[Path] = source_file
+
+
+class PackageDisabledError(SafeguardError):
+    """Raised when attempting to deploy or plan an explicitly targeted package that is disabled in workspace configuration (bypassed via --adhoc or --force)."""
+    exit_code: int = ExitCode.GENERAL_ERROR
+
+
+class PackageEnabledError(SafeguardError):
+    """Raised when attempting to uninstall a package that is still enabled in workspace configuration (bypassed via --adhoc or --force)."""
+    exit_code: int = ExitCode.GENERAL_ERROR
+
+
+class MissingDependencyError(SafeguardError, ConfigError):
+    """Raised when required package dependencies are missing from the installable universe or broken by uninstallation (bypassed via --no-deps or --force)."""
+    exit_code: int = ExitCode.CONFIG_ERROR
+
+    def __init__(
+        self,
+        message: str = "",
+        packages: Optional[Sequence[str]] = None,
+        missing_dependencies: Optional[Mapping[str, Sequence[str]]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, packages=packages, **kwargs)
+        self.missing_dependencies: dict[str, List[str]] = (
+            {pkg: list(deps) for pkg, deps in missing_dependencies.items()}
+            if missing_dependencies is not None
+            else {}
+        )
 
 
 class PackageInstallDirMissingError(DriftError, FileNotFoundError):

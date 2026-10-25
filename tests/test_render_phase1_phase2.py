@@ -511,6 +511,7 @@ def configure_package(context):
             # ---------------------------------------------------------------------
             # Pass 3: Ephemeral Plan Sandbox Pass (drift plan -v)
             # ---------------------------------------------------------------------
+            self.workspace_config.packages_enable["pkg_templated"] = True
             preview = preview_deploy(
                 self.workspace_config,
                 target_pkgs=["pkg_templated"],
