@@ -599,6 +599,43 @@ class TestCLIEnableDisable(TestCaseUtilityMixin, _WorkspaceFixture):
         self.assertEqual(kwargs["dry_run"], True)
         self.assertEqual(kwargs["use_rich"], False)  # argparse backend is plain
 
+    def test_bundled_templates_normalize_crlf_from_pkgutil(self) -> None:
+        """Regression test for Windows CRLF git checkouts: pkgutil.get_data returning '\\r\\n'
+        must be normalized to '\\n' so Path.write_text() never writes '\\r\\r\\n' on Windows.
+        """
+        import pkgutil
+        from drift.core.constants import (
+            get_default_drift_workspace_toml_content,
+            get_default_package_config_content,
+            get_default_package_hook_content,
+            get_default_workspace_hook_content,
+        )
+        from drift.cli.help_docs import get_help_page
+
+        orig_get_data = pkgutil.get_data
+
+        def crlf_get_data(package: str, resource: str):
+            raw = orig_get_data(package, resource)
+            if raw is None:
+                return None
+            return raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+
+        with patch("pkgutil.get_data", side_effect=crlf_get_data):
+            ws_toml = get_default_drift_workspace_toml_content()
+            pkg_toml = get_default_package_config_content("pkg_a")
+            pkg_hook = get_default_package_hook_content("pkg_a")
+            ws_hook = get_default_workspace_hook_content()
+            help_doc = get_help_page("overall")
+
+        for content in (ws_toml, pkg_toml, pkg_hook, ws_hook, help_doc):
+            self.assertNotIn("\r", content)
+
+        # Simulate Windows Path.write_text() converting '\n' -> '\r\n' on disk
+        self.base.write_bytes(ws_toml.replace("\n", "\r\n").encode("utf-8"))
+        edit = plan_workspace_enable_edit(self.root, {"pkg_a": True})
+        self.assertNotIn("\r\r\n", edit.after_text)
+        self.assertIn("pkg_a = true\r\n", edit.after_text)
+
 
 if __name__ == "__main__":
     unittest.main()

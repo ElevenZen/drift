@@ -135,8 +135,8 @@ def get_help_page(topic: Optional[str]) -> str:
     try:
         import pkgutil
         data = pkgutil.get_data("drift.cli", f"help_docs/{topic_file_name}.md")
-        if data:
-            return data.decode("utf-8")
+        if data is not None:
+            return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     except (ImportError, OSError, LookupError):
         pass
 

@@ -577,6 +577,28 @@ def get_default_internal_gitignore_content() -> str:
     return DEFAULT_INTERNAL_GITIGNORE_CONTENT
 
 
+def _load_bundled_template(template_filename: str, description: str) -> str:
+    """Loads a bundled template file with universal-newline normalization ('\\r\\n' -> '\\n').
+
+    Ensures that raw bytes read via pkgutil.get_data on Windows checkouts (CRLF)
+    never contain '\\r\\n' before being written via Path.write_text() (which would
+    otherwise produce corrupted '\\r\\r\\n' line endings on Windows).
+    """
+    try:
+        import pkgutil
+        data = pkgutil.get_data("drift", f"templates/{template_filename}")
+        if data is not None:
+            return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except (ImportError, OSError, LookupError):
+        pass
+
+    template_path = Path(__file__).resolve().parent.parent / "templates" / template_filename
+    if template_path.exists():
+        return template_path.read_text(encoding="utf-8")
+
+    raise FileNotFoundError(f"{description} not found at {template_path}")
+
+
 def get_default_package_config_content(
     package_name: str,
     install_method: InstallMethod = InstallMethod.DEFAULT,
@@ -584,21 +606,10 @@ def get_default_package_config_content(
     config_filename: str = PACKAGE_CONFIG_FILE_NAME,
 ) -> str:
     """Renders the default drift_package.toml content for a package."""
-    template_str: Optional[str] = None
-    try:
-        import pkgutil
-        data = pkgutil.get_data("drift", "templates/drift_package_default.toml")
-        if data:
-            template_str = data.decode("utf-8")
-    except (ImportError, OSError, LookupError):
-        pass
-
-    if template_str is None:
-        template_path = Path(__file__).resolve().parent.parent / "templates" / "drift_package_default.toml"
-        if template_path.exists():
-            template_str = template_path.read_text(encoding="utf-8")
-        else:
-            raise FileNotFoundError(f"Default drift_package.toml template file not found at {template_path}")
+    template_str = _load_bundled_template(
+        "drift_package_default.toml",
+        "Default drift_package.toml template file",
+    )
 
     if target_directory is None:
         target_directory_line = '# target_directory = "~"   # Destination for this package'
@@ -641,57 +652,27 @@ def get_default_jinja2_content() -> str:
 
 def get_default_drift_workspace_toml_content() -> str:
     """Gets the default drift_workspace.toml template content."""
-    try:
-        import pkgutil
-        data = pkgutil.get_data("drift", "templates/drift_workspace_default.toml")
-        if data:
-            return data.decode("utf-8")
-    except (ImportError, OSError, LookupError):
-        pass
-
-    template_path = Path(__file__).resolve().parent.parent / "templates" / "drift_workspace_default.toml"
-    if template_path.exists():
-        return template_path.read_text(encoding="utf-8")
-
-    raise FileNotFoundError(f"Default drift_workspace.toml template file not found at {template_path}")
+    return _load_bundled_template(
+        "drift_workspace_default.toml",
+        "Default drift_workspace.toml template file",
+    )
 
 
 def get_default_package_hook_content(package_name: str) -> str:
     """Gets the default drift_package.py template content for a package."""
-    template_str: Optional[str] = None
-    try:
-        import pkgutil
-        data = pkgutil.get_data("drift", "templates/drift_package_default.py")
-        if data:
-            template_str = data.decode("utf-8")
-    except (ImportError, OSError, LookupError):
-        pass
-
-    if template_str is None:
-        template_path = Path(__file__).resolve().parent.parent / "templates" / "drift_package_default.py"
-        if template_path.exists():
-            template_str = template_path.read_text(encoding="utf-8")
-        else:
-            raise FileNotFoundError(f"Default drift_package.py template file not found at {template_path}")
-
+    template_str = _load_bundled_template(
+        "drift_package_default.py",
+        "Default drift_package.py template file",
+    )
     return template_str.replace("{package_name}", package_name)
 
 
 def get_default_workspace_hook_content() -> str:
     """Gets the default drift_workspace.py template content."""
-    try:
-        import pkgutil
-        data = pkgutil.get_data("drift", "templates/drift_workspace_default.py")
-        if data:
-            return data.decode("utf-8")
-    except (ImportError, OSError, LookupError):
-        pass
-
-    template_path = Path(__file__).resolve().parent.parent / "templates" / "drift_workspace_default.py"
-    if template_path.exists():
-        return template_path.read_text(encoding="utf-8")
-
-    raise FileNotFoundError(f"Default drift_workspace.py template file not found at {template_path}")
+    return _load_bundled_template(
+        "drift_workspace_default.py",
+        "Default drift_workspace.py template file",
+    )
 
 
 def configure_utf8_streams() -> None:
