@@ -60,7 +60,7 @@ The host operating system's process environment contains dozens of volatile, ses
 
 If $V$ were to capture the raw process environment `os.environ`:
 $$\Delta V \neq \varnothing \quad \text{(virtually 100% of the time between different shells/sessions)}$$
-This would break change invariance on every command invocation, dropping the Merkle cache hit rate to 0%, forcing unnecessary template re-rendering across all packages, and producing continuous churn in `.drift_lock.json`.
+This would break change invariance on every command invocation, dropping the Merkle cache hit rate to 0%, forcing unnecessary template re-rendering across all packages, and producing continuous churn in `.drift/render_lock.json`.
 
 #### Deterministic Ingestion via Declarative Fallbacks (`[env.fallback]`)
 To preserve change invariance while still enabling dotfile templates and lifecycle hooks to react to changes in ambient host environment variables, Drift provides a declarative bridge via **Tier 6 (`[env.fallback]`)**:

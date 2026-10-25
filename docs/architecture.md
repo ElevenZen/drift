@@ -122,10 +122,12 @@ Drift separates configuration management into four physical tiers backed by `bac
 | :--- | :--- | :--- | :--- |
 | **`0`** | `ExitCode.SUCCESS` | — | Operation completed cleanly |
 | **`1`** | `ExitCode.GENERAL_ERROR` | `DriftError` (+ runtime subclasses) | Runtime, hook, permission, or transaction error |
-| **`2`** | `ExitCode.CONFIG_ERROR` | `ConfigError` | Invalid schema, cyclic dependency, missing workspace, or CLI syntax error |
-| **`3`** | `ExitCode.DRIFT_DETECTED` | `DriftDetectedError` | Uncommitted host drift in `install/` during `deploy` |
+| **`2`** | `ExitCode.CONFIG_ERROR` | `ConfigError`, `MissingDependencyError` | Invalid schema, missing/cyclic dependency, missing workspace, or CLI syntax error |
+| **`3`** | `ExitCode.DRIFT_DETECTED` | `DriftDetectedError` | Uncommitted host drift in `install/` during `deploy` / `plan` / `stage` |
 | **`4`** | `ExitCode.RENDER_ERROR` | `RenderError`, `RenderCollisionError` | Template compilation failure or output path collision |
 | **`5`** | `ExitCode.COLLISION_ERROR` | `InstallCollisionError`, `CrossPackageCollisionError` | Target inside `drift_root` or cross-package conflict |
+| **`6`** | `ExitCode.HEALTH_CHECK_FAILED` | — | Package health check probe failed (`drift health`) |
+| **`7`** | `ExitCode.HOOK_SKIPPED` | — | Direct hook trigger skipped (`drift hook`) |
 
 * **`SafeguardError` Subclasses (Bypassable via `--force`, `--adhoc`, or `--no-deps`)**: `DriftDetectedError` (`ExitCode.DRIFT_DETECTED = 3`), `MissingDependencyError` (`ExitCode.CONFIG_ERROR = 2`), `MidwayTransactionError` (`1`), `DirtySourceFileError` (`1`), `PackageDisabledError` (`1`), and `PackageEnabledError` (`1`).
 * **Other `ExitCode.GENERAL_ERROR` (`1`) Subclasses**: `HookMissingError`, `HookExecutionError`, `MidwayCrashError`, `PackageInstallDirMissingError`, `TargetPermissionError`, and `AdminPrivilegeError`.

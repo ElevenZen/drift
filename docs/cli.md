@@ -390,12 +390,12 @@ For advanced continuous integration, scripting, and pipeline automation:
     Incremental Merkle DAG compilation of declarative source templates into the isolated `render/` sandbox (`Primitive 2`).
     *   **Options & Flags**:
         - `packages...`: Optional package name(s) to render. If omitted, renders all active packages enabled in `config/drift_workspace.toml`.
-        - `-c / --clean / --no-cache`: Bypasses the render cache and lockfile (`.drift/render/.drift_lock.json`), forcing clean re-compilation of all templates and static assets.
+        - `-c / --clean / --no-cache`: Bypasses the render cache and lockfile (`render/<pkg>/.drift/render_lock.json`), forcing clean re-compilation of all templates and static assets.
         - `-n / --dry-run`: Simulates Merkle DAG construction and digestion without modifying the filesystem or touching the live `render/` Git repository. Outputs inspectable `FileAction`s (`RENDER_ITEM`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, `ENSURE_DIR`, `DELETE_FILE`, `PRUNE_DIR`).
         - `--with-hooks / --with-hook`: During `--dry-run`, authorizes execution of pre-flight preparation hooks (`probe` and `pre_source`) to resolve dynamic requirements and generated source templates for an accurate plan. Templated hooks are rendered into isolated temporary directories so `render/` remains 100% clean. (Mutually exclusive with `--no-hooks`).
         - `--no-hooks / --no-hook`: Bypasses execution of all package lifecycle hooks. Note that in `--dry-run` mode, `--no-hooks` is active by default (zero-mutation simulation).
         - `--json`: Outputs structured `RenderResult` in machine-readable JSON format.
-    *   **Incremental Merkle DAG Engine**: Drift constructs a typed Abstract Syntax Tree (AST) dependency graph for each package. Files whose input files, template contents, environment variables, and render engine definitions are invariant are skipped instantly (`SKIP_IDENTICAL` / 0ms) via cryptographic SHA-256 Merkle hashes tracked in `.drift/render/.drift_lock.json`. Obsolete rendered files are automatically scoped and pruned without touching live dotfiles.
+    *   **Incremental Merkle DAG Engine**: Drift constructs a typed Abstract Syntax Tree (AST) dependency graph for each package. Files whose input files, template contents, environment variables, and render engine definitions are invariant are skipped instantly (`SKIP_IDENTICAL` / 0ms) via cryptographic SHA-256 Merkle hashes tracked in `render/<pkg>/.drift/render_lock.json`. Obsolete rendered files are automatically scoped and pruned without touching live dotfiles.
 2.  **`drift render-commit [packages...] -m "message" [--json]`**: Stages and commits compiled sandbox changes (`Primitive 3`).
 3.  **`drift reverse-sync [packages...] [--json]`**: Pulls live host configuration changes into `install/` (`Primitive 1`).
 4.  **`drift stage [packages...] [--force] [--no-deps] [--json]`**: Computes delta and stages sandbox to `install/` (`Primitive 4`). Pass `--force` to bypass midway failed state checks and uncommitted modifications in `install/` *(does not bypass `enable_install = false`)*. Pass `--no-deps` to bypass missing prerequisite checks.
@@ -403,7 +403,7 @@ For advanced continuous integration, scripting, and pipeline automation:
     - `-n / --dry-run`: Simulates deployment and previews the inspectable deployment plan without modifying the host filesystem or executing lifecycle hooks.
     - `-r / --reinstall`: Forces full reinstallation and lifecycle hook execution regardless of change status.
       > [!NOTE]
-      > **Non-Deployable Files & Standalone `apply` Pitfall**: Primitive 5's change-detection is purely host-driven: its planner evaluates discrepancies between deployable payload files in `install/<pkg>/` and target host filesystem state. It has no independent awareness of non-deployable control-plane modifications (such as edits to `.drift/hooks/*`, `drift_package.toml`, or `.drift_ignore`). If only a lifecycle hook script or package config was updated while deployable files on the host remain identical, `drift apply` without `-r` will skip the package and bypass hook execution. Always supply `-r / --reinstall` when running standalone `drift apply` after modifying lifecycle hooks or package configurations directly in `install/`. (The high-level `drift deploy` pipeline handles this automatically by tracking staging deltas and passing `reinstall=True` to changed packages).
+      > **Non-Deployable Files & Standalone `apply` Pitfall**: Primitive 5's change-detection is purely host-driven: its planner evaluates discrepancies between deployable payload files in `install/<pkg>/` and target host filesystem state. It has no independent awareness of non-deployable control-plane modifications (such as edits to `.drift/hooks/*`, `drift_package.toml`, or `.drift_ignore`). If only a lifecycle hook script or package config was updated while deployable files on the host remain identical, `drift apply` without `-r` will skip the package and bypass hook execution. Always supply `-r / --reinstall` when running standalone `drift apply` after modifying lifecycle hooks or package configurations directly in `install/`. (The high-level `drift deploy` pipeline handles this automatically by tracking staging deltas and enabling `run_hooks_when_unchanged=True` for staged packages).
     - `--force / -f`: Bypasses midway failed state checks (`staging` / `installing` in `install/state.toml`). *(Does not bypass `enable_install = false`)*.
     - `--rollback <auto|always|yes|never|no>`: Overrides automatic whole-batch rollback behavior when a fatal installation or hook failure occurs during `apply` (`auto`, `always`/`yes`, `never`/`no`).
     - `--no-deps`: Bypasses missing prerequisite dependency checks during topological ordering.
@@ -415,24 +415,24 @@ For advanced continuous integration, scripting, and pipeline automation:
 
 ## 4. Unified Semantics of the `--force` Flag
 
-Drift enforces a clear architectural distinction between **runtime safety safeguards** and **declarative package configurations**:
+Drift enforces a clear architectural distinction between **bypassable operational safeguards** ([`SafeguardError`](../src/drift/core/exceptions.py)) and **immutable structural invariants**:
 
 > [!IMPORTANT]
-> The `--force` flag is designed to override **runtime safety checks, state interlocks, and sentinel barriers** (such as dirty Git states, midway failure locks, collision safeguards, or active package uninstallation restrictions).
+> The `--force` flag is designed to override **operational safety guards, state interlocks, and sentinel barriers** (such as host drift sentinel checks, midway transaction locks, uncommitted `install/` or `src/` file checks, disabled/enabled package guards via `--adhoc`, and missing dependency checks via `--no-deps`).
 >
-> **The `--force` flag NEVER overrides declarative package configuration settings** (such as `enable_install = false` in `drift_package.toml`). If a package is declared as non-installable, it will remain excluded from staging and deployment regardless of whether `--force` is supplied.
+> **The `--force` flag NEVER overrides declarative package settings (`enable_install = false`), cyclic dependency checks (`CyclicDependencyError`), or destination/render collision invariants (`InstallCollisionError`, `CrossPackageCollisionError`, `RenderCollisionError`).** Passing `--force` will never permit a target directory inside `drift_root` or allow two packages to claim the same host destination path.
 
 ### Summary Matrix of `--force` Behaviors
 
 | Command | Primitive | Overrides with `--force` | Invariants Respected |
 | :--- | :--- | :--- | :--- |
 | **`drift new <pkg>`** | Primitive 10 | Existing `drift_package.toml` in `src/<pkg>/` | Package naming rules |
-| **`drift deploy`** | P4, P5, Pipeline | `--adhoc`, `--no-deps`, Sentinel drift, midway locks, dirty `install/` | `enable_install = false` |
-| **`drift plan`** | Primitive 17 | `--adhoc`, `--no-deps`, Sentinel drift, midway locks | `enable_install = false` |
-| **`drift stage`** | Primitive 4 | `--no-deps`, midway locks, dirty `install/` | `enable_install = false` |
-| **`drift apply`** | Primitive 5 | `--no-deps`, midway locks | `enable_install = false` |
+| **`drift deploy`** | P4, P5, Pipeline | `--adhoc`, `--no-deps`, Sentinel drift, midway locks, dirty `install/` | `enable_install = false`, path & cross-pkg collisions, DAG cycles |
+| **`drift plan`** | Primitive 17 | `--adhoc`, `--no-deps`, Sentinel drift, midway locks | `enable_install = false`, path & cross-pkg collisions, DAG cycles |
+| **`drift stage`** | Primitive 4 | `--no-deps`, midway locks, dirty `install/` | `enable_install = false`, DAG cycles |
+| **`drift apply`** | Primitive 5 | `--no-deps`, midway locks | `enable_install = false`, path & cross-pkg collisions, DAG cycles |
 | **`drift rollback`** | Primitive 8 | Eligibility check (resets clean `"installed"` to `HEAD`) | Tracked in `install/` |
-| **`drift adopt`** | Adopt Pipeline | Dirty Git working tree in `src/<pkg>/` | Valid patch application |
+| **`drift adopt`** | Adopt Pipeline | Dirty Git working tree in `src/<pkg>/` (`DirtySourceFileError`) | Valid patch application |
 | **`drift uninstall`** | Primitive 7 | `--adhoc` (enabled pkg guard) & `--no-deps` (reverse deps) | Installed status check |
 | **`drift init`** | Workspace Init | Existing workspace templates and configs | Root path safety checks |
 
