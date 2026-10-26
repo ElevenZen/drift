@@ -120,7 +120,9 @@ Layer 1: Inspection & Git Patch Primitives
     check_patch_conflicts
         Runs patch --dry-run for patches containing '@@' diff hunks (returns False early for hunkless/mode-only diffs).
     apply_source_patch
-        Executes patch tool against source files for patches containing '@@' diff hunks with optional --merge conflict support.
+        Executes patch tool against source files for patches containing '@@' diff hunks with optional --merge conflict support,
+        falling back to _apply_patch_with_git_merge_file (-> _parse_unified_patch_hunks + git merge-file) on macOS/BSD
+        where '/usr/bin/patch' does not support the GNU '--merge' flag.
     test_file_conflict
         Convenience wrapper checking patch conflicts for a single modified file.
     resolve_source_file_path
@@ -137,8 +139,11 @@ Layers (ordered bottom-up by dependency):
 """
 
 import logging
+import re
 import subprocess
+import tempfile
 from contextlib import contextmanager
+from functools import reduce
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple, Sequence
 
@@ -383,6 +388,148 @@ def check_patch_conflicts(src_file: Path, patch_content: str) -> bool:
         return True
 
 
+_UNIFIED_HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+# _RawHunk: (old_start, old_count, new_count, hunk_old_lines, hunk_new_lines)
+_RawHunk = Tuple[int, int, int, List[str], List[str]]
+# _ParsedHunk: (old_start, old_count, hunk_old_lines, hunk_new_lines)
+_ParsedHunk = Tuple[int, int, List[str], List[str]]
+
+
+def _step_parse_hunk_line(
+    state: Optional[Tuple[List[_RawHunk], Optional[_RawHunk]]],
+    line: str,
+) -> Optional[Tuple[List[_RawHunk], Optional[_RawHunk]]]:
+    """Pure reducer step accumulating unified diff hunks and rejecting malformed hunk lines.
+
+    Pre-hunk Git headers ('diff --git', 'index', '---', '+++') are ignored while cur is None.
+    Once inside a hunk ('@@ ... @@'), each line must start with:
+      - ' ': unchanged context line (present in both hunk_old and hunk_new)
+      - '-': removed line (present in hunk_old only)
+      - '+': added line (present in hunk_new only)
+      - '\\': diff metadata comment (e.g. '\\ No newline at end of file', ignored)
+    Any other line inside a hunk indicates a malformed patch and transitions state to None.
+    """
+    if state is None:
+        return None
+    hunks, cur = state
+    m = _UNIFIED_HUNK_HEADER_RE.match(line)
+    if m:
+        next_hunks = [*hunks, *([cur] if cur is not None else [])]
+        old_start = int(m.group(1))
+        # In unified diffs, an omitted ',count' in '@@ -l +l @@' implies a line count of 1
+        old_count = choose(m.group(2) is not None, int(m.group(2) or "0"), 1)
+        new_count = choose(m.group(4) is not None, int(m.group(4) or "0"), 1)
+        return (next_hunks, (old_start, old_count, new_count, [], []))
+    if cur is None:
+        return state
+    old_s, old_c, new_c, h_old, h_new = cur
+    if line.startswith(" "):
+        return (hunks, (old_s, old_c, new_c, [*h_old, line[1:]], [*h_new, line[1:]]))
+    if line.startswith("-"):
+        return (hunks, (old_s, old_c, new_c, [*h_old, line[1:]], h_new))
+    if line.startswith("+"):
+        return (hunks, (old_s, old_c, new_c, h_old, [*h_new, line[1:]]))
+    if line.startswith("\\"):
+        return state
+    return None
+
+
+def _parse_unified_patch_hunks(
+    patch_content: str,
+) -> Optional[List[_ParsedHunk]]:
+    """Parses unified diff hunks into a list of (old_start, old_count, hunk_old_lines, hunk_new_lines).
+
+    Returns None if patch_content contains no hunks, mismatched line counts, or any malformed hunk line.
+    """
+    initial_state: Optional[Tuple[List[_RawHunk], Optional[_RawHunk]]] = ([], None)
+    final_state = reduce(_step_parse_hunk_line, patch_content.splitlines(), initial_state)
+    if final_state is None:
+        return None
+    raw_hunks, last_hunk = final_state
+    all_hunks = [*raw_hunks, *([last_hunk] if last_hunk is not None else [])]
+    # Validate that collected '-'/' ' and '+'/' ' line counts match the '@@ -old_s,old_c +new_s,new_c @@' header
+    if not all_hunks or any(len(h_old) != old_c or len(h_new) != new_c for _, old_c, new_c, h_old, h_new in all_hunks):
+        return None
+    return [(old_s, old_c, h_old, h_new) for old_s, old_c, _, h_old, h_new in all_hunks]
+
+
+def _apply_hunk_slice(lines: List[str], hunk: _ParsedHunk, use_new: bool) -> List[str]:
+    """Pure helper replacing a hunk's target slice [old_start - 1 : old_start - 1 + old_count]
+    in lines with either hunk_old (when use_new=False, building the 3-way merge base) or
+    hunk_new (when use_new=True, building the 3-way merge target).
+    """
+    old_start, old_count, h_old, h_new = hunk
+    start_idx = max(0, old_start - 1)
+    end_idx = start_idx + old_count
+    replacement = [f"{l}\n" for l in choose(use_new, h_new, h_old)]
+    return [*lines[:start_idx], *replacement, *lines[end_idx:]]
+
+
+def _apply_patch_with_git_merge_file(src_file: Path, patch_content: str) -> bool:
+    """Applies a unified diff patch with conflict markers via 'git merge-file'.
+
+    Used as a cross-platform fallback on macOS/BSD where '/usr/bin/patch' is BSD patch and
+    does not support the GNU '--merge' flag.
+
+    How it works:
+    1. Parses all unified diff hunks from patch_content.
+    2. Constructs synthetic 'base' and 'other' files by taking src_file's lines and replacing
+       each hunk's line range (in reverse hunk order so earlier indices do not shift) with
+       hunk_old (for 'base') and hunk_new (for 'other').
+    3. Runs 'git merge-file -L "" -L "" -L "" <current_tmp> <base_tmp> <other_tmp>' inside a
+       temporary directory so src_file is never mutated unless the merge succeeds.
+    4. Writes the merged result (with bare '<<<<<<<', '=======', '>>>>>>>' conflict markers)
+       back to src_file when git merge-file returns 0..127.
+    """
+    parsed_hunks = _parse_unified_patch_hunks(patch_content)
+    if not parsed_hunks or not src_file.is_file():
+        return False
+
+    src_text = src_file.read_text(encoding="utf-8", errors="replace")
+    src_lines = src_text.splitlines(keepends=True)
+    # Apply hunks in reverse order so multi-hunk patches with line-count changes do not shift earlier hunk offsets
+    rev_hunks = list(reversed(parsed_hunks))
+    base_lines = reduce(lambda acc, h: _apply_hunk_slice(acc, h, False), rev_hunks, src_lines)
+    other_lines = reduce(lambda acc, h: _apply_hunk_slice(acc, h, True), rev_hunks, src_lines)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        current_path = Path(tmp_dir) / "current"
+        base_path = Path(tmp_dir) / "base"
+        other_path = Path(tmp_dir) / "other"
+        current_path.write_text(src_text, encoding="utf-8")
+        base_path.write_text("".join(base_lines), encoding="utf-8")
+        other_path.write_text("".join(other_lines), encoding="utf-8")
+        # Three empty '-L ""' flags suppress file path labels on '<<<<<<<', '=======', '>>>>>>>' markers.
+        # Exit code: 0 = clean merge, 1..127 = number of conflict regions written, < 0 (or > 127) = fatal error.
+        res = subprocess.run(
+            [
+                "git",
+                "merge-file",
+                "-L",
+                "",
+                "-L",
+                "",
+                "-L",
+                "",
+                current_path.as_posix(),
+                base_path.as_posix(),
+                other_path.as_posix(),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if not (0 <= res.returncode <= 127 and current_path.is_file()):
+            return False
+        merged_text = current_path.read_text(encoding="utf-8", errors="replace")
+        if res.returncode > 0 and "<<<<<<<" not in merged_text:
+            return False
+        src_file.write_text(merged_text, encoding="utf-8")
+        return True
+
+
 def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: bool = False) -> bool:
     """Applies a patch to a source file, supporting merge markers if accept_conflicts is True.
 
@@ -390,9 +537,14 @@ def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: boo
     If patch_content has no '@@' hunks (e.g. file mode/permission-only drift), this function
     returns True immediately without executing the external patch binary, allowing file permissions
     to be applied via _sync_file_mode.
-    When accept_conflicts is True ('patch --merge'), exit code 1 indicates that conflict markers
-    ('<<<<<<<', '=======', '>>>>>>>') were written to src_file (so long as no '.rej' reject file
-    was emitted), which is treated as a successful conflict-marker write.
+    When accept_conflicts is True:
+    - Under GNU patch ('patch --merge'), exit code 1 indicates that conflict markers
+      ('<<<<<<<', '=======', '>>>>>>>') were written to src_file (so long as no '.rej' reject file
+      was emitted).
+    - Under macOS/BSD patch ('/usr/bin/patch'), '--merge' is an unrecognized CLI option that
+      exits with code 1 (or 2) without reading the patch, modifying src_file, or creating a '.rej'
+      file. We therefore verify that '<<<<<<<' was actually written to src_file on exit code 1,
+      and otherwise fall back to '_apply_patch_with_git_merge_file'.
     """
     if not check_patch_has_hunks(patch_content):
         return True
@@ -413,7 +565,15 @@ def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: boo
             check=False,
         )
         has_rejects = rej_file.exists()
-        return res.returncode == 0 or (accept_conflicts and res.returncode == 1 and not has_rejects)
+        if res.returncode == 0 and not has_rejects:
+            return True
+        if accept_conflicts and not has_rejects:
+            # Verify GNU 'patch --merge' actually wrote conflict markers into src_file;
+            # BSD '/usr/bin/patch' on macOS exits with code 1 on unrecognized '--merge' without touching src_file.
+            if res.returncode == 1 and src_file.is_file() and "<<<<<<<" in src_file.read_text(encoding="utf-8", errors="replace"):
+                return True
+            return _apply_patch_with_git_merge_file(src_file, patch_content)
+        return False
     except (subprocess.CalledProcessError, OSError):
         return False
     finally:

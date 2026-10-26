@@ -308,11 +308,17 @@ def _atomic_copy_local(
 
 
 def _atomic_copy_elevated(src: Path, dst: Path) -> None:
-    """Atomic file copy using elevated mktemp + cp + mv, with direct cp fallback."""
+    """Atomic file copy using elevated mktemp + cp + mv, with direct cp fallback.
+
+    Note: Invokes 'mktemp <full_template_path>' with a single positional path argument rather
+    than 'mktemp -p <dir> <template>' because '-p' is a GNU coreutils extension unsupported by
+    macOS/BSD mktemp, whereas a full-path template ending in 'XXXXXX' is portable across both.
+    """
     temp_path_str = None
     try:
+        # Pass full path template directly (portable across GNU and macOS/BSD mktemp; avoids GNU-only '-p')
         res = run_command(
-            ["mktemp", "-p", dst.parent.as_posix(), f".tmp_{dst.name}_XXXXXX"],
+            ["mktemp", (dst.parent / f".tmp_{dst.name}_XXXXXX").as_posix()],
             sudo=True,
             text=True
         )

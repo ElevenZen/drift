@@ -2802,9 +2802,32 @@ render_command = "bash -c 'cat %i %s'"
             mock_editor.assert_called_once_with(src_file)
         self.assertIn("<<<<<<<", src_file.read_text(encoding="utf-8"))
 
-        # 7. Fatal patch error (exit code >= 2) returns False even when accept_conflicts=True
+        # 7. Simulate macOS/BSD 'patch' (exits with code 1 on unrecognized '--merge' without touching src_file):
+        #    verifies fallback to _apply_patch_with_git_merge_file writes conflict markers
+        src_file.write_text(template_text, encoding="utf-8")
+        real_run = subprocess.run
+
+        def bsd_patch_side_effect(cmd, *args, **kwargs):
+            if cmd and cmd[0] == "patch" and "--merge" in cmd:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=1, stdout="", stderr="patch: unrecognized option `--merge'"
+                )
+            return real_run(cmd, *args, **kwargs)
+
+        with patch("drift.primitives.adopt_repo.subprocess.run", side_effect=bsd_patch_side_effect):
+            self.assertTrue(apply_source_patch(src_file, patch_content, accept_conflicts=True))
+        bsd_merged = src_file.read_text(encoding="utf-8")
+        self.assertIn("<<<<<<<", bsd_merged)
+        self.assertIn('"key": "${NEW_API_KEY}"', bsd_merged)
+        self.assertIn("=======", bsd_merged)
+        self.assertIn('"google": {', bsd_merged)
+        self.assertIn(">>>>>>>", bsd_merged)
+
+        # 8. Malformed hunk body or fatal failure returns False even when accept_conflicts=True
+        src_file.write_text(template_text, encoding="utf-8")
+        self.assertFalse(apply_source_patch(src_file, "@@ -1,2 +1,2 @@\ncorrupt_hunk_line\n", accept_conflicts=True))
         with patch("drift.primitives.adopt_repo.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(args=["patch"], returncode=2, stdout="", stderr="fatal")
+            mock_run.return_value = subprocess.CompletedProcess(args=["patch"], returncode=255, stdout="", stderr="fatal")
             self.assertFalse(apply_source_patch(src_file, patch_content, accept_conflicts=True))
 
     def test_adopt_interactive_conflict_menu_6_options_modification_and_rename(self) -> None:
@@ -3017,6 +3040,170 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res_ren6.status, AdoptStatus.SKIPPED)
         self.assertTrue((src_pkg / "old_auth.envst.json").is_file())
         self.assertFalse((src_pkg / "new_auth.envst.json").exists())
+
+    def test_parse_unified_patch_hunks_and_git_merge_file_comprehensive(self) -> None:
+        """Exhaustively tests _parse_unified_patch_hunks, _apply_hunk_slice, and
+        _apply_patch_with_git_merge_file across boundary edge cases, multi-hunk patches,
+        omitted line counts, '\\ No newline at end of file' comments, zero-side-effect
+        failure isolation, and full interactive/non-interactive adoption under BSD patch.
+        """
+        from drift.primitives.adopt_repo import (
+            _apply_hunk_slice,
+            _apply_patch_with_git_merge_file,
+            _parse_unified_patch_hunks,
+        )
+
+        # 1. Empty / hunkless / malformed inputs return None
+        self.assertIsNone(_parse_unified_patch_hunks(""))
+        self.assertIsNone(_parse_unified_patch_hunks("diff --git a/x b/x\n--- a/x\n+++ b/x\n"))
+        self.assertIsNone(_parse_unified_patch_hunks("@@ -1,2 +1,2 @@\n valid\ninvalid_line\n"))
+        # Mismatched old_count (says 2, only 1 line provided)
+        self.assertIsNone(_parse_unified_patch_hunks("@@ -1,2 +1,1 @@\n only_one\n"))
+        # Mismatched new_count (says 2, only 1 line provided)
+        self.assertIsNone(_parse_unified_patch_hunks("@@ -1,1 +1,2 @@\n only_one\n"))
+
+        # 2. Single-line hunk with omitted ',count' ('@@ -1 +1 @@' and '@@ -2 +2,2 @@') and '\\ No newline'
+        single_line_patch = (
+            "--- a/f.txt\n"
+            "+++ b/f.txt\n"
+            "@@ -1 +1,2 @@\n"
+            "-old_line\n"
+            "+new_line_1\n"
+            "+new_line_2\n"
+            "\\ No newline at end of file\n"
+        )
+        parsed_single = _parse_unified_patch_hunks(single_line_patch)
+        self.assertEqual(parsed_single, [(1, 1, ["old_line"], ["new_line_1", "new_line_2"])])
+
+        # 3. _apply_hunk_slice pure replacement for base (use_new=False) vs target (use_new=True)
+        orig_lines = ["line1\n", "line2\n", "line3\n"]
+        hunk_tuple = (2, 1, ["base_line2"], ["new_line2a", "new_line2b"])
+        self.assertEqual(
+            _apply_hunk_slice(orig_lines, hunk_tuple, use_new=False),
+            ["line1\n", "base_line2\n", "line3\n"],
+        )
+        self.assertEqual(
+            _apply_hunk_slice(orig_lines, hunk_tuple, use_new=True),
+            ["line1\n", "new_line2a\n", "new_line2b\n", "line3\n"],
+        )
+
+        # 4. Multi-hunk patch where Hunk 1 expands line count and Hunk 2 conflicts near the end:
+        #    verifies reverse-order hunk application preserves exact line alignment for both hunks
+        multi_src = self.src_dir / "multi_hunk.envst.conf"
+        multi_src_init = (
+            "header = 1\n"
+            "top_val = old_top\n"
+            "mid_1 = a\n"
+            "mid_2 = b\n"
+            "mid_3 = c\n"
+            "mid_4 = d\n"
+            "secret = ${SECRET_VAR}\n"
+            "footer = end\n"
+        )
+        multi_src.write_text(multi_src_init, encoding="utf-8")
+        multi_patch = (
+            "--- a/multi_hunk.conf\n"
+            "+++ b/multi_hunk.conf\n"
+            "@@ -1,3 +1,5 @@\n"
+            " header = 1\n"
+            "-top_val = old_top\n"
+            "+top_val = new_top_1\n"
+            "+top_extra_1 = 2\n"
+            "+top_extra_2 = 3\n"
+            " mid_1 = a\n"
+            "@@ -6,3 +8,4 @@\n"
+            " mid_4 = d\n"
+            "-secret = rendered_secret_value\n"
+            "+secret = rendered_secret_value\n"
+            "+added_bottom = true\n"
+            " footer = end\n"
+        )
+        self.assertTrue(_apply_patch_with_git_merge_file(multi_src, multi_patch))
+        multi_merged = multi_src.read_text(encoding="utf-8")
+        # Hunk 1 applied cleanly at the top
+        self.assertIn("top_val = new_top_1\ntop_extra_1 = 2\ntop_extra_2 = 3\n", multi_merged)
+        # Hunk 2 wrote conflict markers around ${SECRET_VAR} vs rendered_secret_value + added_bottom
+        self.assertIn("<<<<<<<", multi_merged)
+        self.assertIn("secret = ${SECRET_VAR}", multi_merged)
+        self.assertIn("=======", multi_merged)
+        self.assertIn("secret = rendered_secret_value\nadded_bottom = true", multi_merged)
+        self.assertIn(">>>>>>>", multi_merged)
+
+        # 5. Clean (non-conflicting) patch via _apply_patch_with_git_merge_file (git merge-file exit code 0)
+        clean_src = self.src_dir / "clean_merge.txt"
+        clean_src.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+        clean_patch = "@@ -1,3 +1,3 @@\n alpha\n-beta\n+beta_updated\n gamma\n"
+        self.assertTrue(_apply_patch_with_git_merge_file(clean_src, clean_patch))
+        self.assertEqual(clean_src.read_text(encoding="utf-8"), "alpha\nbeta_updated\ngamma\n")
+
+        # 6. Zero side-effect guarantee when _apply_patch_with_git_merge_file fails:
+        #    (a) missing file, (b) malformed hunk, (c) git merge-file error exit code (> 127),
+        #    (d) git merge-file returning > 0 without writing conflict markers
+        missing_path = self.src_dir / "does_not_exist.txt"
+        self.assertFalse(_apply_patch_with_git_merge_file(missing_path, clean_patch))
+        self.assertFalse(missing_path.exists())
+
+        untouched_src = self.src_dir / "untouched.envst.txt"
+        untouched_init = "keep_me = ${SAFE}\n"
+        untouched_src.write_text(untouched_init, encoding="utf-8")
+        self.assertFalse(_apply_patch_with_git_merge_file(untouched_src, "@@ -1,2 +1,2 @@\nbad_hunk\n"))
+        self.assertEqual(untouched_src.read_text(encoding="utf-8"), untouched_init)
+
+        with patch("drift.primitives.adopt_repo.subprocess.run") as mock_git_err:
+            mock_git_err.return_value = subprocess.CompletedProcess(
+                args=["git", "merge-file"], returncode=255, stdout="", stderr="error"
+            )
+            self.assertFalse(_apply_patch_with_git_merge_file(untouched_src, "@@ -1,1 +1,1 @@\n-a\n+b\n"))
+        self.assertEqual(untouched_src.read_text(encoding="utf-8"), untouched_init)
+
+        with patch("drift.primitives.adopt_repo.subprocess.run") as mock_no_markers:
+            mock_no_markers.return_value = subprocess.CompletedProcess(
+                args=["git", "merge-file"], returncode=1, stdout="", stderr=""
+            )
+            self.assertFalse(_apply_patch_with_git_merge_file(untouched_src, "@@ -1,1 +1,1 @@\n-a\n+b\n"))
+        self.assertEqual(untouched_src.read_text(encoding="utf-8"), untouched_init)
+
+        # 7. Full end-to-end interactive ('[1]' & '[2]') and non-interactive adoption when system 'patch'
+        #    behaves like macOS BSD patch (rejecting '--merge' with exit code 1 or 2)
+        pkg_bsd = "pkg_bsd_e2e"
+        src_bsd = self.src_dir / pkg_bsd
+        src_bsd.mkdir(parents=True, exist_ok=True)
+        inst_bsd = self.install_dir / pkg_bsd
+        inst_bsd.mkdir(parents=True, exist_ok=True)
+
+        tmpl_bsd = '{\n  "k": "${SECRET_K}"\n}\n'
+        base_bsd = '{\n  "k": "real_k"\n}\n'
+        drift_bsd = '{\n  "k": "real_k",\n  "added": 1\n}\n'
+
+        s_bsd_file = src_bsd / "cfg.envst.json"
+        i_bsd_file = inst_bsd / "cfg.json"
+        s_bsd_file.write_text(tmpl_bsd, encoding="utf-8")
+        i_bsd_file.write_text(base_bsd, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "--allow-empty", "-m", "init bsd src"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "--allow-empty", "-m", "init bsd install"], cwd=self.install_dir, check=True, capture_output=True)
+        i_bsd_file.write_text(drift_bsd, encoding="utf-8")
+
+        real_subproc_run = subprocess.run
+
+        def simulate_macos_bsd_patch(cmd, *args, **kwargs):
+            if isinstance(cmd, list) and cmd and cmd[0] == "patch" and "--merge" in cmd:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=1, stdout="", stderr="patch: unrecognized option `--merge'"
+                )
+            return real_subproc_run(cmd, *args, **kwargs)
+
+        with patch("drift.primitives.adopt_repo.subprocess.run", side_effect=simulate_macos_bsd_patch), \
+             patch("builtins.input", return_value="2"), \
+             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_ed, \
+             patch("sys.stdout", StringIO()):
+            res_bsd = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg_bsd], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_bsd.status, AdoptStatus.SUCCESS)
+        mock_ed.assert_called_once_with(s_bsd_file)
+        self.assertIn("<<<<<<<", s_bsd_file.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

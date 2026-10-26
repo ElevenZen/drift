@@ -357,7 +357,7 @@ class TestFileUtils(unittest.TestCase):
 
         copy_file(src, dst, sudo=True)
         mock_run.assert_any_call(
-            ["sudo", "mktemp", "-p", dst.parent.as_posix(), f".tmp_{dst.name}_XXXXXX"],
+            ["sudo", "mktemp", (dst.parent / f".tmp_{dst.name}_XXXXXX").as_posix()],
             check=True,
             capture_output=True,
             text=True,
@@ -373,6 +373,22 @@ class TestFileUtils(unittest.TestCase):
         mock_run.side_effect = [Exception("mktemp failed"), MagicMock()]
         copy_file(src, dst, sudo=True)
         mock_run.assert_any_call(["sudo", "cp", "-p", src.as_posix(), dst.as_posix()], check=True, capture_output=True, shell=False)
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX mktemp is POSIX-only")
+    def test_mktemp_full_path_template_real_execution(self) -> None:
+        """Executes the real system 'mktemp' binary with a full-path template (without GNU '-p')
+        to verify cross-platform compatibility across Linux and macOS/BSD.
+        """
+        import subprocess
+        template_arg = (self.root / ".tmp_real_mktemp_XXXXXX").as_posix()
+        res = subprocess.run(["mktemp", template_arg], check=True, capture_output=True, text=True)
+        created_path = Path(res.stdout.strip())
+        try:
+            self.assertTrue(created_path.is_file())
+            self.assertEqual(created_path.parent, self.root)
+            self.assertTrue(created_path.name.startswith(".tmp_real_mktemp_"))
+        finally:
+            created_path.unlink(missing_ok=True)
 
     @unittest.skipIf(sys.platform == "win32", "External cp/mv commands are POSIX-only")
     @patch("subprocess.run")
