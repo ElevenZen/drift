@@ -24,6 +24,7 @@ from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.primitives.adopt_repo import (
     AdoptOptions,
     AdoptPlan,
+    AdoptStatus,
     PackageAdoptPlan,
     get_drifted_packages,
     assert_source_file_clean,
@@ -1091,8 +1092,8 @@ class TestAdopt(unittest.TestCase):
         # Conflicting modification in install/
         (install_pkg / "service.conf").write_text("COMPLETELY_DIFFERENT=999\nOTHER=ZZZ\n", encoding="utf-8")
 
-        # Interactive choose [5] Skip file
-        with patch("builtins.input", return_value="5"):
+        # Interactive choose [6] Skip file on conflict menu
+        with patch("builtins.input", return_value="6"):
             resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=True))
 
         self.assertEqual(list(resolved), [])
@@ -2593,8 +2594,8 @@ render_command = "bash -c 'cat %i %s'"
         self.assertNotIn("plan", dry_dict["packages"][0])
 
         # 3. Interactive SKIPPED vs non-interactive CONFLICT -> PARTIAL
-        # In interactive mode, user skips `clean.txt` (option 5) and `tmpl.conf` (option 5)
-        with patch("builtins.input", return_value="5"), patch("sys.stdout", StringIO()):
+        # In interactive mode, user skips `clean.txt` (option 5) and `tmpl.conf` (option 6 on conflict menu)
+        with patch("builtins.input", side_effect=["5", "6"]), patch("sys.stdout", StringIO()):
             res_skip_all = run_primitive_adopt_drifts(
                 self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
             )
@@ -2630,8 +2631,8 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res_conflict_only.packages[0].conflicted_files, ["tmpl.conf"])
         self.assertEqual(res_conflict_only.packages[0].skipped_files, [])
 
-        # 6. Resolve remaining conflicted file via interactive Over-render & Freeze (option "1") -> SUCCESS
-        with patch("builtins.input", return_value="1"), patch("sys.stdout", StringIO()):
+        # 6. Resolve remaining conflicted file via interactive Over-render & Freeze (option "4") -> SUCCESS
+        with patch("builtins.input", return_value="4"), patch("sys.stdout", StringIO()):
             res_success = run_primitive_adopt_drifts(
                 self.workspace_config,
                 [pkg],
@@ -2737,6 +2738,285 @@ render_command = "bash -c 'cat %i %s'"
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, msg=f"Import failed for '{import_stmt}': {proc.stderr}")
+
+    def test_apply_source_patch_accept_conflicts_exit_code_1_and_failures(self) -> None:
+        """Verifies apply_source_patch and patch_and_edit handle real 'patch --merge' exit code 1
+        by writing conflict markers and returning True, while rejecting fatal/reject failures.
+        """
+        pkg = "pkg_merge_conflict_patch"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Rendered baseline in install/ HEAD
+        install_file = pkg_install_dir / "auth.json"
+        install_file.write_text(
+            '{\n  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  }\n}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "baseline auth.json"], cwd=self.install_dir, check=True, capture_output=True)
+
+        # 2. Host drift in install/ working tree
+        install_file.write_text(
+            '{\n  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  },\n'
+            '  "google": {\n    "type": "api_key",\n    "key": "real_key_2"\n  }\n}\n',
+            encoding="utf-8",
+        )
+        patch_content = generate_unified_patch(self.install_dir, Path(pkg) / "auth.json")
+        self.assertTrue(bool(patch_content.strip()))
+
+        # 3. Source template with ${NEW_API_KEY}
+        template_text = '{\n  "newapi": {\n    "type": "api_key",\n    "key": "${NEW_API_KEY}"\n  }\n}\n'
+        src_file = src_pkg_dir / "auth.envst.json"
+        src_file.write_text(template_text, encoding="utf-8")
+
+        # 4. Without accept_conflicts: returns False and does not write conflict markers or leave .rej
+        self.assertFalse(apply_source_patch(src_file, patch_content, accept_conflicts=False))
+        self.assertEqual(src_file.read_text(encoding="utf-8"), template_text)
+        self.assertFalse(src_file.with_suffix(".json.rej").exists())
+
+        # 5. With accept_conflicts=True ('patch --merge' exits with code 1): returns True and writes markers
+        self.assertTrue(apply_source_patch(src_file, patch_content, accept_conflicts=True))
+        merged_text = src_file.read_text(encoding="utf-8")
+        self.assertIn("<<<<<<<", merged_text)
+        self.assertIn('"key": "${NEW_API_KEY}"', merged_text)
+        self.assertIn("=======", merged_text)
+        self.assertIn('"google": {', merged_text)
+        self.assertIn(">>>>>>>", merged_text)
+        self.assertFalse(src_file.with_suffix(".json.rej").exists())
+
+        # 6. Verify patch_and_edit with accept_conflicts=True & open_editor=True launches editor and returns True
+        src_file.write_text(template_text, encoding="utf-8")
+        with patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor:
+            self.assertTrue(
+                patch_and_edit(
+                    src_file,
+                    patch_content,
+                    install_file=install_file,
+                    accept_conflicts=True,
+                    open_editor=True,
+                )
+            )
+            mock_editor.assert_called_once_with(src_file)
+        self.assertIn("<<<<<<<", src_file.read_text(encoding="utf-8"))
+
+        # 7. Fatal patch error (exit code >= 2) returns False even when accept_conflicts=True
+        with patch("drift.primitives.adopt_repo.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=["patch"], returncode=2, stdout="", stderr="fatal")
+            self.assertFalse(apply_source_patch(src_file, patch_content, accept_conflicts=True))
+
+    def test_adopt_interactive_conflict_menu_6_options_modification_and_rename(self) -> None:
+        """Verifies the 6-option conflict menu order for both modifications and renames:
+        [1] Write Merge Conflicts
+        [2] Open Merge Conflict Editor
+        [3] Open Side-by-Side Reference
+        [4] Over-render & Freeze
+        [5] Discard / Restore
+        [6] Skip file
+        plus non-interactive AdoptOptions(accept_conflicts=True).
+        """
+        from io import StringIO
+
+        pkg = "pkg_conflict_menu_6"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        tmpl_init = '{\n  "newapi": {\n    "type": "api_key",\n    "key": "${NEW_API_KEY}"\n  }\n}\n'
+        inst_base = '{\n  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  }\n}\n'
+        inst_drift = (
+            '{\n  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  },\n'
+            '  "google": {\n    "type": "api_key",\n    "key": "real_key_2"\n  }\n}\n'
+        )
+
+        def reset_modification_fixture() -> tuple[Path, Path]:
+            list(map(Path.unlink, filter(Path.is_file, src_pkg.glob("*"))))
+            list(map(Path.unlink, filter(Path.is_file, install_pkg.glob("*"))))
+            s_file = src_pkg / "auth.envst.json"
+            i_file = install_pkg / "auth.json"
+            s_file.write_text(tmpl_init, encoding="utf-8")
+            i_file.write_text(inst_base, encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "--allow-empty", "-m", "reset mod src"], cwd=self.workspace_path, check=True, capture_output=True)
+            subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "--allow-empty", "-m", "reset mod install"], cwd=self.install_dir, check=True, capture_output=True)
+            i_file.write_text(inst_drift, encoding="utf-8")
+            return s_file, i_file
+
+        # --- Modification Option [1]: Write Merge Conflicts (no editor) ---
+        s_file, _ = reset_modification_fixture()
+        with patch("builtins.input", return_value="1"), \
+             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("sys.stdout", StringIO()) as mock_out:
+            res_opt1 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_opt1.status, AdoptStatus.SUCCESS)
+        mock_editor.assert_not_called()
+        self.assertIn("<<<<<<<", s_file.read_text(encoding="utf-8"))
+        menu_out = mock_out.getvalue()
+        self.assertIn("[1] Write Merge Conflicts", menu_out)
+        self.assertIn("[2] Open Merge Conflict Editor", menu_out)
+        self.assertIn("[3] Open Side-by-Side Reference", menu_out)
+        self.assertIn("[4] Over-render & Freeze", menu_out)
+        self.assertIn("[5] Discard modifications / Restore", menu_out)
+        self.assertIn("[6] Skip file", menu_out)
+
+        # --- Modification Option [2]: Open Merge Conflict Editor (launches editor) ---
+        s_file, _ = reset_modification_fixture()
+        with patch("builtins.input", return_value="2"), \
+             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("sys.stdout", StringIO()):
+            res_opt2 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_opt2.status, AdoptStatus.SUCCESS)
+        mock_editor.assert_called_once_with(s_file)
+        self.assertIn("<<<<<<<", s_file.read_text(encoding="utf-8"))
+
+        # --- Modification Option [3]: Open Side-by-Side Reference ---
+        s_file, i_file = reset_modification_fixture()
+        with patch("builtins.input", return_value="3"), \
+             patch("drift.primitives.adopt_repo.launch_side_by_side_editor") as mock_sbs, \
+             patch("sys.stdout", StringIO()):
+            res_opt3 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_opt3.status, AdoptStatus.SUCCESS)
+        mock_sbs.assert_called_once_with([(s_file, i_file)])
+
+        # --- Modification Option [4]: Over-render & Freeze ---
+        s_file, _ = reset_modification_fixture()
+        with patch("builtins.input", return_value="4"), patch("sys.stdout", StringIO()):
+            res_opt4 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_opt4.status, AdoptStatus.SUCCESS)
+        self.assertEqual(s_file.read_text(encoding="utf-8"), inst_drift)
+        self.assertEqual((src_pkg / "auth.envst.json.bak").read_text(encoding="utf-8"), tmpl_init)
+
+        # --- Modification Option [5]: Discard / Restore ---
+        s_file, _ = reset_modification_fixture()
+        with patch("builtins.input", return_value="5"), patch("sys.stdout", StringIO()):
+            res_opt5 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_opt5.status, AdoptStatus.SUCCESS)
+        self.assertEqual(s_file.read_text(encoding="utf-8"), tmpl_init)
+
+        # --- Non-interactive accept_conflicts=True ---
+        s_file, _ = reset_modification_fixture()
+        res_non_inter = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, accept_conflicts=True, no_render=True, no_reverse_sync=True),
+        )
+        self.assertEqual(res_non_inter.status, AdoptStatus.SUCCESS)
+        self.assertIn("<<<<<<<", s_file.read_text(encoding="utf-8"))
+
+        # --- Conflicted Rename Options [1]-[6] ---
+        ren_prefix = "".join(f'  "provider_{i}": {{"type": "static", "enabled": true}},\n' for i in range(8))
+        ren_tmpl_init = "{\n" + ren_prefix + '  "newapi": {\n    "type": "api_key",\n    "key": "${NEW_API_KEY}"\n  }\n}\n'
+        ren_inst_base = "{\n" + ren_prefix + '  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  }\n}\n'
+        ren_inst_drift = (
+            "{\n" + ren_prefix + '  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  },\n'
+            '  "google": {\n    "type": "api_key",\n    "key": "real_key_2"\n  }\n}\n'
+        )
+
+        def reset_rename_fixture() -> tuple[Path, Path]:
+            list(map(Path.unlink, filter(Path.is_file, src_pkg.glob("*"))))
+            list(map(Path.unlink, filter(Path.is_file, install_pkg.glob("*"))))
+            old_s = src_pkg / "old_auth.envst.json"
+            old_i = install_pkg / "old_auth.json"
+            old_s.write_text(ren_tmpl_init, encoding="utf-8")
+            old_i.write_text(ren_inst_base, encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "--allow-empty", "-m", "reset rename src"], cwd=self.workspace_path, check=True, capture_output=True)
+            subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "--allow-empty", "-m", "reset rename install"], cwd=self.install_dir, check=True, capture_output=True)
+            subprocess.run(["git", "mv", f"{pkg}/old_auth.json", f"{pkg}/new_auth.json"], cwd=self.install_dir, check=True, capture_output=True)
+            new_i = install_pkg / "new_auth.json"
+            new_i.write_text(ren_inst_drift, encoding="utf-8")
+            return old_s, new_i
+
+        # Rename Option [1]: Write Merge Conflicts (no editor)
+        reset_rename_fixture()
+        with patch("builtins.input", return_value="1"), \
+             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("sys.stdout", StringIO()) as mock_ren_out:
+            res_ren1 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_ren1.status, AdoptStatus.SUCCESS)
+        mock_editor.assert_not_called()
+        new_src = src_pkg / "new_auth.envst.json"
+        self.assertTrue(new_src.is_file())
+        self.assertFalse((src_pkg / "old_auth.envst.json").exists())
+        self.assertIn("<<<<<<<", new_src.read_text(encoding="utf-8"))
+        ren_menu_out = mock_ren_out.getvalue()
+        self.assertIn("[1] Write Merge Conflicts", ren_menu_out)
+        self.assertIn("[2] Open Merge Conflict Editor", ren_menu_out)
+        self.assertIn("[3] Open Side-by-Side Reference", ren_menu_out)
+        self.assertIn("[4] Over-render & Freeze", ren_menu_out)
+        self.assertIn("[5] Discard rename / Restore", ren_menu_out)
+        self.assertIn("[6] Skip file", ren_menu_out)
+
+        # Rename Option [2]: Open Merge Conflict Editor (with editor)
+        reset_rename_fixture()
+        with patch("builtins.input", return_value="2"), \
+             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("sys.stdout", StringIO()):
+            res_ren2 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_ren2.status, AdoptStatus.SUCCESS)
+        new_src = src_pkg / "new_auth.envst.json"
+        mock_editor.assert_called_once_with(new_src)
+        self.assertIn("<<<<<<<", new_src.read_text(encoding="utf-8"))
+
+        # Rename Option [3]: Open Side-by-Side Reference
+        reset_rename_fixture()
+        with patch("builtins.input", return_value="3"), \
+             patch("drift.primitives.adopt_repo.launch_side_by_side_editor") as mock_sbs, \
+             patch("sys.stdout", StringIO()):
+            res_ren3 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_ren3.status, AdoptStatus.SUCCESS)
+        mock_sbs.assert_called_once_with([(src_pkg / "new_auth.envst.json", install_pkg / "new_auth.json")])
+
+        # Rename Option [4]: Over-render & Freeze
+        reset_rename_fixture()
+        with patch("builtins.input", return_value="4"), patch("sys.stdout", StringIO()):
+            res_ren4 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_ren4.status, AdoptStatus.SUCCESS)
+        self.assertEqual((src_pkg / "new_auth.envst.json").read_text(encoding="utf-8"), ren_inst_drift)
+        self.assertEqual((src_pkg / "new_auth.envst.json.bak").read_text(encoding="utf-8"), ren_tmpl_init)
+
+        # Rename Option [5]: Discard rename / Restore
+        reset_rename_fixture()
+        with patch("builtins.input", return_value="5"), patch("sys.stdout", StringIO()):
+            res_ren5 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_ren5.status, AdoptStatus.SUCCESS)
+        self.assertTrue((src_pkg / "old_auth.envst.json").is_file())
+        self.assertFalse((src_pkg / "new_auth.envst.json").exists())
+
+        # Rename Option [6]: Skip file
+        reset_rename_fixture()
+        with patch("builtins.input", return_value="6"), patch("sys.stdout", StringIO()):
+            res_ren6 = run_primitive_adopt_drifts(
+                self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
+            )
+        self.assertEqual(res_ren6.status, AdoptStatus.SKIPPED)
+        self.assertTrue((src_pkg / "old_auth.envst.json").is_file())
+        self.assertFalse((src_pkg / "new_auth.envst.json").exists())
 
 
 if __name__ == "__main__":

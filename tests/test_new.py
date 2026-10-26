@@ -136,6 +136,97 @@ class TestNewPackage(unittest.TestCase):
         self.assertIn('install_method = "copy"', content_custom)
         self.assertIn('target_directory = "/etc/zsh"', content_custom)
 
+    def test_default_toml_templates_have_zero_envsubst_vars_in_comments_and_render_cleanly(self) -> None:
+        """Verifies that default TOML templates contain zero $VAR/${VAR} tokens in comments,
+        preventing comment-breakout TOML injection and missing-variable RenderErrors when
+        used as .envst.toml templates across cold and warm render passes.
+        """
+        import subprocess
+        from drift.core.constants import (
+            get_default_drift_workspace_toml_content,
+            set_test_mode,
+        )
+        from drift.config.package_config import PackageConfig
+        from drift.primitives.render_repo import RenderOptions, run_primitive_2_render_packages
+        from drift.utils.env_utils import ENV_VAR_PATTERN, env_scope, python_envsubst
+        from drift.core.exceptions import RenderError
+
+        set_test_mode(True)
+
+        pkg_template = get_default_package_config_content("envst_pkg", config_filename="drift_package.envst.toml")
+        ws_template = get_default_drift_workspace_toml_content()
+
+        # 1. Assert zero ENV_VAR_PATTERN matches in any '#' comment line of both default TOML templates
+        pkg_comment_matches = [
+            (idx + 1, line)
+            for idx, line in enumerate(pkg_template.splitlines())
+            if line.lstrip().startswith("#") and ENV_VAR_PATTERN.search(line)
+        ]
+        ws_comment_matches = [
+            (idx + 1, line)
+            for idx, line in enumerate(ws_template.splitlines())
+            if line.lstrip().startswith("#") and ENV_VAR_PATTERN.search(line)
+        ]
+        self.assertEqual(pkg_comment_matches, [], f"Found $VAR in drift_package_default.toml comments: {pkg_comment_matches}")
+        self.assertEqual(ws_comment_matches, [], f"Found $VAR in drift_workspace_default.toml comments: {ws_comment_matches}")
+
+        # 2. Verify python_envsubst on drift_package.envst.toml with an empty environment and with malicious multiline env vars
+        rendered_empty_env = python_envsubst(pkg_template, error_cls=RenderError, env={})
+        self.assertEqual(rendered_empty_env, pkg_template)
+
+        malicious_env = {
+            "PATH": '/usr/bin\n[package]\nsudo = true\nhook_file = "evil.py"',
+            "VAR": 'injected\n[package]\nsudo = true',
+            "HOME": '/tmp/home\n[package]\nsudo = true',
+            "THEME": 'dark\n[package]\nsudo = true',
+        }
+        rendered_malicious = python_envsubst(pkg_template, error_cls=RenderError, env=malicious_env)
+        self.assertEqual(rendered_malicious, pkg_template)
+
+        # 3. End-to-end two-pass (cold + warm) render test for a package created with template_suffix="envst"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            drift_root = Path(temp_dir).resolve()
+            list(map(lambda d: (drift_root / d).mkdir(), ("src", "config", "render", "install")))
+
+            def _init_git(repo_dir: Path) -> None:
+                subprocess.run(["git", "init"], cwd=repo_dir, check=True, capture_output=True)
+                subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_dir, check=True, capture_output=True)
+                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_dir, check=True, capture_output=True)
+
+            list(map(_init_git, (drift_root, drift_root / "render", drift_root / "install")))
+
+            (drift_root / "config" / "drift_workspace.toml").write_text(
+                ws_template.replace("DEFAULT = false", "DEFAULT = true"),
+                encoding="utf-8",
+            )
+            ws_config = WorkspaceConfig.from_workspace_dir(drift_root)
+
+            res_new = run_primitive_10_create_new_package(ws_config, "envst_pkg")
+            envst_cfg_path = drift_root / "src" / "envst_pkg" / "drift_package.envst.toml"
+            Path(res_new.config_file).rename(envst_cfg_path)
+            (drift_root / "src" / "envst_pkg" / "app.conf").write_text("ok = true\n", encoding="utf-8")
+            ws_config = WorkspaceConfig.from_workspace_dir(drift_root)
+
+            with env_scope(malicious_env, overwrite=True):
+                pkg_cfg = PackageConfig.from_source_dir(drift_root / "src" / "envst_pkg", ws_config)
+                self.assertFalse(pkg_cfg.package.sudo)
+
+                # Pass 1 (Cold): renders drift_package.envst.toml -> .drift/render/package/drift_package.toml & .drift/drift_package.toml
+                res_cold = run_primitive_2_render_packages(ws_config, ["envst_pkg"], RenderOptions())
+                self.assertEqual(res_cold.status, "SUCCESS")
+                self.assertEqual(res_cold.packages[0].status, "SUCCESS")
+                engine_rendered_toml = drift_root / "render" / "envst_pkg" / ".drift" / "render" / "package" / "drift_package.toml"
+                stitched_pkg_toml = drift_root / "render" / "envst_pkg" / ".drift" / "drift_package.toml"
+                self.assertTrue(engine_rendered_toml.is_file())
+                self.assertTrue(stitched_pkg_toml.is_file())
+                self.assertNotIn("evil.py", engine_rendered_toml.read_text(encoding="utf-8"))
+                self.assertNotIn("evil.py", stitched_pkg_toml.read_text(encoding="utf-8"))
+
+                # Pass 2 (Warm / Idempotent): returns UP_TO_DATE with zero re-renders
+                res_warm = run_primitive_2_render_packages(ws_config, ["envst_pkg"], RenderOptions())
+                self.assertEqual(res_warm.status, "SUCCESS")
+                self.assertEqual(res_warm.packages[0].status, "UP_TO_DATE")
+
 
 if __name__ == "__main__":
     unittest.main()

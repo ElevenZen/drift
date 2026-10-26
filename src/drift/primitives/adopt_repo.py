@@ -160,7 +160,7 @@ from ..models import (
 )
 from .render_repo import RenderOptions, run_primitive_2_render_packages
 from .reverse_sync import run_primitive_1_reverse_sync
-from ..utils.func_utils import partition
+from ..utils.func_utils import choose, partition
 from ..utils.git_utils import (
     GitStatusChanges,
     parse_git_status_porcelain,
@@ -390,6 +390,9 @@ def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: boo
     If patch_content has no '@@' hunks (e.g. file mode/permission-only drift), this function
     returns True immediately without executing the external patch binary, allowing file permissions
     to be applied via _sync_file_mode.
+    When accept_conflicts is True ('patch --merge'), exit code 1 indicates that conflict markers
+    ('<<<<<<<', '=======', '>>>>>>>') were written to src_file (so long as no '.rej' reject file
+    was emitted), which is treated as a successful conflict-marker write.
     """
     if not check_patch_has_hunks(patch_content):
         return True
@@ -397,14 +400,23 @@ def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: boo
     if accept_conflicts:
         cmd.append("--merge")
     cmd.append(src_file.as_posix())
-    
+
+    rej_file = src_file.with_suffix(src_file.suffix + ".rej")
     try:
-        subprocess.run(cmd, input=patch_content, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
-        return True
-    except subprocess.CalledProcessError:
+        res = subprocess.run(
+            cmd,
+            input=patch_content,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        has_rejects = rej_file.exists()
+        return res.returncode == 0 or (accept_conflicts and res.returncode == 1 and not has_rejects)
+    except (subprocess.CalledProcessError, OSError):
         return False
     finally:
-        rej_file = src_file.with_suffix(src_file.suffix + ".rej")
         if rej_file.exists():
             rej_file.unlink()
 
@@ -1184,7 +1196,6 @@ def handle_rename_non_interactive(
 
 def handle_rename_interactive(
     render_engines: RenderEngineRegistry,
-    pkg: str,
     src_dir_to_render: Path,
     install_pkg_dir: Path,
     old_rel_path: Path,
@@ -1226,10 +1237,10 @@ def handle_rename_interactive(
                     logger.warning(f"⚠️  Failed to open editor: {e}.")
                     return ItemAdoptOutcome.SKIPPED
             elif choice == "3":
-                return (
-                    ItemAdoptOutcome.ADOPTED
-                    if fallback_side_by_side(new_src_file, install_file)
-                    else ItemAdoptOutcome.SKIPPED
+                return choose(
+                    fallback_side_by_side(new_src_file, install_file),
+                    ItemAdoptOutcome.ADOPTED,
+                    ItemAdoptOutcome.SKIPPED,
                 )
             return ItemAdoptOutcome.ADOPTED
         elif choice == "4":
@@ -1239,58 +1250,48 @@ def handle_rename_interactive(
     else:
         print(f"\n⚠️  [PATCH CONFLICT] Could not automatically apply system diff onto renamed template file '{old_src_file.name}'!")
         print("Choose fallback resolution strategy:")
-        print("[1] Over-render & Freeze (overwrites template, original saved to .bak)")
+        print("[1] Write Merge Conflicts (writes conflict markers to file)")
         print("[2] Open Merge Conflict Editor (writes conflict markers and opens editor)")
         print("[3] Open Side-by-Side Reference (opens template and static drift side-by-side)")
-        print("[4] Discard rename / Restore")
-        print("[5] Skip file")
-        choice = input("Select option [1-5]: ").strip()
-        if choice in ["1", "2", "3"]:
-            # note the patch_content is empty here because we only do rename in this function.
+        print("[4] Over-render & Freeze (overwrites template, original saved to .bak)")
+        print("[5] Discard rename / Restore")
+        print("[6] Skip file")
+        choice = input("Select option [1-6]: ").strip()
+        if choice in ["1", "2", "3", "4"]:
+            apply_conflict_patch = choice in ["1", "2"]
             new_src_file = adopt_rename(
                 render_engines,
                 src_dir_to_render,
                 old_rel_path,
                 new_rel_path,
-                patch_content="",
-                has_patch_conflict=False,
+                patch_content=choose(apply_conflict_patch, patch_content, ""),
+                has_patch_conflict=apply_conflict_patch,
                 install_file=install_file,
-                accept_conflicts=False,
+                accept_conflicts=apply_conflict_patch,
             )
             if not new_src_file:
                 return ItemAdoptOutcome.CONFLICT
 
             if choice == "1":
-                fallback_over_render(new_src_file, install_file)
                 return ItemAdoptOutcome.ADOPTED
             elif choice == "2":
-                # Adjust patch to new file name
-                adjusted_patch = generate_adjusted_patch(
-                    install_pkg_dir.parent,
-                    pkg,
-                    new_rel_path,
-                    old_rel_path=old_rel_path,
-                    target_src_filename=new_src_file.name
-                )
-                return (
-                    ItemAdoptOutcome.ADOPTED
-                    if patch_and_edit(
-                        new_src_file,
-                        adjusted_patch,
-                        install_file=install_file,
-                        accept_conflicts=True,
-                        open_editor=True,
-                    )
-                    else ItemAdoptOutcome.SKIPPED
-                )
+                try:
+                    launch_single_file_editor(new_src_file)
+                    return ItemAdoptOutcome.ADOPTED
+                except RuntimeError as e:
+                    logger.warning(f"⚠️  Failed to open editor: {e}. Skipping file adoption.")
+                    return ItemAdoptOutcome.SKIPPED
             elif choice == "3":
-                return (
-                    ItemAdoptOutcome.ADOPTED
-                    if fallback_side_by_side(new_src_file, install_file)
-                    else ItemAdoptOutcome.SKIPPED
+                return choose(
+                    fallback_side_by_side(new_src_file, install_file),
+                    ItemAdoptOutcome.ADOPTED,
+                    ItemAdoptOutcome.SKIPPED,
                 )
+            elif choice == "4":
+                fallback_over_render(new_src_file, install_file)
+                return ItemAdoptOutcome.ADOPTED
 
-        if choice == "4":
+        if choice == "5":
             return ItemAdoptOutcome.ADOPTED
         else:
             return ItemAdoptOutcome.SKIPPED
@@ -1353,7 +1354,7 @@ def handle_single_rename(
         )
     else:
         return handle_rename_interactive(
-            render_engines, pkg, src_dir_to_render, install_pkg_dir, old_rel_path, new_rel_path,
+            render_engines, src_dir_to_render, install_pkg_dir, old_rel_path, new_rel_path,
             old_src_file, patch_content, has_patch_conflict
         )
 
@@ -1486,34 +1487,35 @@ def handle_modification_interactive(
         if patch_content and patch_content.strip():
             print(f"{patch_content.strip()}\n")
         print("Choose a fallback resolution strategy:")
-        print("[1] Over-render & Freeze (overwrites template/file, original saved to .bak)")
+        print("[1] Write Merge Conflicts (writes conflict markers to file)")
         print("[2] Open Merge Conflict Editor (writes conflict markers and opens editor)")
         print("[3] Open Side-by-Side Reference (opens file and static drift side-by-side)")
-        print("[4] Discard modifications / Restore (restores file in next deployment)")
-        print("[5] Skip file")
-        choice = input("Select option [1-5]: ").strip()
-        if choice == "1":
-            fallback_over_render(src_file, install_file)
-            return ItemAdoptOutcome.ADOPTED
-        elif choice == "2":
-            return (
-                ItemAdoptOutcome.ADOPTED
-                if patch_and_edit(
+        print("[4] Over-render & Freeze (overwrites template/file, original saved to .bak)")
+        print("[5] Discard modifications / Restore (restores file in next deployment)")
+        print("[6] Skip file")
+        choice = input("Select option [1-6]: ").strip()
+        if choice in ["1", "2"]:
+            return choose(
+                patch_and_edit(
                     src_file,
                     patch_content,
                     install_file=install_file,
                     accept_conflicts=True,
-                    open_editor=True,
-                )
-                else ItemAdoptOutcome.SKIPPED
+                    open_editor=(choice == "2"),
+                ),
+                ItemAdoptOutcome.ADOPTED,
+                ItemAdoptOutcome.SKIPPED,
             )
         elif choice == "3":
-            return (
-                ItemAdoptOutcome.ADOPTED
-                if fallback_side_by_side(src_file, install_file)
-                else ItemAdoptOutcome.SKIPPED
+            return choose(
+                fallback_side_by_side(src_file, install_file),
+                ItemAdoptOutcome.ADOPTED,
+                ItemAdoptOutcome.SKIPPED,
             )
         elif choice == "4":
+            fallback_over_render(src_file, install_file)
+            return ItemAdoptOutcome.ADOPTED
+        elif choice == "5":
             return ItemAdoptOutcome.ADOPTED
         else:
             return ItemAdoptOutcome.SKIPPED

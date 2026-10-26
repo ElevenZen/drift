@@ -79,10 +79,12 @@ Before modifying `src/<pkg>/`, triggers the `pre_source` hook (if configured and
   3. `Open Side-by-Side Reference` ([`fallback_side_by_side`](../../src/drift/primitives/adopt_repo.py) supporting `nvim -d`, `vim -d`, `code --wait --diff`, `emacs --eval '(ediff-files ...)'`)
   4. `Skip`
 * **Conflicted Patches (When Template Syntax Blocks Clean Patch Application)**:
-  1. `Over-render & Freeze`: Backs up the template to `.bak` and writes the live file content.
-  2. `Merge Conflict Editor`: Applies `patch --merge` conflict markers and opens `$EDITOR`.
+  1. `Write Merge Conflicts`: Applies `patch --merge` conflict markers to the file and moves to the next file.
+  2. `Open Merge Conflict Editor`: Applies `patch --merge` conflict markers and opens `$EDITOR`.
   3. `Side-by-Side Reference`: Opens source template and live `install/` file side-by-side.
-  4. `Skip` (records file in `PackageAdoptResult.conflicted_files`).
+  4. `Over-render & Freeze`: Backs up the template to `.bak` and writes the live file content.
+  5. `Discard / Restore`: Discards drift and restores original template on next deployment.
+  6. `Skip` (leaves file unstaged in `install/` and records it in `PackageAdoptResult.skipped_files`).
 
 ### 3.4 FCD Untracked File Reconciliation Matrix (`Adopt` vs `Ignore` vs `Discard`)
 When untracked files appear inside a `fully_controlled_dirs` path on the host and are swept into `install/<pkg>/`:

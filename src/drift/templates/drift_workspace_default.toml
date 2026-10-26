@@ -5,20 +5,20 @@
 # ---------------------------------------------------------------------
 # Workspace Environment Variables, Native Variable Stitching & Secrets
 # ---------------------------------------------------------------------
-# Drift configurations natively support topological variable self-referencing and stitching ($VAR, ${VAR})
+# Drift configurations natively support topological variable self-referencing and stitching (${var-name}, where var_name uses [A-Za-z0-9_])
 # directly within .toml files. External render engines (e.g. drift_workspace.local.envst.toml) can also
 # be used if desired, but native self-referencing is the built-in, zero-dependency default.
 #
 # Variable Stitching & Referencing Rules:
-# 1. Topological Stitching in [env.default]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
+# 1. Topological Stitching in [env.default]: Variables can reference each other (see DRIFT_SAMPLE_SOCKS_PROXY below).
 #    Drift builds a dependency DAG and resolves variables in topological order with cycle detection.
-# 2. External References: You can reference host environment variables (${HOME}, ${USER}), secret vault entries,
-#    and auto-populated system facts (${drift_os}, ${drift_arch}, ${drift_distro}, ${drift_hostname}, ${drift_user}).
+# 2. External References: You can reference host environment variables (HOME, USER), secret vault entries,
+#    and auto-populated system facts (drift_os, drift_arch, drift_distro, drift_hostname, drift_user).
 # 3. Unidirectional Evaluation Flow: ONLY variables defined in environment tables ([env.default], [env.secrets])
 #    and inherited process environment/facts can be referenced across other drift_workspace.toml sections.
 # 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
 #    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
-# 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
+# 5. Escaping: Use a leading backslash (\${var-name}) to prevent interpolation and preserve literal text.
 # 6. Advanced Priority Tuning: Drift also supports [env.override] (highest priority) and [env.fallback] (soft baseline).
 #    See 'drift help drift_workspace.toml' for full 6-tier details.
 [env.default]
@@ -30,7 +30,7 @@ DRIFT_SAMPLE_ENV_EDITOR = "vim"
 
 [env.secrets]
 # Secret credentials with log masking and clean-room isolation across lifecycle hooks and render processes.
-# Secrets defined here take precedence over [secrets] / config/secrets.env and can be referenced via ${SECRET_NAME}.
+# Secrets defined here take precedence over [secrets] / config/secrets.env and can be referenced via ${var-name}.
 # GITHUB_TOKEN = "ghp_xxxxxxxxxxxxxxxxxxxx"
 # OPENAI_API_KEY = "sk-proj-xxxxxxxxxxxxxxxxxxxx"
 
@@ -44,9 +44,9 @@ DRIFT_SAMPLE_ENV_EDITOR = "vim"
 # key_file = "~/.ssh/id_ed25519"
 
 [env.fallback]
-# Soft baseline defaults and host environment variable tracking.
+# Soft baseline defaults and host environment variable tracking (Tier 6: overridden when set in host env).
 # Declare ambient host environment variables here if templates or scripts depend on them:
-# DRIFT_HOST_EDITOR = "${EDITOR:-vim}"
+# EDITOR = "vim"
 # Declaring host variables in [env.fallback] incorporates them into Drift's Merkle render cache tracking
 # without capturing volatile ambient session noise (SHLVL, OLDPWD, SSH_AUTH_SOCK, etc.).
 
@@ -65,7 +65,7 @@ DEFAULT = false
 # Render Engines Configuration
 # ---------------------------------------------------------------------
 # Define template rendering engines for compiling dotfiles and configuration templates.
-# Note: Standard .toml files already support native ${VAR} self-referencing without engines.
+# Note: Standard .toml files already support native ${var-name} self-referencing without engines.
 # Render engines below compile template files (e.g. .zshrc.envst, config.j2, or drift_workspace.local.envst.toml).
 #
 # IMPORTANT: 'input_file' fields in render engines are specified as names BEFORE rendering
@@ -74,7 +74,7 @@ DEFAULT = false
 # enables Drift to unambiguously detect dependencies (DAG) and compile them in topological order.
 [render.envsubst]
 # Built-in cross-platform variable substitution engine (recommended for cross-platform configurations).
-# Expands $VAR and ${VAR} using resolved workspace and package [env] tables without external shell dependencies.
+# Expands ${var-name} using resolved workspace and package [env] tables without external shell dependencies.
 # Files with name "file.envst.suffix" or "file.envst" will be rendered using this engine.
 suffix = "envst"
 render_command = "internal"
@@ -113,7 +113,7 @@ render_command = "jinja2 %s %i"
 # Workspace Configuration
 # ---------------------------------------------------------------------
 [workspace]
-# Global default target directory (supports ~ home expansion and ${VAR} interpolation)
+# Global default target directory (supports ~ home expansion and ${var-name} interpolation)
 default_target_directory = "~"
 
 # Global default installation method

@@ -284,11 +284,12 @@ Incorporate runtime system and GUI changes back into your declarative source tem
       5. `[5] Skip file`: Leaves the file unmerged and unstaged in `install/` as uncommitted local drift.
 
     - **Conflicted Modifications & Renames (Patch Has Conflicts)**:
-      1. `[1] Over-render & Freeze`: Backs up original template to `.bak` and overwrites it with static live content.
+      1. `[1] Write Merge Conflicts`: Writes merge conflict markers into the template using `patch --merge` and moves to the next file.
       2. `[2] Open Merge Conflict Editor`: Writes merge conflict markers into the template using `patch --merge` and opens `$EDITOR`.
       3. `[3] Open Side-by-Side Reference`: Opens the template alongside the live static drift in side-by-side split.
-      4. `[4] Discard / Restore`: Discards drift and restores original template on next deployment.
-      5. `[5] Skip file`: Leaves file unmerged and unstaged.
+      4. `[4] Over-render & Freeze`: Backs up original template to `.bak` and overwrites it with static live content.
+      5. `[5] Discard / Restore`: Discards drift and restores original template on next deployment.
+      6. `[6] Skip file`: Leaves file unmerged and unstaged.
 
     - **Additions (Inside Fully-Controlled Directories)**:
       1. `[1] Adopt and copy into source package`: Copies the untracked host file into `src/<package>/`.
