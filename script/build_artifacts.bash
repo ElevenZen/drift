@@ -170,10 +170,13 @@ if [[ "${RUN_TESTS}" = true ]]; then
             # 4. Create a package
             "${ZIPAPP_FILE}" new test_pkg --target "${TEST_TARGET}" > /dev/null
 
-            # 5. Add a dummy configuration file
+            # 5. Enable package in workspace configuration
+            "${ZIPAPP_FILE}" enable test_pkg > /dev/null
+
+            # 6. Add a dummy configuration file
             echo "test_key = 123" > "${TEST_WORKSPACE}/src/test_pkg/config.conf"
 
-            # 6. Deploy package
+            # 7. Deploy package
             "${ZIPAPP_FILE}" deploy test_pkg > /dev/null
 
             # Verify deployed file exists
@@ -216,6 +219,7 @@ if [[ "${RUN_TESTS}" = true ]]; then
             "${VENV_DIR}/bin/drift" help package > /dev/null
             "${VENV_DIR}/bin/drift" init > /dev/null
             "${VENV_DIR}/bin/drift" new venv_pkg --target "${TEST_TARGET}" > /dev/null
+            "${VENV_DIR}/bin/drift" enable venv_pkg > /dev/null
             echo "hello = 'world'" > "${TEST_WORKSPACE}/src/venv_pkg/app.toml"
             "${VENV_DIR}/bin/drift" deploy venv_pkg > /dev/null
 
