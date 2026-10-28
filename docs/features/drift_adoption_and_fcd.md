@@ -3,8 +3,9 @@
 This document specifies how Drift detects live host configuration modifications via **Primitive 1 (`drift reverse-sync`)**, automatically resolves converged drifts during `drift deploy`, reconciles divergent changes back into declarative source templates via **`drift adopt`**, and manages **Fully-Controlled Directories (`fully_controlled_dirs`)**.
 
 * **Core Architectural Overview**: [`docs/architecture.md`](../architecture.md)
+* **3-Way Template De-Rendering & Modular Adoption Architecture**: [`docs/features/template_adopt_derendering.md`](template_adopt_derendering.md)
 * **Empty Folder & `.drift_keep` Dataflow**: [`docs/features/empty_folder_dataflow.md`](empty_folder_dataflow.md)
-* **Related Subpackage Maps**: [`src/drift/primitives/AGENT_MODULE.md`](../../src/drift/primitives/AGENT_MODULE.md), [`src/drift/models/AGENT_MODULE.md`](../../src/drift/models/AGENT_MODULE.md)
+* **Related Subpackage Maps**: [`src/drift/adopt/AGENT_MODULE.md`](../../src/drift/adopt/AGENT_MODULE.md), [`src/drift/primitives/AGENT_MODULE.md`](../../src/drift/primitives/AGENT_MODULE.md), [`src/drift/models/AGENT_MODULE.md`](../../src/drift/models/AGENT_MODULE.md)
 
 ---
 
@@ -48,24 +49,27 @@ During `drift deploy` (Stage 1):
 
 ## 3. Bidirectional Drift Adoption (`drift adopt`)
 
-Implemented in [`src/drift/primitives/adopt_repo.py`](../../src/drift/primitives/adopt_repo.py) and [`src/drift/models/adopt_models.py`](../../src/drift/models/adopt_models.py).
+Implemented across [`src/drift/adopt/`](../../src/drift/adopt/AGENT_MODULE.md) (`adopt_derender`, `adopt_patch`, `adopt_plan`, `adopt_actions`, `adopt_handlers`, `adopt_package`), [`src/drift/primitives/adopt_repo.py`](../../src/drift/primitives/adopt_repo.py) (Layer 5 orchestrator), and [`src/drift/models/adopt_models.py`](../../src/drift/models/adopt_models.py).
 
 ### 3.1 Preparation & Planning Pipeline (`prepare_adopt` $\to$ `plan_package_adopt`)
 1. **Pre-Adoption Sync & Render**: Runs `reverse-sync` (unless `options.no_reverse_sync`) and scoped `render` on drifted packages (unless `options.no_render`).
 2. **Scoped Git Cleanliness Guard**: Verifies that `src/<pkg>/` has no uncommitted Git modifications (unless `--force` is passed) so template patching has a clean rollback baseline.
-3. **Drift Partitioning (`plan_package_adopt`)**:
+3. **Drift Partitioning & 3-Way De-Rendered Patch Pre-Computation (`plan_package_adopt`)**:
    * Inspects `git -C install status --porcelain` (with rename detection).
    * Partitions converged paths into `PackageAdoptPlan.converged_files` and divergent paths into `additions`, `deletions`, `modifications`, and `renames`.
-   * Pre-computes unified Git diffs (`mod_patches`, `rename_patches`) against `HEAD` and restores the `install/` Git index without mutation.
+   * Pre-computes `mod_patches` and `rename_patches` (`_precompute_package_drift_patches`):
+     * **Templated modifications & renames**: Synthesizes a 3-way de-rendered unified diff via [`generate_derendered_patch`](../../src/drift/adopt/adopt_derender.py) ($T \leftrightarrow R \leftrightarrow H \to \text{diff}(R_{\text{derendered}}, H_{\text{derendered}})$) so untouched template expressions (Case 1), sub-line edits (Case 2a), and full value replacements (Case 2b) apply cleanly without false-positive context conflicts (see [`template_adopt_derendering.md`](template_adopt_derendering.md)).
+     * **Static files**: Extracts unified Git diffs (`generate_install_git_patch` / `generate_retargeted_patch`) against `HEAD`.
+   * Restores the `install/` Git index without mutation.
 
 ### 3.2 Reconciling Divergent Operations (`execute_package_adopt`)
 Before modifying `src/<pkg>/`, triggers the `pre_source` hook (if configured and not already triggered). Each item returns an [`ItemAdoptOutcome`](../../src/drift/models/adopt_models.py) (`ADOPTED`, `SKIPPED`, or `CONFLICT`):
 
 1. **Modifications (`handle_single_modification` / `patch_and_edit`)**:
    * Resolves the corresponding file or template in `src/<pkg>/` by matching active `RenderEngineRegistry` suffixes (e.g. mapping `install/shell/dot-bashrc` to `src/shell/dot-bashrc.envst.sh`).
-   * Rewrites diff headers and applies the unified patch (`patch -u`) to the source file/template, synchronizing POSIX file permissions (`chmod`).
+   * For templated files, applies the 3-way de-rendered patch via standard POSIX `patch --no-backup-if-mismatch` (or `_apply_patch_with_git_merge_file` via `git merge-file` when `accept_conflicts=True`), and synchronizes POSIX file permissions (`chmod`). For static files, copies `install_file` directly onto `src_file` and syncs permissions.
 2. **Renames (`handle_single_rename` / `adopt_rename`)**:
-   * Symmetrically renames the source file/template in `src/<pkg>/` while preserving its template engine suffix (e.g. `old.envst.sh` $\to$ `new.envst.sh`), applies any content patch, and syncs permissions.
+   * Symmetrically renames the source file/template in `src/<pkg>/` while preserving its template engine suffix (e.g. `old.envst.sh` $\to$ `new.envst.sh`), applies any de-rendered or adjusted content patch, and syncs permissions.
 3. **Additions (`handle_single_addition`)**:
    * Copies newly discovered files from `install/<pkg>/` (such as new files inside `fully_controlled_dirs`) into `src/<pkg>/`. For empty directories, creates the concrete folder via `ensure_dir` without copying `.drift_keep`.
 4. **Deletions (`handle_single_deletion`)**:
@@ -74,13 +78,14 @@ Before modifying `src/<pkg>/`, triggers the `pre_source` hook (if configured and
 
 ### 3.3 Interactive Guided Reconciliation (`drift adopt -i`)
 * **Clean Patches**: Displays the unified diff and offers:
-  1. `Adopt patch`
+  1. `Adopt modifications`
   2. `Adopt and Edit in Editor` (`$VISUAL` / `$EDITOR`)
-  3. `Open Side-by-Side Reference` ([`fallback_side_by_side`](../../src/drift/primitives/adopt_repo.py) supporting `nvim -d`, `vim -d`, `code --wait --diff`, `emacs --eval '(ediff-files ...)'`)
-  4. `Skip`
-* **Conflicted Patches (When Template Syntax Blocks Clean Patch Application)**:
-  1. `Write Merge Conflicts`: Applies `patch --merge` conflict markers to the file and moves to the next file.
-  2. `Open Merge Conflict Editor`: Applies `patch --merge` conflict markers and opens `$EDITOR`.
+  3. `Open Side-by-Side Reference` ([`fallback_side_by_side`](../../src/drift/adopt/adopt_actions.py) supporting `nvim -d`, `vim -d`, `code --wait --diff`, `emacs --eval '(ediff-files ...)'`)
+  4. `Discard modifications / Restore`
+  5. `Skip file`
+* **Conflicted Patches (Case 3 Multi-Line Template Hunk Sliced Mid-Hunk)**:
+  1. `Write Merge Conflicts`: Injects `<<<<<<<`, `=======`, `>>>>>>>` conflict markers via `git merge-file` (`_apply_patch_with_git_merge_file`) and moves to the next file.
+  2. `Open Merge Conflict Editor`: Injects conflict markers via `git merge-file` and opens `$EDITOR`.
   3. `Side-by-Side Reference`: Opens source template and live `install/` file side-by-side.
   4. `Over-render & Freeze`: Backs up the template to `.bak` and writes the live file content.
   5. `Discard / Restore`: Discards drift and restores original template on next deployment.

@@ -21,33 +21,42 @@ from drift.core.constants import (
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.config.render_engine_config import RenderEngineRegistry
 from drift.hooks.lifecycle_hooks import HookExecFlags
-from drift.primitives.adopt_repo import (
+from drift.adopt import (
+    adopt_addition,
+    adopt_deletion,
+    adopt_one_package_drifts,
+    adopt_rename,
+    apply_source_patch,
+    assert_source_file_clean,
+    check_is_drifted_path_converged,
+    check_patch_conflicts,
+    execute_package_adopt,
+    fallback_over_render,
+    fallback_side_by_side,
+    generate_install_git_patch,
+    generate_retargeted_patch,
+    get_drifted_packages,
+    handle_single_addition,
+    handle_single_deletion,
+    ignore_addition,
+    patch_and_edit,
+    plan_package_adopt,
+    resolve_source_file_path,
+    rewrite_patch_target_headers,
+)
+from drift.models import (
     AdoptOptions,
     AdoptPlan,
     AdoptStatus,
+    ItemAdoptOutcome,
     PackageAdoptPlan,
-    get_drifted_packages,
-    assert_source_file_clean,
-    generate_unified_patch,
-    check_patch_conflicts,
-    apply_source_patch,
-    test_file_conflict,
-    resolve_source_file_path,
-    adopt_addition,
-    ignore_addition,
-    adopt_deletion,
-    patch_and_edit,
-    adopt_rename,
-    fallback_over_render,
-    fallback_side_by_side,
-    adopt_one_package_drifts,
-    run_primitive_adopt_drifts,
-    prepare_adopt,
+    get_rename_patch_key,
+)
+from drift.primitives.adopt_repo import (
     execute_adopt,
-    plan_package_adopt,
-    execute_package_adopt,
-    handle_single_addition,
-    handle_single_deletion,
+    prepare_adopt,
+    resolve_and_commit_converged_drifts,
+    run_primitive_adopt_drifts,
 )
 
 set_test_mode(True)
@@ -254,7 +263,7 @@ class TestAdopt(unittest.TestCase):
         src_file.write_text("line 1\nline 2\n", encoding="utf-8")
 
         # 4. Generate diff & apply patch
-        patch_content = generate_unified_patch(self.install_dir, Path(pkg) / "file.txt")
+        patch_content = generate_install_git_patch(self.install_dir, Path(pkg) / "file.txt")
         self.assertTrue(bool(patch_content.strip()))
 
         success = apply_source_patch(src_file, patch_content, accept_conflicts=False)
@@ -270,20 +279,26 @@ class TestAdopt(unittest.TestCase):
         # Test for a file that does not exist yet
         rel_path = Path("dot-bashrc")
         resolved = resolve_source_file_path(render_engines, src_pkg_dir, rel_path)
-        self.assertIsNone(resolved) # Does not exist yet
+        self.assertIsNone(resolved)  # Does not exist yet
 
         # Create static file dot-bashrc
         static_file = src_pkg_dir / "dot-bashrc"
         static_file.write_text("static", encoding="utf-8")
         resolved = resolve_source_file_path(render_engines, src_pkg_dir, rel_path)
-        self.assertEqual(resolved, static_file)
+        self.assertIsNotNone(resolved)
+        assert resolved is not None
+        self.assertEqual(resolved.path, static_file)
+        self.assertFalse(resolved.is_templated)
 
         # Clean static, test template resolution (dot-bashrc -> dot-bashrc.envst)
         static_file.unlink()
         template_file = src_pkg_dir / "dot-bashrc.envst"
         template_file.write_text("templated", encoding="utf-8")
         resolved = resolve_source_file_path(render_engines, src_pkg_dir, rel_path)
-        self.assertEqual(resolved, template_file)
+        self.assertIsNotNone(resolved)
+        assert resolved is not None
+        self.assertEqual(resolved.path, template_file)
+        self.assertTrue(resolved.is_templated)
 
     def test_adopt_addition(self) -> None:
         pkg = "pkg_a"
@@ -348,8 +363,6 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_rename(self) -> None:
         """Verifies that adopting a rename correctly renames the template file inside src/ and applies any content diff."""
-        from drift.primitives.adopt_repo import adopt_rename
-
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -371,16 +384,21 @@ class TestAdopt(unittest.TestCase):
         (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content\ntemplate content modified\n", encoding="utf-8")
 
         # 4. Adopt the rename
-        from drift.primitives.adopt_repo import generate_adjusted_patch
-        patch_content = generate_adjusted_patch(
+        patch_content = generate_retargeted_patch(
             self.install_dir,
             pkg,
             Path("dot-new_name.txt"),
             old_rel_path=Path("dot-old_name.txt"),
-            target_src_filename="dot-new_name.envst.txt"
+            patch_target_path=Path("dot-new_name.envst.txt"),
         )
-        adopt_rename(self.workspace_config.render_engine_configs, src_pkg_dir,
-                     Path("dot-old_name.txt"), Path("dot-new_name.txt"), patch_content)
+        adopt_rename(
+            self.workspace_config.render_engine_configs,
+            src_pkg_dir,
+            Path("dot-old_name.txt"),
+            Path("dot-new_name.txt"),
+            patch_content,
+            patch_from=pkg_install_dir / "dot-new_name.txt",
+        )
 
         # Verify old template is deleted, new template is created with dot- prefix and correct template suffixes, and modifications are applied!
         self.assertFalse(src_old_file.exists())
@@ -391,8 +409,6 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_rename_missing_old_source_file(self) -> None:
         """Verifies that adopting a rename when the old source file does not exist correctly creates a new file and applies the full content."""
-        from drift.primitives.adopt_repo import adopt_rename, generate_adjusted_patch
-
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -409,17 +425,25 @@ class TestAdopt(unittest.TestCase):
         subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=self.install_dir, check=True, capture_output=True)
         (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content modified\n", encoding="utf-8")
 
-        # 3. Generate the patch (with old_rel_path=None to represent addition)
-        patch_content = generate_adjusted_patch(
+        # 3. Generate the addition patch and retarget its headers
+        raw_patch = generate_install_git_patch(
             self.install_dir,
-            pkg,
+            Path(pkg) / "dot-new_name.txt",
+        )
+        patch_content = rewrite_patch_target_headers(
+            raw_patch,
             Path("dot-new_name.txt"),
-            old_rel_path=None,
-            target_src_filename="dot-new_name.txt"
         )
 
         # 4. Adopt the rename
-        adopt_rename(self.workspace_config.render_engine_configs, src_pkg_dir, Path("dot-old_name.txt"), Path("dot-new_name.txt"), patch_content)
+        adopt_rename(
+            self.workspace_config.render_engine_configs,
+            src_pkg_dir,
+            Path("dot-old_name.txt"),
+            Path("dot-new_name.txt"),
+            patch_content,
+            patch_from=pkg_install_dir / "dot-new_name.txt",
+        )
 
         # Verify a new file is created with new name in src/ and contains full content
         src_new_file = src_pkg_dir / "dot-new_name.txt"
@@ -428,8 +452,6 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_rename_rollback_on_patch_failure(self) -> None:
         """Verifies that when a patch fails during adopt_rename, new_src_file is unlinked and old_src_file remains untouched."""
-        from drift.primitives.adopt_repo import adopt_rename
-
         pkg = "pkg_rollback"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -451,6 +473,7 @@ class TestAdopt(unittest.TestCase):
             Path("dot-old.txt"),
             Path("dot-new.txt"),
             invalid_patch,
+            patch_from=self.install_dir / pkg / "dot-new.txt",
             has_patch_conflict=False,
             accept_conflicts=False,
         )
@@ -464,8 +487,6 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_addition_conflict_target_exists(self) -> None:
         """Verifies that non-interactive adopt skips addition if the target already exists in source."""
-        from drift.primitives.adopt_repo import handle_single_addition
-
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -492,8 +513,6 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_deletion_target_missing(self) -> None:
         """Verifies that adopting deletion when target does not exist in source skips gracefully and returns True."""
-        from drift.primitives.adopt_repo import handle_single_deletion
-
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -514,8 +533,6 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_rename_unstage_on_skip(self) -> None:
         """Verifies that if a rename is skipped or failed, both old and new paths get unstaged at the end."""
-        from drift.primitives.adopt_repo import adopt_one_package_drifts
-
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -766,13 +783,17 @@ class TestAdopt(unittest.TestCase):
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        render_pkg_dir = self.workspace_config.render_path / pkg
+        render_pkg_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create a template in src/ and compiled version in install/
+        # Create a 2-line template hunk in src/ and compiled version in render/ and install/ (Case 3 conflict when partially edited)
         src_file = src_pkg_dir / "app.conf.envst"
-        src_file.write_text("TEMPLATE_VAR=$MY_VAR\nEXTRA_LINE=1\n", encoding="utf-8")
+        src_file.write_text("TEMPLATE_VAR_1=$MY_VAR_1\nTEMPLATE_VAR_2=$MY_VAR_2\nEXTRA_LINE=1\n", encoding="utf-8")
 
+        rendered_baseline = "TEMPLATE_VAR_1=RENDERED_VALUE_1\nTEMPLATE_VAR_2=RENDERED_VALUE_2\nEXTRA_LINE=1\n"
+        (render_pkg_dir / "app.conf").write_text(rendered_baseline, encoding="utf-8")
         install_file = pkg_install_dir / "app.conf"
-        install_file.write_text("TEMPLATE_VAR=RENDERED_VALUE\nEXTRA_LINE=1\n", encoding="utf-8")
+        install_file.write_text(rendered_baseline, encoding="utf-8")
 
         subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init src app.conf"], cwd=self.workspace_path, check=True, capture_output=True)
@@ -783,8 +804,8 @@ class TestAdopt(unittest.TestCase):
         # Record HEAD commit sha before adopt
         head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
 
-        # Modify install_file so that patch cannot apply cleanly to src_file template
-        install_file.write_text("CONFLICTING_MODIFICATION=VALUE\nEXTRA_LINE=999\n", encoding="utf-8")
+        # Partially modify the 2-line template hunk in install_file so Case 3 border-crossing conflict triggers
+        install_file.write_text("TEMPLATE_VAR_1=CONFLICTING_MODIFICATION\nTEMPLATE_VAR_2=RENDERED_VALUE_2\nEXTRA_LINE=999\n", encoding="utf-8")
 
         # Run adopt
         run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=False))
@@ -817,8 +838,11 @@ class TestAdopt(unittest.TestCase):
         src_conflict.mkdir(parents=True, exist_ok=True)
         install_conflict = self.install_dir / pkg_conflict
         install_conflict.mkdir(parents=True, exist_ok=True)
+        render_conflict = self.workspace_config.render_path / pkg_conflict
+        render_conflict.mkdir(parents=True, exist_ok=True)
 
-        (src_conflict / "server.conf.envst").write_text("HOST=$MY_HOST\nPORT=8080\n", encoding="utf-8")
+        (src_conflict / "server.conf.envst").write_text("HOST=$MY_HOST\nPORT=$MY_PORT\n", encoding="utf-8")
+        (render_conflict / "server.conf").write_text("HOST=localhost\nPORT=8080\n", encoding="utf-8")
         (install_conflict / "server.conf").write_text("HOST=localhost\nPORT=8080\n", encoding="utf-8")
 
         # Commit clean initial state in workspace and install
@@ -828,9 +852,9 @@ class TestAdopt(unittest.TestCase):
         subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init multi-pkg install"], cwd=self.install_dir, check=True, capture_output=True)
 
-        # Drift in install/
+        # Drift in install/ (partial modification of 2-line template hunk triggers Case 3 conflict)
         (install_clean / "config.json").write_text('{"version": 2}', encoding="utf-8")
-        (install_conflict / "server.conf").write_text("CONFLICTING_KEY=VALUE\nPORT=9999\n", encoding="utf-8")
+        (install_conflict / "server.conf").write_text("HOST=CONFLICTING_VALUE\nPORT=8080\n", encoding="utf-8")
 
         # Run adopt across both packages
         resolved = run_primitive_adopt_drifts(
@@ -868,12 +892,15 @@ class TestAdopt(unittest.TestCase):
         src_pkg.mkdir(parents=True, exist_ok=True)
         install_pkg = self.install_dir / pkg
         install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg = self.workspace_config.render_path / pkg
+        render_pkg.mkdir(parents=True, exist_ok=True)
 
         (src_pkg / "static_file.txt").write_text("static v1", encoding="utf-8")
         (install_pkg / "static_file.txt").write_text("static v1", encoding="utf-8")
 
-        (src_pkg / "template_file.conf.envst").write_text("KEY=$VAL\nLINE=A\n", encoding="utf-8")
-        (install_pkg / "template_file.conf").write_text("KEY=RENDERED\nLINE=A\n", encoding="utf-8")
+        (src_pkg / "template_file.conf.envst").write_text("KEY_1=$VAL_1\nKEY_2=$VAL_2\n", encoding="utf-8")
+        (render_pkg / "template_file.conf").write_text("KEY_1=RENDERED_1\nKEY_2=RENDERED_2\n", encoding="utf-8")
+        (install_pkg / "template_file.conf").write_text("KEY_1=RENDERED_1\nKEY_2=RENDERED_2\n", encoding="utf-8")
 
         subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init partial src"], cwd=self.workspace_path, check=True, capture_output=True)
@@ -883,9 +910,9 @@ class TestAdopt(unittest.TestCase):
 
         head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
 
-        # Drift in install/: static_file is clean, template_file has conflict
+        # Drift in install/: static_file is clean, template_file has Case 3 partial-hunk conflict
         (install_pkg / "static_file.txt").write_text("static v2", encoding="utf-8")
-        (install_pkg / "template_file.conf").write_text("CONFLICT=TRUE\nLINE=Z\n", encoding="utf-8")
+        (install_pkg / "template_file.conf").write_text("KEY_1=CONFLICT\nKEY_2=RENDERED_2\n", encoding="utf-8")
 
         resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], options=AdoptOptions(interactive=False))
 
@@ -920,10 +947,16 @@ class TestAdopt(unittest.TestCase):
         src_pkg.mkdir(parents=True, exist_ok=True)
         install_pkg = self.install_dir / pkg
         install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg = self.workspace_config.render_path / pkg
+        render_pkg.mkdir(parents=True, exist_ok=True)
 
         src_template = src_pkg / "template_script.sh.envst"
         src_template.write_text("#!/bin/bash\nexport THEME=$THEME_NAME\n", encoding="utf-8")
         src_template.chmod(0o644)
+
+        render_script = render_pkg / "template_script.sh"
+        render_script.write_text("#!/bin/bash\nexport THEME=Dark\n", encoding="utf-8")
+        render_script.chmod(0o644)
 
         install_script = install_pkg / "template_script.sh"
         install_script.write_text("#!/bin/bash\nexport THEME=Dark\n", encoding="utf-8")
@@ -1077,8 +1110,11 @@ class TestAdopt(unittest.TestCase):
         src_pkg.mkdir(parents=True, exist_ok=True)
         install_pkg = self.install_dir / pkg
         install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg = self.workspace_config.render_path / pkg
+        render_pkg.mkdir(parents=True, exist_ok=True)
 
-        (src_pkg / "service.conf.envst").write_text("PORT=$MY_PORT\nKEY=ABC\n", encoding="utf-8")
+        (src_pkg / "service.conf.envst").write_text("PORT=$MY_PORT\nKEY=$MY_KEY\n", encoding="utf-8")
+        (render_pkg / "service.conf").write_text("PORT=8000\nKEY=ABC\n", encoding="utf-8")
         (install_pkg / "service.conf").write_text("PORT=8000\nKEY=ABC\n", encoding="utf-8")
 
         subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
@@ -1089,8 +1125,8 @@ class TestAdopt(unittest.TestCase):
 
         head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True).stdout.strip()
 
-        # Conflicting modification in install/
-        (install_pkg / "service.conf").write_text("COMPLETELY_DIFFERENT=999\nOTHER=ZZZ\n", encoding="utf-8")
+        # Conflicting Case 3 partial-hunk modification in install/
+        (install_pkg / "service.conf").write_text("PORT=9999\nKEY=ABC\n", encoding="utf-8")
 
         # Interactive choose [6] Skip file on conflict menu
         with patch("builtins.input", return_value="6"):
@@ -1191,8 +1227,8 @@ class TestAdopt(unittest.TestCase):
             if len(line) >= 2:
                 self.assertIn(line[0], [" ", "?"])
 
-    @patch("drift.primitives.adopt_repo.launch_single_file_editor")
-    @patch("drift.primitives.adopt_repo.apply_source_patch")
+    @patch("drift.adopt.adopt_actions.launch_single_file_editor")
+    @patch("drift.adopt.adopt_actions.apply_source_patch")
     def test_patch_and_edit_success_and_failure(self, mock_apply: MagicMock, mock_launch: MagicMock) -> None:
         """Verifies patch_and_edit applies patch, syncs permissions, opens editor, and handles failures."""
         mock_apply.return_value = True
@@ -1207,7 +1243,7 @@ class TestAdopt(unittest.TestCase):
         install_file.chmod(0o755)
 
         # 1. Clean patch without editor, with file mode sync
-        self.assertTrue(patch_and_edit(src_file, "patch content", install_file=install_file, accept_conflicts=False, open_editor=False))
+        self.assertTrue(patch_and_edit(src_file, "patch content", patch_from=install_file, accept_conflicts=False, open_editor=False))
         mock_apply.assert_called_once_with(src_file, "patch content", accept_conflicts=False)
         mock_launch.assert_not_called()
         if sys.platform != "win32":
@@ -1216,15 +1252,16 @@ class TestAdopt(unittest.TestCase):
         # 2. Conflicted patch with editor
         mock_apply.reset_mock()
         mock_launch.reset_mock()
-        self.assertTrue(patch_and_edit(src_file, "conflict patch", install_file=install_file, accept_conflicts=True, open_editor=True))
+        self.assertTrue(patch_and_edit(src_file, "conflict patch", patch_from=install_file, accept_conflicts=True, open_editor=True))
         mock_apply.assert_called_once_with(src_file, "conflict patch", accept_conflicts=True)
         mock_launch.assert_called_once_with(src_file)
 
-        # 3. Patch application failure returns False
+        # 3. Patch application failure returns False (passing non-existing patch_from path)
+        non_existent_patch_from = self.install_dir / "pkg_a" / "non_existent.txt"
         mock_apply.reset_mock()
         mock_launch.reset_mock()
         mock_apply.return_value = False
-        self.assertFalse(patch_and_edit(src_file, "failing patch"))
+        self.assertFalse(patch_and_edit(src_file, "failing patch", patch_from=non_existent_patch_from))
         mock_launch.assert_not_called()
 
         # 4. Failure when EDITOR is unset or invalid
@@ -1232,9 +1269,9 @@ class TestAdopt(unittest.TestCase):
         mock_launch.reset_mock()
         mock_apply.return_value = True
         mock_launch.side_effect = RuntimeError("Environment variable $EDITOR is not set")
-        self.assertFalse(patch_and_edit(src_file, "patch content", open_editor=True))
+        self.assertFalse(patch_and_edit(src_file, "patch content", patch_from=non_existent_patch_from, open_editor=True))
 
-    @patch("drift.primitives.adopt_repo.launch_side_by_side_editor")
+    @patch("drift.adopt.adopt_actions.launch_side_by_side_editor")
     def test_fallback_side_by_side_success_and_failure(self, mock_launch: MagicMock) -> None:
         """Verifies fallback_side_by_side returns True on success and False on RuntimeError."""
         src_file = self.src_dir / "pkg_a" / "test.txt"
@@ -1255,6 +1292,8 @@ class TestAdopt(unittest.TestCase):
         src_pkg.mkdir(parents=True, exist_ok=True)
         install_pkg = self.install_dir / pkg
         install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg = self.workspace_config.render_path / pkg
+        render_pkg.mkdir(parents=True, exist_ok=True)
 
         data_file = src_pkg / "custom.env"
         data_file.write_text("ENV_KEY=val\n", encoding="utf-8")
@@ -1271,12 +1310,15 @@ suffix = "custom"
 render_command = "bash -c 'cat %i %s'"
 """)
 
-        # 1. Setup existing templated files in src/ and rendered files in install/
+        # 1. Setup existing templated files in src/ and rendered files in render/ and install/
         src_config = src_pkg / "config.custom.ini"
         src_config.write_text("[section]\nkey=original_val\n", encoding="utf-8")
 
         src_app = src_pkg / "app.custom.txt"
         src_app.write_text("hello original app\n", encoding="utf-8")
+
+        (render_pkg / "config.ini").write_text("[section]\nkey=original_val\n", encoding="utf-8")
+        (render_pkg / "app.txt").write_text("hello original app\n", encoding="utf-8")
 
         install_config = install_pkg / "config.ini"
         install_config.write_text("[section]\nkey=original_val\n", encoding="utf-8")
@@ -1321,6 +1363,8 @@ render_command = "bash -c 'cat %i %s'"
         src_pkg.mkdir(parents=True, exist_ok=True)
         install_pkg = self.install_dir / pkg
         install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg = self.workspace_config.render_path / pkg
+        render_pkg.mkdir(parents=True, exist_ok=True)
 
         data_file = src_pkg / "custom.env"
         data_file.write_text("ENV_KEY=val\n", encoding="utf-8")
@@ -1338,6 +1382,8 @@ render_command = "bash -c 'cat %i %s'"
 
         src_doc = src_pkg / "document.custom.md"
         src_doc.write_text("# Document Title\n", encoding="utf-8")
+
+        (render_pkg / "document.md").write_text("# Document Title\n", encoding="utf-8")
 
         install_doc = install_pkg / "document.md"
         install_doc.write_text("# Document Title\n", encoding="utf-8")
@@ -1384,7 +1430,7 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "config.txt").write_text("line1\nline2_modified\n", encoding="utf-8")
 
         with patch("builtins.input", return_value="2"), \
-             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("drift.adopt.adopt_actions.launch_single_file_editor") as mock_editor, \
              patch("sys.stdout", StringIO()) as mock_stdout:
             res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=True))
             self.assertEqual(res.status, "SUCCESS")
@@ -1414,7 +1460,7 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "config.txt").write_text("modified\n", encoding="utf-8")
 
         with patch("builtins.input", return_value="3"), \
-             patch("drift.primitives.adopt_repo.launch_side_by_side_editor") as mock_sbs:
+             patch("drift.adopt.adopt_actions.launch_side_by_side_editor") as mock_sbs:
             res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=True))
             self.assertEqual(res.status, "SUCCESS")
             mock_sbs.assert_called_once_with([(src_pkg / "config.txt", install_pkg / "config.txt")])
@@ -1442,7 +1488,7 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "new_name.txt").write_text(content_mod, encoding="utf-8")
 
         with patch("builtins.input", return_value="2"), \
-             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor:
+             patch("drift.adopt.adopt_actions.launch_single_file_editor") as mock_editor:
             res = adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=True))
             self.assertEqual(res.status, "SUCCESS")
             mock_editor.assert_called_once_with(src_pkg / "new_name.txt")
@@ -1470,7 +1516,7 @@ render_command = "bash -c 'cat %i %s'"
 
             (install_pkg / "file.txt").write_text("changed_text\n", encoding="utf-8")
 
-            with self.assertLogs("drift.primitives.adopt_repo", level="DEBUG") as cm:
+            with self.assertLogs("drift.adopt", level="DEBUG") as cm:
                 adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
                 self.assertTrue(any("Diff for 'file.txt'" in log for log in cm.output))
                 self.assertTrue(any("+changed_text" in log for log in cm.output))
@@ -1485,9 +1531,14 @@ render_command = "bash -c 'cat %i %s'"
         install_pkg = self.install_dir / pkg
         install_pkg.mkdir(parents=True, exist_ok=True)
 
-        (src_pkg / "file_a.txt").write_text("orig_a\n", encoding="utf-8")
+        orig_a = "line1=orig\nline2=b\nline3=c\nline4=d\nline5=orig\n"
+        dirty_src_a = "line1=dirty_uncommitted_a\nline2=b\nline3=c\nline4=d\nline5=orig\n"
+        drifted_install_a = "line1=orig\nline2=b\nline3=c\nline4=d\nline5=drifted_a\n"
+        merged_a = "line1=dirty_uncommitted_a\nline2=b\nline3=c\nline4=d\nline5=drifted_a\n"
+
+        (src_pkg / "file_a.txt").write_text(orig_a, encoding="utf-8")
         (src_pkg / "file_b.txt").write_text("orig_b\n", encoding="utf-8")
-        (install_pkg / "file_a.txt").write_text("orig_a\n", encoding="utf-8")
+        (install_pkg / "file_a.txt").write_text(orig_a, encoding="utf-8")
         (install_pkg / "file_b.txt").write_text("orig_b\n", encoding="utf-8")
 
         subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
@@ -1496,8 +1547,8 @@ render_command = "bash -c 'cat %i %s'"
         subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init install pkg_sibling"], cwd=self.install_dir, check=True, capture_output=True)
 
-        # 1. Dirty file_a in src/
-        (src_pkg / "file_a.txt").write_text("dirty_uncommitted_a\n", encoding="utf-8")
+        # 1. Dirty file_a in src/ on line 1
+        (src_pkg / "file_a.txt").write_text(dirty_src_a, encoding="utf-8")
 
         # 2. Modify only file_b in install/ (drift)
         (install_pkg / "file_b.txt").write_text("drifted_b\n", encoding="utf-8")
@@ -1509,10 +1560,10 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual((src_pkg / "file_b.txt").read_text(encoding="utf-8"), "drifted_b\n")
         # file_a should remain untouched and dirty
-        self.assertEqual((src_pkg / "file_a.txt").read_text(encoding="utf-8"), "dirty_uncommitted_a\n")
+        self.assertEqual((src_pkg / "file_a.txt").read_text(encoding="utf-8"), dirty_src_a)
 
-        # 4. Now modify file_a in install/ too (drift on dirty file)
-        (install_pkg / "file_a.txt").write_text("drifted_a\n", encoding="utf-8")
+        # 4. Now modify file_a in install/ too on line 5 (non-conflicting drift on dirty file)
+        (install_pkg / "file_a.txt").write_text(drifted_install_a, encoding="utf-8")
 
         # 5. Adopting without force should FAIL with RuntimeError pointing to file_a.txt
         with self.assertRaises(RuntimeError) as ctx:
@@ -1522,12 +1573,12 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIn("file_a.txt", str(ctx.exception))
         self.assertIn(f"drift adopt {pkg} --force", str(ctx.exception))
 
-        # 6. Adopting with force=True should SUCCEED and overwrite file_a.txt
+        # 6. Adopting with force=True should SUCCEED and cleanly patch file_a.txt preserving line 1
         res_force = run_primitive_adopt_drifts(
             self.workspace_config, [pkg], options=AdoptOptions(interactive=False, force=True)
         )
         self.assertEqual(res_force.status, "SUCCESS")
-        self.assertEqual((src_pkg / "file_a.txt").read_text(encoding="utf-8"), "drifted_a\n")
+        self.assertEqual((src_pkg / "file_a.txt").read_text(encoding="utf-8"), merged_a)
 
     def test_adopt_deletion_dirty_file_safeguard(self) -> None:
         """Verifies that adopting a file deletion respects the file-level cleanliness safeguard."""
@@ -1641,8 +1692,6 @@ render_command = "bash -c 'cat %i %s'"
 
     def test_plan_package_adopt_rename_with_precomputed_patch(self) -> None:
         """Verifies plan_package_adopt correctly precomputes rename patches and execute_package_adopt applies them."""
-        from drift.primitives.adopt_repo import get_rename_patch_key
-
         pkg = "pkg_rename_plan"
         src_pkg = self.src_dir / pkg
         src_pkg.mkdir(parents=True, exist_ok=True)
@@ -1765,10 +1814,15 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIn(Path("dir_b"), plan.additions)
 
     def test_plan_package_adopt_corrupt_keep_file_warning(self) -> None:
-        """Verifies that modified keep files log a warning and are stripped from modifications."""
+        """Verifies that modified and non-empty added keep files log warnings, stay in the adoption
+        dataflow, and are automatically reset to 0 bytes during adoption so install/ converges cleanly.
+        """
+        from drift.utils.git_utils import get_git_status_porcelain
+
         pkg = "pkg_corrupt_keep"
         src_pkg = self.src_dir / pkg
         src_pkg.mkdir(parents=True, exist_ok=True)
+        (src_pkg / "my_dir").mkdir(parents=True, exist_ok=True)
         install_pkg = self.install_dir / pkg
         install_pkg.mkdir(parents=True, exist_ok=True)
 
@@ -1776,22 +1830,56 @@ render_command = "bash -c 'cat %i %s'"
         keep_file.parent.mkdir(parents=True, exist_ok=True)
         keep_file.write_bytes(b"")
 
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src corrupt keep"], cwd=self.workspace_path, check=True, capture_output=True)
         subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init install corrupt keep"], cwd=self.install_dir, check=True, capture_output=True)
 
-        # Modify keep file to have non-empty content
+        # 1. Modify tracked keep file to have non-empty content AND add a non-empty keep file in a new directory
         keep_file.write_text("corrupted content", encoding="utf-8")
+        new_keep_file = install_pkg / "added_dir" / DRIFT_KEEP_FILE_NAME
+        new_keep_file.parent.mkdir(parents=True, exist_ok=True)
+        new_keep_file.write_text("non-empty new keep", encoding="utf-8")
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.primitives.adopt_repo", level="WARNING") as log_cm:
+            with self.assertLogs("drift.adopt", level="WARNING") as log_cm:
                 plan = plan_package_adopt(self.workspace_config, pkg)
-                self.assertTrue(any("CORRUPT" in msg for msg in log_cm.output))
+                self.assertTrue(any("Unexpected modification of keep file" in msg for msg in log_cm.output))
+                self.assertTrue(any("is not empty" in msg for msg in log_cm.output))
         finally:
             set_test_mode(True, enable_logging=False)
 
-        # Must not be listed in modifications
-        self.assertNotIn(Path("my_dir") / DRIFT_KEEP_FILE_NAME, plan.modifications)
+        # Modified keep file MUST remain in plan.modifications so adoption discards the corrupt change,
+        # and non-empty added keep file MUST be translated to an empty directory addition in plan.additions
+        self.assertIn(Path("my_dir") / DRIFT_KEEP_FILE_NAME, plan.modifications)
+        self.assertIn(Path("added_dir"), plan.additions)
+        self.assertIn("[Discard corrupt keep file modification]", plan.format_text())
+
+        # 2. Execute adoption (Pass 1 Cold): corrupt keep modification is discarded (reset to 0 bytes),
+        #    non-empty added keep file creates empty dir in src/ and is truncated to 0 bytes in install/,
+        #    and install/ has zero remaining drift!
+        res1 = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_reverse_sync=True),
+        )
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(keep_file.stat().st_size, 0)
+        self.assertEqual(new_keep_file.stat().st_size, 0)
+        self.assertTrue((src_pkg / "added_dir").is_dir())
+        self.assertFalse((src_pkg / "added_dir" / DRIFT_KEEP_FILE_NAME).exists())
+        self.assertFalse((src_pkg / "my_dir" / DRIFT_KEEP_FILE_NAME).exists())
+        self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
+
+        # 3. Pass 2 (Warm / Idempotent): re-running adopt reports UP_TO_DATE
+        res2 = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_reverse_sync=True),
+        )
+        self.assertEqual(res2.status, "UP_TO_DATE")
+        self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
 
     def test_handle_single_addition_empty_dir_non_interactive(self) -> None:
         """Verifies non-interactive directory addition creates empty directory in src/ without .drift_keep."""
@@ -1903,7 +1991,7 @@ render_command = "bash -c 'cat %i %s'"
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.primitives.adopt_repo", level="WARNING") as log_cm:
+            with self.assertLogs("drift.adopt", level="WARNING") as log_cm:
                 resolved = handle_single_deletion(
                     self.workspace_config.render_engine_configs,
                     pkg,
@@ -1990,10 +2078,8 @@ render_command = "bash -c 'cat %i %s'"
 
         self.assertEqual(get_drifted_packages(self.workspace_config), [pkg_rename, pkg_space])
 
-    def test_generate_adjusted_patch_preserves_dash_and_plus_body_lines(self) -> None:
-        """Verifies generate_adjusted_patch only rewrites headers before '@@' and preserves '--- '/'+++ ' lines in hunks."""
-        from drift.primitives.adopt_repo import generate_adjusted_patch
-
+    def test_generate_retargeted_patch_preserves_dash_and_plus_body_lines(self) -> None:
+        """Verifies generate_retargeted_patch and rewrite_patch_target_headers only rewrite headers before '@@' and preserve '--- '/'+++ ' lines in hunks."""
         pkg = "pkg_patch_body"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -2023,13 +2109,23 @@ render_command = "bash -c 'cat %i %s'"
             encoding="utf-8",
         )
 
-        adj_patch = generate_adjusted_patch(
+        adj_patch = generate_retargeted_patch(
             install_base=self.install_dir,
             pkg=pkg,
             new_rel_path=Path("new_script.lua"),
             old_rel_path=Path("old_script.lua"),
-            target_src_filename="new_script.envst.lua",
+            patch_target_path=Path("new_script.envst.lua"),
         )
+        raw_patch = generate_install_git_patch(
+            self.install_dir,
+            Path(pkg) / "new_script.lua",
+            old_rel_path=Path(pkg) / "old_script.lua",
+        )
+        self.assertEqual(
+            rewrite_patch_target_headers(raw_patch, Path("new_script.envst.lua")),
+            adj_patch,
+        )
+        self.assertEqual(rewrite_patch_target_headers("", Path("new_script.envst.lua")), "")
 
         lines = adj_patch.splitlines()
         self.assertEqual(lines[0], "--- a/new_script.envst.lua")
@@ -2097,16 +2193,21 @@ render_command = "bash -c 'cat %i %s'"
         src_static = src_pkg / "static.toml"
         src_static.write_text("mode = 'v1'\n", encoding="utf-8")
 
-        # Rendered files in install/
-        install_j2 = install_pkg / "config.toml"
-        install_j2.write_text(
+        # Rendered files in render/ and install/
+        render_pkg = self.workspace_config.render_path / pkg
+        render_pkg.mkdir(parents=True, exist_ok=True)
+        rendered_j2_base = (
             "host = 'prod-box'\n"
             "line2 = 'a'\n"
             "line3 = 'b'\n"
             "line4 = 'c'\n"
-            "port = 8080\n",
-            encoding="utf-8",
+            "port = 8080\n"
         )
+        (render_pkg / "config.toml").write_text(rendered_j2_base, encoding="utf-8")
+        (render_pkg / "static.toml").write_text("mode = 'v1'\n", encoding="utf-8")
+
+        install_j2 = install_pkg / "config.toml"
+        install_j2.write_text(rendered_j2_base, encoding="utf-8")
         install_static = install_pkg / "static.toml"
         install_static.write_text("mode = 'v1'\n", encoding="utf-8")
 
@@ -2142,8 +2243,6 @@ render_command = "bash -c 'cat %i %s'"
 
     def test_check_is_drifted_path_converged_matrix(self) -> None:
         """Unit test probing check_is_drifted_path_converged across identical, content-divergent, permission-divergent, and deleted paths."""
-        from drift.primitives.adopt_repo import check_is_drifted_path_converged
-
         pkg = "pkg_conv_matrix"
         install_pkg = self.install_dir / pkg
         render_pkg = self.workspace_config.render_path / pkg
@@ -2544,7 +2643,6 @@ render_command = "bash -c 'cat %i %s'"
         separation of conflicted_files vs skipped_files, and pure format_text() methods across plans and results.
         """
         from drift.models import AdoptResult, AdoptStatus, PackageAdoptResult
-        from drift.primitives.adopt_repo import ItemAdoptOutcome
 
         # 0. Verify ItemAdoptOutcome truthiness
         self.assertTrue(bool(ItemAdoptOutcome.ADOPTED))
@@ -2554,13 +2652,17 @@ render_command = "bash -c 'cat %i %s'"
         pkg = "pkg_status_matrix"
         src_pkg = self.src_dir / pkg
         install_pkg = self.install_dir / pkg
+        render_pkg = self.workspace_config.render_path / pkg
         src_pkg.mkdir(parents=True, exist_ok=True)
         install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg.mkdir(parents=True, exist_ok=True)
 
         (src_pkg / "clean.txt").write_text("v1\n", encoding="utf-8")
+        (render_pkg / "clean.txt").write_text("v1\n", encoding="utf-8")
         (install_pkg / "clean.txt").write_text("v1\n", encoding="utf-8")
-        (src_pkg / "tmpl.conf.envst").write_text("KEY=$VAL\nLINE=1\n", encoding="utf-8")
-        (install_pkg / "tmpl.conf").write_text("KEY=RENDERED\nLINE=1\n", encoding="utf-8")
+        (src_pkg / "tmpl.conf.envst").write_text("KEY_1=$VAL_1\nKEY_2=$VAL_2\n", encoding="utf-8")
+        (render_pkg / "tmpl.conf").write_text("KEY_1=RENDERED_1\nKEY_2=RENDERED_2\n", encoding="utf-8")
+        (install_pkg / "tmpl.conf").write_text("KEY_1=RENDERED_1\nKEY_2=RENDERED_2\n", encoding="utf-8")
 
         subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init status matrix src"], cwd=self.workspace_path, check=True, capture_output=True)
@@ -2577,9 +2679,9 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIn(f"📦 Package '{pkg}' [✨ UP_TO_DATE]:", res_up_to_date.format_text(verbose=True))
         self.assertIn("No drifts detected.", res_up_to_date.format_text(verbose=True))
 
-        # 2. Dry-run preview formatting (conflict vs clean modification)
+        # 2. Dry-run preview formatting (Case 3 partial-hunk conflict vs clean modification)
         (install_pkg / "clean.txt").write_text("v2\n", encoding="utf-8")
-        (install_pkg / "tmpl.conf").write_text("CONFLICT_LINE=X\nLINE=99\n", encoding="utf-8")
+        (install_pkg / "tmpl.conf").write_text("KEY_1=CONFLICT_LINE_X\nKEY_2=RENDERED_2\n", encoding="utf-8")
         res_dry = run_primitive_adopt_drifts(
             self.workspace_config, [pkg], AdoptOptions(dry_run=True, no_render=True, no_reverse_sync=True)
         )
@@ -2686,8 +2788,9 @@ render_command = "bash -c 'cat %i %s'"
         for name in adopt_model_names:
             canonical = getattr(adopt_models, name)
             self.assertIs(getattr(models_pkg, name), canonical)
-            self.assertIs(getattr(adopt_repo, name), canonical)
             self.assertIs(getattr(drift, name), canonical)
+        for name in ("AdoptStatus", "AdoptOptions", "AdoptPlan", "PackageAdoptResult", "AdoptResult"):
+            self.assertIs(getattr(adopt_repo, name), getattr(adopt_models, name))
         for name in ("ItemAdoptOutcome", "AdoptOptions", "PackageDriftFiles", "PackageAdoptPlan", "AdoptPlan"):
             self.assertIs(getattr(primitives_pkg, name), getattr(adopt_models, name))
 
@@ -2764,7 +2867,7 @@ render_command = "bash -c 'cat %i %s'"
             '  "google": {\n    "type": "api_key",\n    "key": "real_key_2"\n  }\n}\n',
             encoding="utf-8",
         )
-        patch_content = generate_unified_patch(self.install_dir, Path(pkg) / "auth.json")
+        patch_content = generate_install_git_patch(self.install_dir, Path(pkg) / "auth.json")
         self.assertTrue(bool(patch_content.strip()))
 
         # 3. Source template with ${NEW_API_KEY}
@@ -2789,12 +2892,12 @@ render_command = "bash -c 'cat %i %s'"
 
         # 6. Verify patch_and_edit with accept_conflicts=True & open_editor=True launches editor and returns True
         src_file.write_text(template_text, encoding="utf-8")
-        with patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor:
+        with patch("drift.adopt.adopt_actions.launch_single_file_editor") as mock_editor:
             self.assertTrue(
                 patch_and_edit(
                     src_file,
                     patch_content,
-                    install_file=install_file,
+                    patch_from=install_file,
                     accept_conflicts=True,
                     open_editor=True,
                 )
@@ -2802,19 +2905,16 @@ render_command = "bash -c 'cat %i %s'"
             mock_editor.assert_called_once_with(src_file)
         self.assertIn("<<<<<<<", src_file.read_text(encoding="utf-8"))
 
-        # 7. Simulate macOS/BSD 'patch' (exits with code 1 on unrecognized '--merge' without touching src_file):
-        #    verifies fallback to _apply_patch_with_git_merge_file writes conflict markers
+        # 7. Verify accept_conflicts=True delegates unconditionally to 'git merge-file' without calling 'patch --merge'
         src_file.write_text(template_text, encoding="utf-8")
         real_run = subprocess.run
 
-        def bsd_patch_side_effect(cmd, *args, **kwargs):
+        def forbid_gnu_patch_merge(cmd, *args, **kwargs):
             if cmd and cmd[0] == "patch" and "--merge" in cmd:
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=1, stdout="", stderr="patch: unrecognized option `--merge'"
-                )
+                raise AssertionError("GNU-only 'patch --merge' must never be invoked")
             return real_run(cmd, *args, **kwargs)
 
-        with patch("drift.primitives.adopt_repo.subprocess.run", side_effect=bsd_patch_side_effect):
+        with patch("drift.adopt.adopt_patch.subprocess.run", side_effect=forbid_gnu_patch_merge):
             self.assertTrue(apply_source_patch(src_file, patch_content, accept_conflicts=True))
         bsd_merged = src_file.read_text(encoding="utf-8")
         self.assertIn("<<<<<<<", bsd_merged)
@@ -2826,8 +2926,8 @@ render_command = "bash -c 'cat %i %s'"
         # 8. Malformed hunk body or fatal failure returns False even when accept_conflicts=True
         src_file.write_text(template_text, encoding="utf-8")
         self.assertFalse(apply_source_patch(src_file, "@@ -1,2 +1,2 @@\ncorrupt_hunk_line\n", accept_conflicts=True))
-        with patch("drift.primitives.adopt_repo.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(args=["patch"], returncode=255, stdout="", stderr="fatal")
+        with patch("drift.adopt.adopt_patch.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=["git", "merge-file"], returncode=255, stdout="", stderr="fatal")
             self.assertFalse(apply_source_patch(src_file, patch_content, accept_conflicts=True))
 
     def test_adopt_interactive_conflict_menu_6_options_modification_and_rename(self) -> None:
@@ -2847,20 +2947,25 @@ render_command = "bash -c 'cat %i %s'"
         src_pkg.mkdir(parents=True, exist_ok=True)
         install_pkg = self.install_dir / pkg
         install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg = self.workspace_config.render_path / pkg
+        render_pkg.mkdir(parents=True, exist_ok=True)
 
-        tmpl_init = '{\n  "newapi": {\n    "type": "api_key",\n    "key": "${NEW_API_KEY}"\n  }\n}\n'
+        # 2-line template hunk (Case 3 border-crossing conflict when host modifies only 1 of the 2 lines)
+        tmpl_init = '{\n  "newapi": {\n    "type": "${NEW_API_TYPE}",\n    "key": "${NEW_API_KEY}"\n  }\n}\n'
         inst_base = '{\n  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  }\n}\n'
         inst_drift = (
-            '{\n  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  },\n'
+            '{\n  "newapi": {\n    "type": "api_key",\n    "key": "overridden_key_1"\n  },\n'
             '  "google": {\n    "type": "api_key",\n    "key": "real_key_2"\n  }\n}\n'
         )
 
         def reset_modification_fixture() -> tuple[Path, Path]:
             list(map(Path.unlink, filter(Path.is_file, src_pkg.glob("*"))))
             list(map(Path.unlink, filter(Path.is_file, install_pkg.glob("*"))))
+            list(map(Path.unlink, filter(Path.is_file, render_pkg.glob("*"))))
             s_file = src_pkg / "auth.envst.json"
             i_file = install_pkg / "auth.json"
             s_file.write_text(tmpl_init, encoding="utf-8")
+            (render_pkg / "auth.json").write_text(inst_base, encoding="utf-8")
             i_file.write_text(inst_base, encoding="utf-8")
             subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
             subprocess.run(["git", "commit", "--allow-empty", "-m", "reset mod src"], cwd=self.workspace_path, check=True, capture_output=True)
@@ -2872,7 +2977,7 @@ render_command = "bash -c 'cat %i %s'"
         # --- Modification Option [1]: Write Merge Conflicts (no editor) ---
         s_file, _ = reset_modification_fixture()
         with patch("builtins.input", return_value="1"), \
-             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("drift.adopt.adopt_actions.launch_single_file_editor") as mock_editor, \
              patch("sys.stdout", StringIO()) as mock_out:
             res_opt1 = run_primitive_adopt_drifts(
                 self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
@@ -2891,7 +2996,7 @@ render_command = "bash -c 'cat %i %s'"
         # --- Modification Option [2]: Open Merge Conflict Editor (launches editor) ---
         s_file, _ = reset_modification_fixture()
         with patch("builtins.input", return_value="2"), \
-             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("drift.adopt.adopt_actions.launch_single_file_editor") as mock_editor, \
              patch("sys.stdout", StringIO()):
             res_opt2 = run_primitive_adopt_drifts(
                 self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
@@ -2903,7 +3008,7 @@ render_command = "bash -c 'cat %i %s'"
         # --- Modification Option [3]: Open Side-by-Side Reference ---
         s_file, i_file = reset_modification_fixture()
         with patch("builtins.input", return_value="3"), \
-             patch("drift.primitives.adopt_repo.launch_side_by_side_editor") as mock_sbs, \
+             patch("drift.adopt.adopt_actions.launch_side_by_side_editor") as mock_sbs, \
              patch("sys.stdout", StringIO()):
             res_opt3 = run_primitive_adopt_drifts(
                 self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
@@ -2940,21 +3045,23 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res_non_inter.status, AdoptStatus.SUCCESS)
         self.assertIn("<<<<<<<", s_file.read_text(encoding="utf-8"))
 
-        # --- Conflicted Rename Options [1]-[6] ---
+        # --- Conflicted Rename Options [1]-[6] (Case 3 border-crossing 2-line template hunk) ---
         ren_prefix = "".join(f'  "provider_{i}": {{"type": "static", "enabled": true}},\n' for i in range(8))
-        ren_tmpl_init = "{\n" + ren_prefix + '  "newapi": {\n    "type": "api_key",\n    "key": "${NEW_API_KEY}"\n  }\n}\n'
+        ren_tmpl_init = "{\n" + ren_prefix + '  "newapi": {\n    "type": "${NEW_API_TYPE}",\n    "key": "${NEW_API_KEY}"\n  }\n}\n'
         ren_inst_base = "{\n" + ren_prefix + '  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  }\n}\n'
         ren_inst_drift = (
-            "{\n" + ren_prefix + '  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  },\n'
+            "{\n" + ren_prefix + '  "newapi": {\n    "type": "api_key",\n    "key": "overridden_key_1"\n  },\n'
             '  "google": {\n    "type": "api_key",\n    "key": "real_key_2"\n  }\n}\n'
         )
 
         def reset_rename_fixture() -> tuple[Path, Path]:
             list(map(Path.unlink, filter(Path.is_file, src_pkg.glob("*"))))
             list(map(Path.unlink, filter(Path.is_file, install_pkg.glob("*"))))
+            list(map(Path.unlink, filter(Path.is_file, render_pkg.glob("*"))))
             old_s = src_pkg / "old_auth.envst.json"
             old_i = install_pkg / "old_auth.json"
             old_s.write_text(ren_tmpl_init, encoding="utf-8")
+            (render_pkg / "old_auth.json").write_text(ren_inst_base, encoding="utf-8")
             old_i.write_text(ren_inst_base, encoding="utf-8")
             subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
             subprocess.run(["git", "commit", "--allow-empty", "-m", "reset rename src"], cwd=self.workspace_path, check=True, capture_output=True)
@@ -2968,7 +3075,7 @@ render_command = "bash -c 'cat %i %s'"
         # Rename Option [1]: Write Merge Conflicts (no editor)
         reset_rename_fixture()
         with patch("builtins.input", return_value="1"), \
-             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("drift.adopt.adopt_actions.launch_single_file_editor") as mock_editor, \
              patch("sys.stdout", StringIO()) as mock_ren_out:
             res_ren1 = run_primitive_adopt_drifts(
                 self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
@@ -2990,7 +3097,7 @@ render_command = "bash -c 'cat %i %s'"
         # Rename Option [2]: Open Merge Conflict Editor (with editor)
         reset_rename_fixture()
         with patch("builtins.input", return_value="2"), \
-             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("drift.adopt.adopt_actions.launch_single_file_editor") as mock_editor, \
              patch("sys.stdout", StringIO()):
             res_ren2 = run_primitive_adopt_drifts(
                 self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
@@ -3003,7 +3110,7 @@ render_command = "bash -c 'cat %i %s'"
         # Rename Option [3]: Open Side-by-Side Reference
         reset_rename_fixture()
         with patch("builtins.input", return_value="3"), \
-             patch("drift.primitives.adopt_repo.launch_side_by_side_editor") as mock_sbs, \
+             patch("drift.adopt.adopt_actions.launch_side_by_side_editor") as mock_sbs, \
              patch("sys.stdout", StringIO()):
             res_ren3 = run_primitive_adopt_drifts(
                 self.workspace_config, [pkg], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
@@ -3047,7 +3154,7 @@ render_command = "bash -c 'cat %i %s'"
         omitted line counts, '\\ No newline at end of file' comments, zero-side-effect
         failure isolation, and full interactive/non-interactive adoption under BSD patch.
         """
-        from drift.primitives.adopt_repo import (
+        from drift.adopt.adopt_patch import (
             _apply_hunk_slice,
             _apply_patch_with_git_merge_file,
             _parse_unified_patch_hunks,
@@ -3149,35 +3256,38 @@ render_command = "bash -c 'cat %i %s'"
         self.assertFalse(_apply_patch_with_git_merge_file(untouched_src, "@@ -1,2 +1,2 @@\nbad_hunk\n"))
         self.assertEqual(untouched_src.read_text(encoding="utf-8"), untouched_init)
 
-        with patch("drift.primitives.adopt_repo.subprocess.run") as mock_git_err:
+        with patch("drift.adopt.adopt_patch.subprocess.run") as mock_git_err:
             mock_git_err.return_value = subprocess.CompletedProcess(
                 args=["git", "merge-file"], returncode=255, stdout="", stderr="error"
             )
             self.assertFalse(_apply_patch_with_git_merge_file(untouched_src, "@@ -1,1 +1,1 @@\n-a\n+b\n"))
         self.assertEqual(untouched_src.read_text(encoding="utf-8"), untouched_init)
 
-        with patch("drift.primitives.adopt_repo.subprocess.run") as mock_no_markers:
+        with patch("drift.adopt.adopt_patch.subprocess.run") as mock_no_markers:
             mock_no_markers.return_value = subprocess.CompletedProcess(
                 args=["git", "merge-file"], returncode=1, stdout="", stderr=""
             )
             self.assertFalse(_apply_patch_with_git_merge_file(untouched_src, "@@ -1,1 +1,1 @@\n-a\n+b\n"))
         self.assertEqual(untouched_src.read_text(encoding="utf-8"), untouched_init)
 
-        # 7. Full end-to-end interactive ('[1]' & '[2]') and non-interactive adoption when system 'patch'
-        #    behaves like macOS BSD patch (rejecting '--merge' with exit code 1 or 2)
+        # 7. Full end-to-end interactive ('[1]' & '[2]') and non-interactive adoption on Case 3 conflict
+        #    verifying that 'patch --merge' is never invoked on any platform
         pkg_bsd = "pkg_bsd_e2e"
         src_bsd = self.src_dir / pkg_bsd
         src_bsd.mkdir(parents=True, exist_ok=True)
         inst_bsd = self.install_dir / pkg_bsd
         inst_bsd.mkdir(parents=True, exist_ok=True)
+        render_bsd = self.workspace_config.render_path / pkg_bsd
+        render_bsd.mkdir(parents=True, exist_ok=True)
 
-        tmpl_bsd = '{\n  "k": "${SECRET_K}"\n}\n'
-        base_bsd = '{\n  "k": "real_k"\n}\n'
-        drift_bsd = '{\n  "k": "real_k",\n  "added": 1\n}\n'
+        tmpl_bsd = '{\n  "t": "${SECRET_T}",\n  "k": "${SECRET_K}"\n}\n'
+        base_bsd = '{\n  "t": "type_1",\n  "k": "real_k"\n}\n'
+        drift_bsd = '{\n  "t": "type_1",\n  "k": "overridden_k",\n  "added": 1\n}\n'
 
         s_bsd_file = src_bsd / "cfg.envst.json"
         i_bsd_file = inst_bsd / "cfg.json"
         s_bsd_file.write_text(tmpl_bsd, encoding="utf-8")
+        (render_bsd / "cfg.json").write_text(base_bsd, encoding="utf-8")
         i_bsd_file.write_text(base_bsd, encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
         subprocess.run(["git", "commit", "--allow-empty", "-m", "init bsd src"], cwd=self.workspace_path, check=True, capture_output=True)
@@ -3189,14 +3299,12 @@ render_command = "bash -c 'cat %i %s'"
 
         def simulate_macos_bsd_patch(cmd, *args, **kwargs):
             if isinstance(cmd, list) and cmd and cmd[0] == "patch" and "--merge" in cmd:
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=1, stdout="", stderr="patch: unrecognized option `--merge'"
-                )
+                raise AssertionError("GNU-only 'patch --merge' must never be invoked")
             return real_subproc_run(cmd, *args, **kwargs)
 
-        with patch("drift.primitives.adopt_repo.subprocess.run", side_effect=simulate_macos_bsd_patch), \
+        with patch("drift.adopt.adopt_patch.subprocess.run", side_effect=simulate_macos_bsd_patch), \
              patch("builtins.input", return_value="2"), \
-             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_ed, \
+             patch("drift.adopt.adopt_actions.launch_single_file_editor") as mock_ed, \
              patch("sys.stdout", StringIO()):
             res_bsd = run_primitive_adopt_drifts(
                 self.workspace_config, [pkg_bsd], AdoptOptions(interactive=True, no_render=True, no_reverse_sync=True)
@@ -3204,6 +3312,1012 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res_bsd.status, AdoptStatus.SUCCESS)
         mock_ed.assert_called_once_with(s_bsd_file)
         self.assertIn("<<<<<<<", s_bsd_file.read_text(encoding="utf-8"))
+
+    def test_derender_host_lines_four_cases_and_helpers_unit(self) -> None:
+        """Exhaustively unit-tests Layer 1a 3-way hunk-map de-rendering across:
+        - Case 1: Untouched template hunk adjacent to host insertion (and 0-line rendered directive)
+        - Case 2a: Sub-line containment (adding trailing comma / inline comment to template line)
+          plus uniqueness & whitespace guards
+        - Case 2b: Full replacement or deletion of 1-line and multi-line template hunks
+        - Case 3: Border-crossing partial edit and interior insertion on multi-line template hunks,
+          including line-count alignment via _format_conflict_base_lines when t_len != r_len.
+        """
+        from drift.adopt.adopt_derender import (
+            _apply_subline_containment,
+            _classify_template_hunk,
+            _format_conflict_base_lines,
+            build_template_hunk_map,
+            derender_host_lines,
+        )
+        from drift.models.adopt_models import DerenderedPair, TemplateHunk
+
+        # --- Case 1: Untouched template hunk in context of adjacent host insertion ---
+        t_case1 = [
+            "{\n",
+            '  "newapi": {\n',
+            '    "type": "api_key",\n',
+            '    "key": "${NEW_API_KEY}"\n',
+            "  }\n",
+            "}\n",
+        ]
+        r_case1 = [
+            "{\n",
+            '  "newapi": {\n',
+            '    "type": "api_key",\n',
+            '    "key": "sk-live-12345"\n',
+            "  }\n",
+            "}\n",
+        ]
+        h_case1 = [
+            "{\n",
+            '  "newapi": {\n',
+            '    "type": "api_key",\n',
+            '    "key": "sk-live-12345"\n',
+            "  },\n",
+            '  "google": {\n',
+            '    "type": "api_key",\n',
+            '    "key": "ai-67890"\n',
+            "  }\n",
+            "}\n",
+        ]
+        hunks_c1 = build_template_hunk_map(t_case1, r_case1)
+        self.assertEqual(hunks_c1, [TemplateHunk(t_start=3, t_end=4, r_start=3, r_end=4)])
+        self.assertEqual(
+            hunks_c1[0].to_dict(),
+            {"t_start": 3, "t_end": 4, "r_start": 3, "r_end": 4},
+        )
+        pair_c1 = derender_host_lines(t_case1, r_case1, h_case1)
+        self.assertIsInstance(pair_c1, DerenderedPair)
+        self.assertEqual(pair_c1.r_derendered, t_case1)
+        self.assertIn('    "key": "${NEW_API_KEY}"\n', pair_c1.h_derendered)
+        self.assertNotIn("sk-live-12345", "".join(pair_c1.h_derendered))
+
+        # --- Case 1 & 2 with 0-line rendered template directive (r_start == r_end) ---
+        t_zero = ["# template-only comment\n", "keep = 1\n", "mod = 2\n"]
+        r_zero = ["keep = 1\n", "mod = 2\n"]
+        h_zero_eq = ["keep = 1\n", "mod = 99\n"]
+        pair_zero_eq = derender_host_lines(t_zero, r_zero, h_zero_eq)
+        self.assertEqual(pair_zero_eq.r_derendered, t_zero)
+        self.assertEqual(
+            pair_zero_eq.h_derendered,
+            ["# template-only comment\n", "keep = 1\n", "mod = 99\n"],
+        )
+        # When host edits the very first line at r_start == 0 == r_end:
+        h_zero_ed = ["keep = 100\n", "mod = 2\n"]
+        pair_zero_ed = derender_host_lines(t_zero, r_zero, h_zero_ed)
+        self.assertEqual(pair_zero_ed.r_derendered, t_zero)
+
+        # --- Case 2a: Sub-line containment (host adds trailing comma / comment to template line) ---
+        t_c2a = ['{\n', '  "key": "${NEW_API_KEY}"\n', '}\n']
+        r_c2a = ['{\n', '  "key": "sk-live-12345"\n', '}\n']
+        h_c2a = ['{\n', '  "key": "sk-live-12345",\n', '  "extra": true\n', '}\n']
+        pair_c2a = derender_host_lines(t_c2a, r_c2a, h_c2a)
+        self.assertEqual(pair_c2a.r_derendered, t_c2a)
+        self.assertEqual(
+            pair_c2a.h_derendered,
+            ['{\n', '  "key": "${NEW_API_KEY}",\n', '  "extra": true\n', '}\n'],
+        )
+
+        # Uniqueness guard in Case 2a: if rendered line appears twice in host edit block, do not substitute
+        ambig_h_block = ['  "key": "sk-live-12345",\n', '  "key": "sk-live-12345"\n']
+        ambig_res = _apply_subline_containment(
+            ambig_h_block,
+            [TemplateHunk(1, 2, 1, 2)],
+            t_c2a,
+            r_c2a,
+        )
+        self.assertEqual(ambig_res, ambig_h_block)
+
+        # --- Case 2b: Full replacement and deletion of template hunk ---
+        h_c2b_replace = ['{\n', '  "key": "completely_new_key"\n', '}\n']
+        pair_c2b = derender_host_lines(t_c2a, r_c2a, h_c2b_replace)
+        self.assertEqual(pair_c2b.r_derendered, t_c2a)
+        self.assertEqual(pair_c2b.h_derendered, h_c2b_replace)
+
+        h_c2b_delete = ['{\n', '}\n']
+        pair_c2b_del = derender_host_lines(t_c2a, r_c2a, h_c2b_delete)
+        self.assertEqual(pair_c2b_del.r_derendered, t_c2a)
+        self.assertEqual(pair_c2b_del.h_derendered, h_c2b_delete)
+
+        # --- Case 3: Border-crossing partial edit & interior insertion on multi-line template hunk ---
+        t_c3 = ["header\n", "A=$VAR_A\n", "B=$VAR_B\n", "footer\n"]
+        r_c3 = ["header\n", "A=val_a\n", "B=val_b\n", "footer\n"]
+        # Partial edit of line 1 only
+        h_c3_partial = ["header\n", "A=modified_a\n", "B=val_b\n", "footer\n"]
+        pair_c3 = derender_host_lines(t_c3, r_c3, h_c3_partial)
+        self.assertEqual(pair_c3.r_derendered, r_c3)
+        self.assertEqual(pair_c3.h_derendered, h_c3_partial)
+
+        # Interior insertion inside a 2-line template hunk (between A=val_a and B=val_b)
+        h_c3_insert = ["header\n", "A=val_a\n", "INSERTED=mid\n", "B=val_b\n", "footer\n"]
+        pair_c3_ins = derender_host_lines(t_c3, r_c3, h_c3_insert)
+        self.assertEqual(pair_c3_ins.r_derendered, r_c3)
+        self.assertEqual(pair_c3_ins.h_derendered, h_c3_insert)
+
+        # _format_conflict_base_lines alignment when t_len != r_len (1->3, 2->4, 3->1, 2->0, 0->2)
+        self.assertEqual(
+            _format_conflict_base_lines(["$MULTI\n"], ["l1\n", "l2\n", "l3\n"]),
+            ["l1 / l2 / l3\n"],
+        )
+        self.assertEqual(
+            _format_conflict_base_lines(["$M1\n", "$M2\n"], ["l1\n", "l2\n", "l3\n"]),
+            ["l1\n", "l2 / l3\n"],
+        )
+        self.assertEqual(
+            len(_format_conflict_base_lines(["$A\n", "$B\n", "$C\n"], ["only_one\n"])),
+            3,
+        )
+        self.assertEqual(
+            len(_format_conflict_base_lines(["$A\n", "$B\n"], [])),
+            2,
+        )
+        self.assertEqual(
+            _format_conflict_base_lines([], ["l1\n", "l2\n"]),
+            ["l1\n", "l2\n"],
+        )
+        self.assertEqual(
+            _classify_template_hunk(TemplateHunk(0, 1, 1, 1), [("equal", 0, 0, 0, 0)]),
+            ("equal", 0),
+        )
+
+    def test_adopt_templated_auth_json_clean_derendering_two_pass_idempotency(self) -> None:
+        """Verifies the motivating auth.envst.json scenario (Case 1 + Case 2a + Case 2b) end-to-end
+        with a mandatory two-pass execution sequence (Pass 1 Cold mutation -> Pass 2 Warm idempotent
+        re-execution) plus re-render verification.
+        """
+        from drift.primitives.render_repo import run_primitive_2_render_packages
+
+        pkg = "pkg_auth_derender"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        render_pkg = self.workspace_config.render_path / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg.mkdir(parents=True, exist_ok=True)
+
+        # Configure package env in drift_package.toml so envsubst renders ${NEW_API_KEY} -> sk-real-111
+        (src_pkg / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname = "{pkg}"\nenable_render = true\n\n[env.default]\nNEW_API_KEY = "sk-real-111"\n',
+            encoding="utf-8",
+        )
+        tmpl_text = (
+            "{\n"
+            '  "newapi": {\n'
+            '    "type": "api_key",\n'
+            '    "key": "${NEW_API_KEY}"\n'
+            "  }\n"
+            "}\n"
+        )
+        rendered_text = (
+            "{\n"
+            '  "newapi": {\n'
+            '    "type": "api_key",\n'
+            '    "key": "sk-real-111"\n'
+            "  }\n"
+            "}\n"
+        )
+        src_file = src_pkg / "auth.envst.json"
+        install_file = install_pkg / "auth.json"
+        render_file = render_pkg / "auth.json"
+        src_file.write_text(tmpl_text, encoding="utf-8")
+        install_file.write_text(rendered_text, encoding="utf-8")
+        render_file.write_text(rendered_text, encoding="utf-8")
+
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init auth template"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init auth install"], cwd=self.install_dir, check=True, capture_output=True)
+
+        # Host edits auth.json to add "google" provider right after "newapi"
+        host_drifted_text = (
+            "{\n"
+            '  "newapi": {\n'
+            '    "type": "api_key",\n'
+            '    "key": "sk-real-111"\n'
+            "  },\n"
+            '  "google": {\n'
+            '    "type": "api_key",\n'
+            '    "key": "ai-google-222"\n'
+            "  }\n"
+            "}\n"
+        )
+        install_file.write_text(host_drifted_text, encoding="utf-8")
+
+        # Dry-run preview must report "[Patch applies cleanly to: auth.envst.json]" (NOT conflict!)
+        dry_res = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(dry_run=True, no_reverse_sync=True),
+        )
+        self.assertIn("~ auth.json [Patch applies cleanly to: auth.envst.json]", dry_res.format_text())
+
+        # --- Pass 1 (Cold Mutation Pass) ---
+        pass1_res = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_reverse_sync=True),
+        )
+        self.assertEqual(pass1_res.status, "SUCCESS")
+        self.assertEqual(pass1_res.packages[0].adopted_modifications, ["auth.json"])
+        self.assertEqual(pass1_res.packages[0].conflicted_files, [])
+
+        expected_adopted_template = (
+            "{\n"
+            '  "newapi": {\n'
+            '    "type": "api_key",\n'
+            '    "key": "${NEW_API_KEY}"\n'
+            "  },\n"
+            '  "google": {\n'
+            '    "type": "api_key",\n'
+            '    "key": "ai-google-222"\n'
+            "  }\n"
+            "}\n"
+        )
+        self.assertEqual(src_file.read_text(encoding="utf-8"), expected_adopted_template)
+
+        # Re-rendering src/ -> render/ produces exact byte-for-byte match with host's install_file
+        run_primitive_2_render_packages(self.workspace_config, target_pkgs=[pkg])
+        self.assertEqual(render_file.read_text(encoding="utf-8"), host_drifted_text)
+
+        # --- Pass 2 (Warm Idempotent Pass) ---
+        head_after_pass1 = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True
+        ).stdout.strip()
+        pass2_res = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_reverse_sync=True),
+        )
+        self.assertEqual(pass2_res.status, "UP_TO_DATE")
+        head_after_pass2 = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.install_dir, capture_output=True, text=True
+        ).stdout.strip()
+        self.assertEqual(head_after_pass1, head_after_pass2)
+        self.assertEqual(src_file.read_text(encoding="utf-8"), expected_adopted_template)
+
+    def test_adopt_templated_polymorphic_engines_and_rename_derendering(self) -> None:
+        """Tests 3-way de-rendering across polymorphic template input variants:
+        1. Sub-line edit (Case 2a) and full value replacement (Case 2b) on `.envst.toml`
+        2. Custom package-level render engine (`.custom.conf`) with dynamic header injection
+        3. Templated rename + modification (`old_auth.envst.json` -> `new_auth.envst.json`)
+        4. 0-byte boundary template/static files.
+        """
+        pkg = "pkg_polymorphic_derender"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "header.inc").write_text("# AUTO-HEADER\n", encoding="utf-8")
+        (src_pkg / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname = "{pkg}"\nenable_render = true\n\n'
+            '[env.default]\nAPI_TOKEN = "tok_secret_99"\nOLD_PORT = "8080"\n\n'
+            '[render.custom]\ninput_file = "header.inc"\nsuffix = "custom"\n'
+            'render_command = "bash -c \'cat %i %s\'"\n',
+            encoding="utf-8",
+        )
+
+        # 1. .envst.toml with both Case 2a (inline comment added to $API_TOKEN line) and Case 2b ($OLD_PORT replaced)
+        src_toml = src_pkg / "settings.envst.toml"
+        inst_toml = install_pkg / "settings.toml"
+        src_toml.write_text('token = "${API_TOKEN}"\nport = ${OLD_PORT}\n', encoding="utf-8")
+        inst_toml.write_text('token = "tok_secret_99"\nport = 8080\n', encoding="utf-8")
+
+        # 2. Custom engine (.custom.conf) where rendered file prepends "# AUTO-HEADER\n"
+        src_custom = src_pkg / "service.custom.conf"
+        inst_custom = install_pkg / "service.conf"
+        src_custom.write_text("listen = 127.0.0.1\nworkers = 2\n", encoding="utf-8")
+        inst_custom.write_text("# AUTO-HEADER\nlisten = 127.0.0.1\nworkers = 2\n", encoding="utf-8")
+
+        # 3. Templated file to be renamed AND edited by host (include shared lines so Git similarity > 50%)
+        ren_shared = '  "version": 1,\n  "service": "auth_gateway",\n  "mode": "production",\n'
+        src_ren_old = src_pkg / "old_auth.envst.json"
+        inst_ren_old = install_pkg / "old_auth.json"
+        src_ren_old.write_text('{\n' + ren_shared + '  "token": "${API_TOKEN}"\n}\n', encoding="utf-8")
+        inst_ren_old.write_text('{\n' + ren_shared + '  "token": "tok_secret_99"\n}\n', encoding="utf-8")
+
+        # 4. 0-byte boundary file
+        src_empty = src_pkg / "empty.envst.txt"
+        inst_empty = install_pkg / "empty.txt"
+        src_empty.write_text("", encoding="utf-8")
+        inst_empty.write_text("", encoding="utf-8")
+
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init polymorphic src"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init polymorphic install"], cwd=self.install_dir, check=True, capture_output=True)
+
+        # Apply host drifts in install/
+        inst_toml.write_text('token = "tok_secret_99" # keep secret\nport = 9090\n', encoding="utf-8")
+        inst_custom.write_text("# AUTO-HEADER\nlisten = 127.0.0.1\nworkers = 8\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "mv", f"{pkg}/old_auth.json", f"{pkg}/new_auth.json"],
+            cwd=self.install_dir,
+            check=True,
+            capture_output=True,
+        )
+        (install_pkg / "new_auth.json").write_text(
+            '{\n' + ren_shared + '  "token": "tok_secret_99",\n  "region": "us-east"\n}\n',
+            encoding="utf-8",
+        )
+        inst_empty.write_text("non_empty_now\n", encoding="utf-8")
+
+        # Cold Pass 1
+        res1 = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_reverse_sync=True),
+        )
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(res1.packages[0].conflicted_files, [])
+
+        # Verify Case 2a preserved ${API_TOKEN} with inline comment and Case 2b updated port = 9090
+        self.assertEqual(
+            src_toml.read_text(encoding="utf-8"),
+            'token = "${API_TOKEN}" # keep secret\nport = 9090\n',
+        )
+        # Verify custom engine stripped "# AUTO-HEADER\n" (0-line template hunk in T vs 1-line in R) and updated workers = 8!
+        self.assertEqual(
+            src_custom.read_text(encoding="utf-8"),
+            "listen = 127.0.0.1\nworkers = 8\n",
+        )
+        # Verify templated rename + edit preserved ${API_TOKEN} and added "region": "us-east" in new_auth.envst.json
+        new_src_ren = src_pkg / "new_auth.envst.json"
+        self.assertFalse(src_ren_old.exists())
+        self.assertTrue(new_src_ren.is_file())
+        self.assertEqual(
+            new_src_ren.read_text(encoding="utf-8"),
+            '{\n' + ren_shared + '  "token": "${API_TOKEN}",\n  "region": "us-east"\n}\n',
+        )
+        # Verify 0-byte template adopted new line cleanly
+        self.assertEqual(src_empty.read_text(encoding="utf-8"), "non_empty_now\n")
+
+        # Warm Pass 2 (Idempotent)
+        res2 = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_reverse_sync=True),
+        )
+        self.assertEqual(res2.status, "UP_TO_DATE")
+
+    def test_adopt_subpackage_layer_exports_and_baseline_fallback(self) -> None:
+        """Verifies all 6 submodules of `drift.adopt` export their layered APIs and
+        `read_rendered_baseline_lines` / `generate_derendered_patch` raise `SafeguardError`
+        advising `--with-render` when the rendered baseline in `render/<pkg>/` is missing,
+        while `AdoptOptions(dry_run=True, with_render=True)` compiles the baseline and succeeds.
+        """
+        import drift.adopt as adopt_pkg
+        from drift.adopt import (
+            adopt_actions,
+            adopt_derender,
+            adopt_handlers,
+            adopt_package,
+            adopt_patch,
+            adopt_plan,
+        )
+        from drift.core.exceptions import SafeguardError
+
+        # 1. Verify submodule attributes match drift.adopt facade re-exports
+        for mod, sym in (
+            (adopt_derender, "derender_host_lines"),
+            (adopt_derender, "generate_derendered_patch"),
+            (adopt_patch, "apply_source_patch"),
+            (adopt_patch, "generate_retargeted_patch"),
+            (adopt_patch, "rewrite_patch_target_headers"),
+            (adopt_plan, "plan_package_adopt"),
+            (adopt_actions, "patch_and_edit"),
+            (adopt_handlers, "handle_single_modification"),
+            (adopt_package, "execute_package_adopt"),
+        ):
+            self.assertIs(getattr(adopt_pkg, sym), getattr(mod, sym))
+
+        # 2. Verify missing rendered baseline in render/<pkg>/ raises SafeguardError suggesting --with-render
+        pkg = "pkg_no_render_fallback"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname = "{pkg}"\nenable_render = true\n\n[env.default]\nDB_PASS = "super_secret"\n',
+            encoding="utf-8",
+        )
+        src_f = src_pkg / "db.envst.conf"
+        inst_f = install_pkg / "db.conf"
+        src_f.write_text("PASS=${DB_PASS}\nPOOL=5\n", encoding="utf-8")
+        inst_f.write_text("PASS=super_secret\nPOOL=5\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init db src"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init db install"], cwd=self.install_dir, check=True, capture_output=True)
+
+        # Ensure render/<pkg> does NOT exist on disk
+        render_pkg = self.workspace_config.render_path / pkg
+        self.assertFalse(render_pkg.exists())
+
+        inst_f.write_text("PASS=super_secret\nPOOL=20\n", encoding="utf-8")
+
+        # Calling with no_render=True when render/<pkg>/db.conf does not exist must raise SafeguardError
+        with self.assertRaises(SafeguardError) as ctx_no_render:
+            run_primitive_adopt_drifts(
+                self.workspace_config,
+                [pkg],
+                AdoptOptions(interactive=False, no_render=True, no_reverse_sync=True),
+            )
+        self.assertIn("Cannot plan adoption when the changed file 'db.conf' is a template", str(ctx_no_render.exception))
+        self.assertIn("--with-render", str(ctx_no_render.exception))
+
+        # Calling with dry_run=True (and with_render=False) when render/<pkg>/db.conf does not exist also raises SafeguardError
+        with self.assertRaises(SafeguardError) as ctx_dry_run:
+            run_primitive_adopt_drifts(
+                self.workspace_config,
+                [pkg],
+                AdoptOptions(dry_run=True, with_render=False, no_reverse_sync=True),
+            )
+        self.assertIn("--with-render", str(ctx_dry_run.exception))
+
+        # Passing both no_render=True and with_render=True must raise ValueError
+        with self.assertRaises(ValueError) as ctx_mutex:
+            prepare_adopt(
+                self.workspace_config,
+                [pkg],
+                AdoptOptions(no_render=True, with_render=True),
+            )
+        self.assertIn("Cannot specify both --no-render and --with-render", str(ctx_mutex.exception))
+
+        # 3. Calling with AdoptOptions(dry_run=True, with_render=True) renders the baseline and plans cleanly!
+        dry_with_render_res = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(dry_run=True, with_render=True, no_reverse_sync=True),
+        )
+        self.assertTrue((render_pkg / "db.conf").is_file())
+        self.assertIn("~ db.conf [Patch applies cleanly to: db.envst.conf]", dry_with_render_res.format_text())
+
+        # Now normal adopt succeeds and preserves ${DB_PASS}
+        res = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_render=True, no_reverse_sync=True),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(src_f.read_text(encoding="utf-8"), "PASS=${DB_PASS}\nPOOL=20\n")
+
+        # 4. Edge cases for generate_derendered_patch & read_rendered_baseline_lines on missing files
+        with self.assertRaises(FileNotFoundError):
+            adopt_derender.generate_derendered_patch(
+                target_file=src_pkg / "nonexistent.envst",
+                patch_from=inst_f,
+                render_pkg_dir=render_pkg,
+                rel_rendered_path=Path("db.conf"),
+                src_rel_path=Path("nonexistent.envst"),
+            )
+        with self.assertRaises(SafeguardError) as ctx_missing_baseline:
+            adopt_derender.read_rendered_baseline_lines(
+                render_pkg_dir=render_pkg,
+                rel_rendered_path=Path("untracked.conf"),
+            )
+        self.assertIn("--with-render", str(ctx_missing_baseline.exception))
+
+    def test_rename_already_moved_in_src_and_pure_plan_format_text(self) -> None:
+        """Verifies:
+        1. When old_src_file has already been moved to new_rel in src/ (for both nested templated
+           and static files), _precompute_rename_patch generates the patch for new_rel using the full
+           relative path inside src_dir_to_render, and handle_single_rename applies the modification
+           to new_rel cleanly (two-pass idempotency).
+        2. PackageAdoptPlan.format_text() is self-contained and never invokes patch generation,
+           check_patch_conflicts, or resolve_source_file_path during formatting.
+        """
+        from drift.models.adopt_models import get_rename_patch_key
+        from drift.utils.git_utils import get_git_status_porcelain
+
+        pkg = "pkg_already_moved_rename"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        render_pkg = self.workspace_config.render_path / pkg
+        (src_pkg / "nested").mkdir(parents=True, exist_ok=True)
+        (install_pkg / "nested").mkdir(parents=True, exist_ok=True)
+        (render_pkg / "nested").mkdir(parents=True, exist_ok=True)
+
+        shared_ctx = "line_a = 1\nline_b = 2\nline_c = 3\nline_d = 4\n"
+        # In install/ HEAD, files exist at old_cfg.conf, old_static.txt, and missing_old.txt
+        (install_pkg / "nested" / "old_cfg.conf").write_text(
+            shared_ctx + "secret = sk-live-999\nport = 8080\n",
+            encoding="utf-8",
+        )
+        (install_pkg / "nested" / "old_static.txt").write_text(
+            shared_ctx + "mode = v1\n",
+            encoding="utf-8",
+        )
+        (install_pkg / "nested" / "missing_old.txt").write_text(
+            shared_ctx + "orphan = 1\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init old install files"], cwd=self.install_dir, check=True, capture_output=True)
+
+        # In src/, the user has ALREADY moved old_cfg.envst.conf -> new_cfg.envst.conf and old_static.txt -> new_static.txt,
+        # while neither missing_old.txt nor brand_new.txt exists in src/!
+        new_src_tmpl = src_pkg / "nested" / "new_cfg.envst.conf"
+        new_src_static = src_pkg / "nested" / "new_static.txt"
+        brand_new_src = src_pkg / "nested" / "brand_new.txt"
+        new_src_tmpl.write_text(
+            shared_ctx + "secret = ${SECRET_KEY}\nport = 8080\n",
+            encoding="utf-8",
+        )
+        new_src_static.write_text(
+            shared_ctx + "mode = v1\n",
+            encoding="utf-8",
+        )
+        (render_pkg / "nested" / "new_cfg.conf").write_text(
+            shared_ctx + "secret = sk-live-999\nport = 8080\n",
+            encoding="utf-8",
+        )
+        (render_pkg / "nested" / "new_static.txt").write_text(
+            shared_ctx + "mode = v1\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init already moved src"], cwd=self.workspace_path, check=True, capture_output=True)
+
+        # In install/, files are renamed AND modified on the host
+        subprocess.run(
+            ["git", "mv", f"{pkg}/nested/old_cfg.conf", f"{pkg}/nested/new_cfg.conf"],
+            cwd=self.install_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "mv", f"{pkg}/nested/old_static.txt", f"{pkg}/nested/new_static.txt"],
+            cwd=self.install_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "mv", f"{pkg}/nested/missing_old.txt", f"{pkg}/nested/brand_new.txt"],
+            cwd=self.install_dir,
+            check=True,
+            capture_output=True,
+        )
+        (install_pkg / "nested" / "new_cfg.conf").write_text(
+            shared_ctx + "secret = sk-live-999\nport = 9090\n",
+            encoding="utf-8",
+        )
+        (install_pkg / "nested" / "new_static.txt").write_text(
+            shared_ctx + "mode = v2\n",
+            encoding="utf-8",
+        )
+        (install_pkg / "nested" / "brand_new.txt").write_text(
+            shared_ctx + "orphan = 2\n",
+            encoding="utf-8",
+        )
+
+        plan = plan_package_adopt(self.workspace_config, pkg)
+        tmpl_key = get_rename_patch_key(Path("nested/old_cfg.conf"), Path("nested/new_cfg.conf"))
+        static_key = get_rename_patch_key(Path("nested/old_static.txt"), Path("nested/new_static.txt"))
+        missing_key = get_rename_patch_key(Path("nested/missing_old.txt"), Path("nested/brand_new.txt"))
+        self.assertIn(tmpl_key, plan.rename_patches)
+        self.assertIn(static_key, plan.rename_patches)
+        self.assertIn(missing_key, plan.rename_patches)
+        # Verify src_rel_path in patch headers is the full relative path inside src_dir_to_render (not bare filename),
+        # and when neither old nor new exists in src/, src_rel_path points to new_rel (nested/brand_new.txt)
+        self.assertIn("--- a/nested/new_cfg.envst.conf", plan.rename_patches[tmpl_key])
+        self.assertIn("+++ b/nested/new_cfg.envst.conf", plan.rename_patches[tmpl_key])
+        self.assertIn("secret = ${SECRET_KEY}", plan.rename_patches[tmpl_key])
+        self.assertIn("--- a/nested/new_static.txt", plan.rename_patches[static_key])
+        self.assertIn("+++ b/nested/new_static.txt", plan.rename_patches[static_key])
+        self.assertIn("--- a/nested/brand_new.txt", plan.rename_patches[missing_key])
+        self.assertIn("+++ b/nested/brand_new.txt", plan.rename_patches[missing_key])
+
+        # Verify plan.format_text() is completely self-contained and makes zero external calls
+        with patch("drift.adopt.adopt_plan.resolve_source_file_path", side_effect=AssertionError("must not be called")), \
+             patch("drift.adopt.adopt_patch.check_patch_conflicts", side_effect=AssertionError("must not be called")), \
+             patch("drift.adopt.adopt_derender.generate_derendered_patch", side_effect=AssertionError("must not be called")):
+            formatted = plan.format_text(verbose=True)
+        self.assertIn("R nested/old_cfg.conf -> nested/new_cfg.conf", formatted)
+
+        # Pass 1 (Cold): Execute adoption and verify already-moved files and missing-in-src file adopt cleanly
+        res1 = execute_package_adopt(self.workspace_config, plan, AdoptOptions(interactive=False))
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(
+            new_src_tmpl.read_text(encoding="utf-8"),
+            shared_ctx + "secret = ${SECRET_KEY}\nport = 9090\n",
+        )
+        self.assertEqual(
+            new_src_static.read_text(encoding="utf-8"),
+            shared_ctx + "mode = v2\n",
+        )
+        self.assertTrue(brand_new_src.is_file())
+        self.assertEqual(
+            brand_new_src.read_text(encoding="utf-8"),
+            shared_ctx + "orphan = 2\n",
+        )
+
+        # Pass 2 (Warm): Commit install/ and verify re-running adopt reports UP_TO_DATE
+        subprocess.run(["git", "commit", "-m", "commit adopted"], cwd=self.install_dir, check=True, capture_output=True)
+        res2 = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_render=True, no_reverse_sync=True),
+        )
+        self.assertEqual(res2.status, "UP_TO_DATE")
+        self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
+
+    def test_adopt_rename_three_source_states_and_rollback_safety(self) -> None:
+        """Exhaustively tests rename patch generation, execution, logging, permission syncing,
+        and rollback isolation across all 3 non-colliding (old_src_match, new_src_match) states:
+        - State 1 (old exists, new missing): cross-file delta via generate_retargeted_patch; unlinks copy on failure.
+        - State 2 (old missing, new exists): cross-file delta targeting existing new file; info log; preserves existing file on failure.
+        - State 3 (both missing): full addition diff targeting new_rel; info log; creates file + syncs mode; unlinks touched file on failure.
+        """
+        from drift.models.adopt_models import get_rename_patch_key
+        from drift.utils.git_utils import get_git_status_porcelain
+
+        pkg = "pkg_rename_three_states"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        render_pkg = self.workspace_config.render_path / pkg
+        for base in (src_pkg, install_pkg, render_pkg):
+            (base / "dir_a").mkdir(parents=True, exist_ok=True)
+            (base / "dir_b").mkdir(parents=True, exist_ok=True)
+
+        ctx = "alpha = 1\nbeta = 2\ngamma = 3\ndelta = 4\n"
+
+        # 1. Verify rollback isolation across all 3 states when a patch fails to apply
+        unmatchable_patch = (
+            "--- a/target.txt\n"
+            "+++ b/target.txt\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-line_that_does_not_exist_anywhere\n"
+            "+replacement_line\n"
+        )
+        non_existent_from = install_pkg / "dir_b" / "non_existent.txt"
+
+        # State 1 rollback: old exists -> newly copied target is unlinked, old stays intact
+        s1_old = src_pkg / "dir_a" / "rb_s1_old.txt"
+        s1_new = src_pkg / "dir_b" / "rb_s1_new.txt"
+        s1_old.write_text("original s1\n", encoding="utf-8")
+        self.assertIsNone(
+            adopt_rename(
+                self.workspace_config.render_engine_configs,
+                src_pkg,
+                Path("dir_a/rb_s1_old.txt"),
+                Path("dir_b/rb_s1_new.txt"),
+                unmatchable_patch,
+                patch_from=non_existent_from,
+            )
+        )
+        self.assertTrue(s1_old.is_file())
+        self.assertFalse(s1_new.exists())
+        s1_old.unlink()
+
+        # State 2 rollback: old missing, new already exists -> existing new file MUST NOT be deleted on failure!
+        s2_existing = src_pkg / "dir_b" / "rb_s2_new.envst.txt"
+        s2_existing.write_text("existing template $VAR\n", encoding="utf-8")
+        self.assertIsNone(
+            adopt_rename(
+                self.workspace_config.render_engine_configs,
+                src_pkg,
+                Path("dir_a/rb_s2_old.txt"),
+                Path("dir_b/rb_s2_new.txt"),
+                unmatchable_patch,
+                patch_from=non_existent_from,
+            )
+        )
+        self.assertTrue(s2_existing.is_file())
+        self.assertEqual(s2_existing.read_text(encoding="utf-8"), "existing template $VAR\n")
+        s2_existing.unlink()
+
+        # State 3 rollback: neither old nor new exists -> newly touched file MUST be unlinked on failure!
+        s3_created = src_pkg / "dir_b" / "rb_s3_new.txt"
+        self.assertIsNone(
+            adopt_rename(
+                self.workspace_config.render_engine_configs,
+                src_pkg,
+                Path("dir_a/rb_s3_old.txt"),
+                Path("dir_b/rb_s3_new.txt"),
+                unmatchable_patch,
+                patch_from=non_existent_from,
+            )
+        )
+        self.assertFalse(s3_created.exists())
+
+        # 2. Setup all 3 states in install/ HEAD and src/ for end-to-end 2-pass adoption
+        # State 1: old exists in src/ (dir_a/s1_orig.txt)
+        (src_pkg / "dir_a" / "s1_orig.txt").write_text(ctx + "s1 = old\n", encoding="utf-8")
+        (install_pkg / "dir_a" / "s1_orig.txt").write_text(ctx + "s1 = old\n", encoding="utf-8")
+        (render_pkg / "dir_a" / "s1_orig.txt").write_text(ctx + "s1 = old\n", encoding="utf-8")
+
+        # State 2: already moved in src/ (dir_b/s2_moved.txt)
+        (src_pkg / "dir_b" / "s2_moved.txt").write_text(ctx + "s2 = old\n", encoding="utf-8")
+        (install_pkg / "dir_a" / "s2_orig.txt").write_text(ctx + "s2 = old\n", encoding="utf-8")
+        (render_pkg / "dir_b" / "s2_moved.txt").write_text(ctx + "s2 = old\n", encoding="utf-8")
+
+        # State 3a (modified) & State 3b (pure 100% rename with 0o755 mode): neither old nor new exists in src/
+        (install_pkg / "dir_a" / "s3_mod_orig.txt").write_text(ctx + "s3 = old\n", encoding="utf-8")
+        (install_pkg / "dir_a" / "s3_pure_orig.sh").write_text("#!/bin/sh\necho pure\n", encoding="utf-8")
+        (install_pkg / "dir_a" / "s3_pure_orig.sh").chmod(0o755)
+
+        subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install 3 states"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src 3 states"], cwd=self.workspace_path, check=True, capture_output=True)
+
+        # Perform renames in install/
+        subprocess.run(["git", "mv", f"{pkg}/dir_a/s1_orig.txt", f"{pkg}/dir_b/s1_moved.txt"], cwd=self.install_dir, check=True, capture_output=True)
+        (install_pkg / "dir_b" / "s1_moved.txt").write_text(ctx + "s1 = new\n", encoding="utf-8")
+
+        subprocess.run(["git", "mv", f"{pkg}/dir_a/s2_orig.txt", f"{pkg}/dir_b/s2_moved.txt"], cwd=self.install_dir, check=True, capture_output=True)
+        (install_pkg / "dir_b" / "s2_moved.txt").write_text(ctx + "s2 = new\n", encoding="utf-8")
+
+        subprocess.run(["git", "mv", f"{pkg}/dir_a/s3_mod_orig.txt", f"{pkg}/dir_b/s3_mod_moved.txt"], cwd=self.install_dir, check=True, capture_output=True)
+        (install_pkg / "dir_b" / "s3_mod_moved.txt").write_text(ctx + "s3 = new\n", encoding="utf-8")
+
+        subprocess.run(["git", "mv", f"{pkg}/dir_a/s3_pure_orig.sh", f"{pkg}/dir_b/s3_pure_moved.sh"], cwd=self.install_dir, check=True, capture_output=True)
+
+        plan = plan_package_adopt(self.workspace_config, pkg)
+        k_s1 = get_rename_patch_key(Path("dir_a/s1_orig.txt"), Path("dir_b/s1_moved.txt"))
+        k_s2 = get_rename_patch_key(Path("dir_a/s2_orig.txt"), Path("dir_b/s2_moved.txt"))
+        k_s3_mod = get_rename_patch_key(Path("dir_a/s3_mod_orig.txt"), Path("dir_b/s3_mod_moved.txt"))
+        k_s3_pure = get_rename_patch_key(Path("dir_a/s3_pure_orig.sh"), Path("dir_b/s3_pure_moved.sh"))
+
+        # State 1 & State 2 patches are cross-file deltas (containing '-s1 = old' / '-s2 = old')
+        self.assertIn("--- a/dir_a/s1_orig.txt", plan.rename_patches[k_s1])
+        self.assertIn("-s1 = old", plan.rename_patches[k_s1])
+        self.assertIn("+s1 = new", plan.rename_patches[k_s1])
+
+        self.assertIn("--- a/dir_b/s2_moved.txt", plan.rename_patches[k_s2])
+        self.assertIn("-s2 = old", plan.rename_patches[k_s2])
+        self.assertIn("+s2 = new", plan.rename_patches[k_s2])
+
+        # State 3 patches are full-file addition diffs targeting new_rel ('@@ -0,0' with all lines added)
+        self.assertIn("--- a/dir_b/s3_mod_moved.txt", plan.rename_patches[k_s3_mod])
+        self.assertIn("+++ b/dir_b/s3_mod_moved.txt", plan.rename_patches[k_s3_mod])
+        self.assertIn("@@ -0,0 +1,5 @@", plan.rename_patches[k_s3_mod])
+        self.assertIn("+s3 = new", plan.rename_patches[k_s3_mod])
+
+        self.assertIn("--- a/dir_b/s3_pure_moved.sh", plan.rename_patches[k_s3_pure])
+        self.assertIn("@@ -0,0 +1,2 @@", plan.rename_patches[k_s3_pure])
+        self.assertIn("+echo pure", plan.rename_patches[k_s3_pure])
+
+        # Pass 1 (Cold): Execute adoption and verify INFO logs for State 2 and State 3
+        set_test_mode(True, enable_logging=True)
+        try:
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+                with self.assertLogs("drift.adopt.adopt_actions", level="INFO") as log_cm:
+                    res1 = execute_package_adopt(
+                        self.workspace_config, plan, AdoptOptions(interactive=False)
+                    )
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        self.assertEqual(res1.status, "SUCCESS")
+        joined_logs = "\n".join(log_cm.output)
+        self.assertIn("applying rename patch to existing target file 's2_moved.txt'", joined_logs)
+        self.assertIn("Creating a new source file for 'dir_b/s3_mod_moved.txt'", joined_logs)
+        self.assertIn("Creating a new source file for 'dir_b/s3_pure_moved.sh'", joined_logs)
+
+        self.assertFalse((src_pkg / "dir_a" / "s1_orig.txt").exists())
+        self.assertEqual((src_pkg / "dir_b" / "s1_moved.txt").read_text(encoding="utf-8"), ctx + "s1 = new\n")
+        self.assertEqual((src_pkg / "dir_b" / "s2_moved.txt").read_text(encoding="utf-8"), ctx + "s2 = new\n")
+        self.assertEqual((src_pkg / "dir_b" / "s3_mod_moved.txt").read_text(encoding="utf-8"), ctx + "s3 = new\n")
+        self.assertEqual((src_pkg / "dir_b" / "s3_pure_moved.sh").read_text(encoding="utf-8"), "#!/bin/sh\necho pure\n")
+        if sys.platform != "win32":
+            self.assertTrue(bool((src_pkg / "dir_b" / "s3_pure_moved.sh").stat().st_mode & 0o111))
+
+        # Pass 2 (Warm): Commit install/ and verify re-running adopt reports UP_TO_DATE with zero drifts
+        subprocess.run(["git", "commit", "-m", "commit 3 states adopted"], cwd=self.install_dir, check=True, capture_output=True)
+        res2 = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_render=True, no_reverse_sync=True),
+        )
+        self.assertEqual(res2.status, "UP_TO_DATE")
+        self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
+
+    def test_adopt_static_file_patch_conflict_and_resolution(self) -> None:
+        """Verifies static file modification conflict detection in _precompute_modification_conflicts,
+        plan preview formatting, non-interactive conflict refusal vs accept_conflicts=True 3-way merge
+        marker injection, and interactive conflict fallback menu routing.
+        """
+        from drift.utils.git_utils import get_git_status_porcelain
+
+        pkg = "pkg_static_conflict"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+        render_pkg = self.workspace_config.render_path / pkg
+        render_pkg.mkdir(parents=True, exist_ok=True)
+
+        base_text = "key1 = base_1\nkey2 = base_2\nkey3 = base_3\n"
+        src_diverged = "key1 = src_committed_change\nkey2 = base_2\nkey3 = base_3\n"
+        install_diverged = "key1 = host_conflicting_change\nkey2 = base_2\nkey3 = base_3\n"
+
+        # 1. Commit base_text in install/ (representing the last deployed state)
+        (install_pkg / "static.conf").write_text(base_text, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install static.conf"], cwd=self.install_dir, check=True, capture_output=True)
+
+        # 2. Commit src_diverged in workspace src/ (and render/) before deploying to install/,
+        #    while host modifies install/static.conf on the same line (key1).
+        (src_pkg / "static.conf").write_text(src_diverged, encoding="utf-8")
+        (render_pkg / "static.conf").write_text(src_diverged, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit diverged src static.conf"], cwd=self.workspace_path, check=True, capture_output=True)
+
+        (install_pkg / "static.conf").write_text(install_diverged, encoding="utf-8")
+
+        # 3. Verify plan_package_adopt detects the static file conflict and formats it in preview text
+        plan = plan_package_adopt(self.workspace_config, pkg)
+        self.assertEqual(plan.modifications, [Path("static.conf")])
+        self.assertTrue(plan.mod_conflicts.get("static.conf"))
+        self.assertIn("static.conf [CONFLICTS with source: static.conf]", plan.format_text())
+
+        # 4. Non-interactive execution with accept_conflicts=False refuses to overwrite src/static.conf
+        res_conflict = execute_package_adopt(
+            self.workspace_config,
+            plan,
+            AdoptOptions(interactive=False, accept_conflicts=False),
+        )
+        self.assertEqual(res_conflict.status, "SKIPPED")
+        self.assertEqual(res_conflict.conflicted_files, ["static.conf"])
+        self.assertEqual((src_pkg / "static.conf").read_text(encoding="utf-8"), src_diverged)
+        # File in install/ must remain unstaged (' M')
+        self.assertEqual(
+            get_git_status_porcelain(self.install_dir, f"{pkg}/"),
+            [f" M {pkg}/static.conf"],
+        )
+
+        # 5. Interactive execution routes conflicting static file to [PATCH CONFLICT] menu (choose [6] Skip)
+        with patch("builtins.input", return_value="6"), patch("sys.stdout", StringIO()) as mock_out:
+            res_inter_skip = execute_package_adopt(
+                self.workspace_config,
+                plan,
+                AdoptOptions(interactive=True, accept_conflicts=False),
+            )
+        self.assertEqual(res_inter_skip.status, "SKIPPED")
+        self.assertEqual(res_inter_skip.skipped_files, ["static.conf"])
+        self.assertIn("[PATCH CONFLICT]", mock_out.getvalue())
+        self.assertEqual((src_pkg / "static.conf").read_text(encoding="utf-8"), src_diverged)
+
+        # 6. Non-interactive execution with accept_conflicts=True writes 3-way conflict markers into src/static.conf
+        res_accept = execute_package_adopt(
+            self.workspace_config,
+            plan,
+            AdoptOptions(interactive=False, accept_conflicts=True),
+        )
+        self.assertEqual(res_accept.status, "SUCCESS")
+        self.assertEqual(res_accept.adopted_modifications, ["static.conf"])
+        merged_content = (src_pkg / "static.conf").read_text(encoding="utf-8")
+        self.assertIn("<<<<<<<", merged_content)
+        self.assertIn("key1 = src_committed_change", merged_content)
+        self.assertIn("|||||||", merged_content)
+        self.assertIn("key1 = base_1", merged_content)
+        self.assertIn("=======", merged_content)
+        self.assertIn("key1 = host_conflicting_change", merged_content)
+        self.assertIn(">>>>>>>", merged_content)
+
+        # 7. Pass 2 (Warm): Commit install/ and verify re-running adopt reports UP_TO_DATE
+        subprocess.run(["git", "commit", "-m", "commit adopted static conflict"], cwd=self.install_dir, check=True, capture_output=True)
+        res_warm = run_primitive_adopt_drifts(
+            self.workspace_config,
+            [pkg],
+            AdoptOptions(interactive=False, no_render=True, no_reverse_sync=True),
+        )
+        self.assertEqual(res_warm.status, "UP_TO_DATE")
+
+    def test_adopt_case3_diff3_markers_and_outer_template_anchoring(self) -> None:
+        """Verifies Case 3 conflict handling with diff3 ('<<<<<<<', '|||||||', '=======', '>>>>>>>')
+        and strict outer-template anchoring when a host edit touches only 1 line inside:
+        1. A 10-line template hunk ('VAR_1=$V1' .. 'VAR_10=$V10').
+        2. A 5-to-20 line multi-line rendered expansion where 5 template lines expand into 20 rendered lines.
+        """
+        from drift.adopt.adopt_derender import generate_derendered_patch
+        from drift.utils.func_utils import choose
+
+        pkg = "pkg_case3_anchor_diff3"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        render_pkg = self.workspace_config.render_path / pkg
+        for d in (src_pkg, install_pkg, render_pkg):
+            d.mkdir(parents=True, exist_ok=True)
+
+        ctx_before = "ctx_before_1 = 1\nctx_before_2 = 2\nctx_before_3 = 3\n"
+        ctx_after = "ctx_after_1 = 4\nctx_after_2 = 5\nctx_after_3 = 6\n"
+
+        # --- Scenario 1: 10-line template hunk where host only edits line 5 ---
+        t_ten = ctx_before + "".join(f"VAR_{i}=$V{i}\n" for i in range(1, 11)) + ctx_after
+        r_ten = ctx_before + "".join(f"VAR_{i}=r{i}\n" for i in range(1, 11)) + ctx_after
+        h_ten = (
+            ctx_before
+            + "".join(choose(i == 5, "VAR_5=MODIFIED_5\n", f"VAR_{i}=r{i}\n") for i in range(1, 11))
+            + ctx_after
+        )
+
+        src_ten = src_pkg / "ten.envst.conf"
+        render_ten = render_pkg / "ten.conf"
+        install_ten = install_pkg / "ten.conf"
+        src_ten.write_text(t_ten, encoding="utf-8")
+        render_ten.write_text(r_ten, encoding="utf-8")
+        install_ten.write_text(h_ten, encoding="utf-8")
+
+        patch_ten = generate_derendered_patch(
+            target_file=src_ten,
+            patch_from=install_ten,
+            render_pkg_dir=render_pkg,
+            rel_rendered_path=Path("ten.conf"),
+            src_rel_path=Path("ten.envst.conf"),
+        )
+        # Context lines (' ') must ONLY be the outer template lines (ctx_before / ctx_after),
+        # never the untouched rendered lines (' VAR_2=r2', etc.) inside the conflict hunk!
+        for line in patch_ten.splitlines():
+            if line.startswith(" "):
+                self.assertTrue(
+                    line[1:].startswith("ctx_before_") or line[1:].startswith("ctx_after_"),
+                    f"Unexpected rendered line used as diff context anchor: {line!r}",
+                )
+        self.assertTrue(check_patch_conflicts(src_ten, patch_ten))
+        self.assertTrue(apply_source_patch(src_ten, patch_ten, accept_conflicts=True))
+        merged_ten = src_ten.read_text(encoding="utf-8")
+        self.assertIn("<<<<<<<", merged_ten)
+        self.assertIn("|||||||", merged_ten)
+        self.assertIn("=======", merged_ten)
+        self.assertIn(">>>>>>>", merged_ten)
+        # All 10 variable references ($V1..$V10) must be preserved in the template section
+        for i in range(1, 11):
+            self.assertIn(f"VAR_{i}=$V{i}\n", merged_ten)
+        self.assertIn("VAR_5=r5\n", merged_ten)
+        self.assertIn("VAR_5=MODIFIED_5\n", merged_ten)
+
+        # --- Scenario 2: 5 template lines expand into 20 rendered lines, host edits only line 15 ---
+        t_exp = ctx_before + "".join(f"TMPL_BLOCK_{i}=${{BLOCK_{i}}}\n" for i in range(1, 6)) + ctx_after
+        r_exp = ctx_before + "".join(f"rendered_cert_line_{i}\n" for i in range(1, 21)) + ctx_after
+        h_exp = (
+            ctx_before
+            + "".join(
+                choose(i == 15, "rendered_cert_line_15_DRIFTED\n", f"rendered_cert_line_{i}\n")
+                for i in range(1, 21)
+            )
+            + ctx_after
+        )
+
+        src_exp = src_pkg / "exp.envst.conf"
+        render_exp = render_pkg / "exp.conf"
+        install_exp = install_pkg / "exp.conf"
+        src_exp.write_text(t_exp, encoding="utf-8")
+        render_exp.write_text(r_exp, encoding="utf-8")
+        install_exp.write_text(h_exp, encoding="utf-8")
+
+        patch_exp = generate_derendered_patch(
+            target_file=src_exp,
+            patch_from=install_exp,
+            render_pkg_dir=render_pkg,
+            rel_rendered_path=Path("exp.conf"),
+            src_rel_path=Path("exp.envst.conf"),
+        )
+        # Must anchor at @@ -1,11 +1,26 @@ (3 ctx_before + 5 template lines + 3 ctx_after)
+        self.assertIn("@@ -1,11 +1,26 @@", patch_exp)
+        self.assertTrue(check_patch_conflicts(src_exp, patch_exp))
+        self.assertTrue(apply_source_patch(src_exp, patch_exp, accept_conflicts=True))
+        merged_exp = src_exp.read_text(encoding="utf-8")
+        # Verify order: ctx_before -> <<<<<<< -> 5 template lines -> ||||||| -> rendered baseline -> ======= -> 20 drifted lines -> >>>>>>> -> ctx_after
+        idx_lt = merged_exp.index("<<<<<<<")
+        idx_pipe = merged_exp.index("|||||||")
+        idx_eq = merged_exp.index("=======")
+        idx_gt = merged_exp.index(">>>>>>>")
+        self.assertTrue(idx_lt < idx_pipe < idx_eq < idx_gt)
+        tmpl_section = merged_exp[idx_lt:idx_pipe]
+        base_section = merged_exp[idx_pipe:idx_eq]
+        drift_section = merged_exp[idx_eq:idx_gt]
+        for i in range(1, 6):
+            self.assertIn(f"TMPL_BLOCK_{i}=${{BLOCK_{i}}}\n", tmpl_section)
+        self.assertIn("rendered_cert_line_15", base_section)
+        self.assertNotIn("rendered_cert_line_15_DRIFTED", base_section)
+        self.assertIn("rendered_cert_line_15_DRIFTED\n", drift_section)
+        self.assertTrue(merged_exp.startswith(ctx_before))
+        self.assertTrue(merged_exp.endswith(ctx_after))
 
 
 if __name__ == "__main__":

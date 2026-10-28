@@ -367,7 +367,14 @@ def build_completion_schema() -> CompletionSchema:
                     OptionSpec(
                         flags=["--no-render"],
                         description="Skip rendering source templates before adopting drifts",
-                        dest="no_render"
+                        dest="no_render",
+                        mutex_group="render_mode",
+                    ),
+                    OptionSpec(
+                        flags=["--with-render"],
+                        description="Render source templates before adopting drifts (even in --dry-run mode)",
+                        dest="with_render",
+                        mutex_group="render_mode",
                     ),
                     OptionSpec(
                         flags=["--no-reverse-sync", "--no-sync"],
@@ -409,11 +416,13 @@ def build_completion_schema() -> CompletionSchema:
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass package lifecycle hooks (default behavior in plan)",
                         dest="no_hooks",
+                        mutex_group="hooks_mode",
                     ),
                     OptionSpec(
-                        flags=["--with-hooks"],
+                        flags=["--with-hooks", "--with-hook"],
                         description="Execute pre-flight hooks in isolated scratch sandbox",
                         dest="with_hooks",
+                        mutex_group="hooks_mode",
                     ),
                     OptionSpec(
                         flags=["--no-deps"],

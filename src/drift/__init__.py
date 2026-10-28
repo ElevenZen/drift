@@ -165,6 +165,8 @@ from .models import (
     UninstallResult,
     AdoptStatus,
     ItemAdoptOutcome,
+    TemplateHunk,
+    DerenderedPair,
     get_rename_patch_key,
     AdoptOptions,
     PackageDriftFiles,

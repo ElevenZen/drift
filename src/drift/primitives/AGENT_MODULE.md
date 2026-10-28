@@ -4,7 +4,7 @@
 * **Architectural Layer**: **Layer 3–4 (Atomic State-Transition Primitives `P1`–`P17` & Composite Pipeline Orchestrators)**
 * **Core Responsibility**: Implements all 17 Drift primitives (`reverse-sync`, `render`, `render-commit`, `stage`, `apply`, `install-commit`, `uninstall`, `rollback`, `gc`, `new`, `add`, `health`, `clone`, `repair`, `diff`, `status`, `plan`), the composite workflow orchestrators (`deploy` and `adopt`), workspace bootstrap (`init`), and cross-package dependency/collision guards (`package_assertions.py`).
 * **Dependency Rules**:
-  * **Allowed Imports**: [`../utils/`](../utils/), [`../core/`](../core/), [`../models/`](../models/), [`../config/`](../config/), [`../hooks/`](../hooks/), and [`../render/`](../render/).
+  * **Allowed Imports**: [`../utils/`](../utils/), [`../core/`](../core/), [`../models/`](../models/), [`../config/`](../config/), [`../hooks/`](../hooks/), [`../render/`](../render/), and [`../adopt/`](../adopt/).
   * **Forbidden Imports**: Must **never** import from `cli/` (keeping all primitives callable as pure library APIs independent of CLI presentation). All public symbols are re-exported via [`__init__.py`](__init__.py).
 
 ---
@@ -75,8 +75,9 @@
 * `purge_render_folders(...)`, `purge_install_folders(...)`, `purge_redundant_wal_folders(workspace_config, registry=None, target_pkgs=(), dry_run=False, log_level=logging.INFO) -> List[str]`.
 * `run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=False, flags=None) -> GcResult`: Orchestrates Stage 1 orphan uninstallation, Stage 1b ghost registry pruning, Stage 2 `render/` + `install/` zombie folder pruning + `purge_redundant_wal_folders`, and Stage 3 scoped Git commits.
 
-### [`adopt_repo.py`](adopt_repo.py) — Bidirectional Drift Adoption (`drift adopt`)
-* `check_is_drifted_path_converged(install_pkg_dir, render_pkg_dir, rel_path) -> bool` & `resolve_and_commit_converged_drifts(workspace_config, package_names, dry_run=False) -> Dict[str, List[Path]]`.
+### [`adopt_repo.py`](adopt_repo.py) — Bidirectional Drift Adoption (`drift adopt`, Layer 5 Orchestrator)
+* Delegates Layers 1a–4 to [`src/drift/adopt/`](../adopt/AGENT_MODULE.md) (`adopt_derender`, `adopt_patch`, `adopt_plan`, `adopt_actions`, `adopt_handlers`, `adopt_package`) while re-exporting all public symbols for API continuity.
+* `check_is_drifted_path_converged(install_pkg_dir, render_pkg_dir, rel_path) -> bool`, `execute_converged_drifts(workspace_config, plan: AdoptPlan) -> Dict[str, List[Path]]`, & `resolve_and_commit_converged_drifts(workspace_config, package_names, dry_run=False) -> Dict[str, List[Path]]`.
 * `prepare_adopt(workspace_config, package_names=(), options=None) -> AdoptPlan`, `plan_package_adopt(...) -> PackageAdoptPlan`, `execute_package_adopt(...) -> PackageAdoptResult`, `execute_adopt(workspace_config, plan: AdoptPlan) -> AdoptResult`, `run_primitive_adopt_drifts(workspace_config, package_names=(), options=None) -> AdoptResult`.
 
 ### [`deploy_repo.py`](deploy_repo.py) & [`plan_repo.py`](plan_repo.py) — Full-Cycle Deploy & Dry-Run Sandbox (Primitive 17)
@@ -104,7 +105,7 @@
 ---
 
 ## 5. Related Feature Docs & Targeted Tests
-* **Feature Specifications**: [`docs/architecture.md`](../../../docs/architecture.md), [`docs/features/rollback_and_wal.md`](../../../docs/features/rollback_and_wal.md), [`docs/features/drift_adoption_and_fcd.md`](../../../docs/features/drift_adoption_and_fcd.md), [`docs/features/plan_engine.md`](../../../docs/features/plan_engine.md)
+* **Feature Specifications**: [`docs/architecture.md`](../../../docs/architecture.md), [`docs/features/rollback_and_wal.md`](../../../docs/features/rollback_and_wal.md), [`docs/features/drift_adoption_and_fcd.md`](../../../docs/features/drift_adoption_and_fcd.md), [`docs/features/template_adopt_derendering.md`](../../../docs/features/template_adopt_derendering.md), [`docs/features/plan_engine.md`](../../../docs/features/plan_engine.md)
 * **Targeted Unit Tests**:
   ```bash
   PYTHONPATH=src python3 -m unittest tests/test_deploy.py

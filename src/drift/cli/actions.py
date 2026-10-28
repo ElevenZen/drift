@@ -562,6 +562,7 @@ def execute_adopt(
     json_mode: bool = False,
     no_hooks: bool = False,
     no_render: bool = False,
+    with_render: bool = False,
     no_reverse_sync: bool = False,
     verbose: bool = False,
 ) -> None:
@@ -580,6 +581,7 @@ def execute_adopt(
         force=force,
         dry_run=dry_run,
         no_render=no_render,
+        with_render=with_render,
         no_reverse_sync=no_reverse_sync,
         flags=flags,
     )

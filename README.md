@@ -225,7 +225,7 @@ Once deployed (`drift enable --local pi && drift deploy pi`), you use `pi` norma
    drift deploy                         # Halts! Sentinel prevents overwriting your live settings
    drift adopt pi                       # Patches the live changes back into src/pi/agent/settings.json
    ```
-   *(Note: Static files like `settings.json` are adopted cleanly. If `pi` modifies a file rendered from a template—such as `auth.json` or `extension-settings/provider-newapi.json`—near a `${VAR}` placeholder, `patch` currently flags a context conflict that you can resolve interactively via `drift adopt -i pi`. Automatic template de-rendering for conflict-free template adoption is a planned feature.)*
+   *(Note: Both static files like `settings.json` and rendered template files like `auth.json` or `extension-settings/provider-newapi.json` are adopted cleanly via Drift's **3-Way Template Hunk-Map De-Rendering** engine, which preserves untouched `${VAR}` placeholders and sub-line edits automatically. If a host edit slices across a multi-line template block, `drift adopt -i pi` provides interactive conflict resolution.)*
 3. **An extension creates a new config in `extension-settings/`**:
    When a newly installed extension writes `~/.pi/agent/extension-settings/mcp.json`, Drift's `fully_controlled_dirs` audit picks it up automatically:
    ```bash

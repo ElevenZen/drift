@@ -780,7 +780,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                     self.assertTrue(kwargs.get("no_cache"), f"Argparse {cmd} with {flag} did not pass no_cache=True")
 
     def test_cli_render_with_hooks_flag_across_backends(self) -> None:
-        """Verifies that --with-hooks and --with-hook flags on render pass with_hooks=True."""
+        """Verifies that --with-hooks and --with-hook flags on render and plan pass with_hooks=True."""
         from drift.cli import run_argparse_cli
 
         for flag in ["--with-hooks", "--with-hook"]:
@@ -798,19 +798,35 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                 _, kwargs = mock_action.call_args
                 self.assertTrue(kwargs.get("with_hooks"), f"Argparse render with {flag} did not pass with_hooks=True")
 
+            with patch("drift.cli.cli_handlers.execute_plan") as mock_plan:
+                with patch("sys.stdout", StringIO()):
+                    main(["-C", self.drift_root, "plan", flag, "pkg_a"])
+                self.assertTrue(mock_plan.called, f"Typer plan with {flag} was not called")
+                _, kwargs = mock_plan.call_args
+                self.assertTrue(kwargs["options"].with_hooks, f"Typer plan with {flag} did not pass with_hooks=True")
+
+            with patch("drift.cli.cli_handlers.execute_plan") as mock_plan:
+                with patch("sys.stdout", StringIO()):
+                    run_argparse_cli(["-C", self.drift_root, "plan", flag, "pkg_a"])
+                self.assertTrue(mock_plan.called, f"Argparse plan with {flag} was not called")
+                _, kwargs = mock_plan.call_args
+                self.assertTrue(kwargs["options"].with_hooks, f"Argparse plan with {flag} did not pass with_hooks=True")
+
     def test_cli_render_mutually_exclusive_hooks_flags(self) -> None:
-        """Verifies that passing both --no-hooks and --with-hooks fails across both backends."""
+        """Verifies that passing both --no-hook[s] and --with-hook[s] fails across both backends for render and plan."""
         from drift.cli import run_argparse_cli
 
-        with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
-            with self.assertRaises(SystemExit) as ctx:
-                run_argparse_cli(["-C", self.drift_root, "render", "--no-hooks", "--with-hooks", "pkg_a"])
-            self.assertEqual(ctx.exception.code, 2)
+        for cmd in ("render", "plan"):
+            for no_flag, with_flag in (("--no-hooks", "--with-hooks"), ("--no-hook", "--with-hook")):
+                with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+                    with self.assertRaises(SystemExit) as ctx:
+                        run_argparse_cli(["-C", self.drift_root, cmd, no_flag, with_flag, "pkg_a"])
+                    self.assertEqual(ctx.exception.code, 2)
 
-        with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
-            with self.assertRaises(SystemExit) as ctx:
-                main(["-C", self.drift_root, "render", "--no-hooks", "--with-hooks", "pkg_a"])
-            self.assertIn(ctx.exception.code, (1, 2))
+                with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+                    with self.assertRaises(SystemExit) as ctx:
+                        main(["-C", self.drift_root, cmd, no_flag, with_flag, "pkg_a"])
+                    self.assertIn(ctx.exception.code, (1, 2))
 
 
     def test_cli_dry_run_verbose_filtering_across_commands(self) -> None:
@@ -944,10 +960,10 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("SKIP_IDENTICAL", out)
 
     def test_cli_adopt_no_render_and_no_reverse_sync_flags_across_backends(self) -> None:
-        """Verifies that --no-render, --no-reverse-sync, and --no-sync flags on adopt propagate across Typer and Argparse backends."""
+        """Verifies that --no-render, --with-render, --no-reverse-sync, and --no-sync flags on adopt propagate and enforce mutual exclusion across Typer and Argparse backends."""
         from drift.cli import run_argparse_cli
 
-        # 1. Default (neither flag set)
+        # 1. Default (none of the flags set)
         for runner in (main, run_argparse_cli):
             with patch("drift.cli.cli_handlers.execute_adopt") as mock_action:
                 with patch("sys.stdout", StringIO()):
@@ -955,6 +971,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                 self.assertTrue(mock_action.called)
                 _, kwargs = mock_action.call_args
                 self.assertFalse(kwargs.get("no_render"))
+                self.assertFalse(kwargs.get("with_render"))
                 self.assertFalse(kwargs.get("no_reverse_sync"))
 
         # 2. --no-render
@@ -965,7 +982,30 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                 self.assertTrue(mock_action.called)
                 _, kwargs = mock_action.call_args
                 self.assertTrue(kwargs.get("no_render"))
+                self.assertFalse(kwargs.get("with_render"))
                 self.assertFalse(kwargs.get("no_reverse_sync"))
+
+        # 2b. --with-render
+        for runner in (main, run_argparse_cli):
+            with patch("drift.cli.cli_handlers.execute_adopt") as mock_action:
+                with patch("sys.stdout", StringIO()):
+                    runner(["-C", self.drift_root, "adopt", "--with-render", "pkg_a"])
+                self.assertTrue(mock_action.called)
+                _, kwargs = mock_action.call_args
+                self.assertFalse(kwargs.get("no_render"))
+                self.assertTrue(kwargs.get("with_render"))
+                self.assertFalse(kwargs.get("no_reverse_sync"))
+
+        # 2c. Mutual exclusion of --no-render and --with-render across both backends
+        with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+            with self.assertRaises(SystemExit) as ctx_arg:
+                run_argparse_cli(["-C", self.drift_root, "adopt", "--no-render", "--with-render", "pkg_a"])
+            self.assertEqual(ctx_arg.exception.code, 2)
+
+        with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+            with self.assertRaises(SystemExit) as ctx_typ:
+                main(["-C", self.drift_root, "adopt", "--no-render", "--with-render", "pkg_a"])
+            self.assertIn(ctx_typ.exception.code, (1, 2))
 
         # 3. --no-reverse-sync and --no-sync
         for flag in ("--no-reverse-sync", "--no-sync"):
@@ -976,9 +1016,10 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                     self.assertTrue(mock_action.called)
                     _, kwargs = mock_action.call_args
                     self.assertFalse(kwargs.get("no_render"))
+                    self.assertFalse(kwargs.get("with_render"))
                     self.assertTrue(kwargs.get("no_reverse_sync"))
 
-        # 4. Verify actions.execute_adopt constructs AdoptOptions with no_render and no_reverse_sync
+        # 4. Verify actions.execute_adopt constructs AdoptOptions with no_render / with_render / no_reverse_sync
         #    and prints res.format_text(verbose=...) when dry_run=True and not json_mode
         with patch("drift.primitives.adopt_repo.run_primitive_adopt_drifts") as mock_prim:
             from drift.models import AdoptResult, AdoptStatus, PackageAdoptResult
@@ -997,8 +1038,21 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             self.assertIsNotNone(opts)
             self.assertTrue(opts.dry_run)
             self.assertTrue(opts.no_render)
+            self.assertFalse(opts.with_render)
             self.assertTrue(opts.no_reverse_sync)
             self.assertIn("[DRY-RUN] No drifted packages found", mock_out.getvalue())
+
+            mock_prim.reset_mock()
+            with patch("sys.stdout", StringIO()):
+                main(["-C", self.drift_root, "adopt", "--dry-run", "--with-render", "pkg_a"])
+            self.assertTrue(mock_prim.called)
+            _, prim_kwargs_wr = mock_prim.call_args
+            opts_wr = prim_kwargs_wr.get("options")
+            self.assertIsNotNone(opts_wr)
+            self.assertTrue(opts_wr.dry_run)
+            self.assertFalse(opts_wr.no_render)
+            self.assertTrue(opts_wr.with_render)
+            self.assertFalse(opts_wr.get_hook_flags().dry_run)
 
     def test_cli_deploy_and_apply_rollback_flag_across_backends(self) -> None:
         """Verifies --rollback {auto,always,yes,never,no} on deploy and apply across Typer and Argparse backends."""

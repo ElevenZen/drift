@@ -210,12 +210,15 @@ def handle_adopt(
     dry_run: bool = False,
     no_hooks: bool = False,
     no_render: bool = False,
+    with_render: bool = False,
     no_reverse_sync: bool = False,
 ) -> None:
     """Adopt active system drifts and incorporate them back into source templates."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        if no_render and with_render:
+            raise ValueError("Cannot specify both --no-render and --with-render.")
         drift_root = cli_ctx.get_drift_root()
         execute_adopt(
             drift_root=drift_root,
@@ -227,6 +230,7 @@ def handle_adopt(
             json_mode=cli_ctx.json_mode,
             no_hooks=no_hooks,
             no_render=no_render,
+            with_render=with_render,
             no_reverse_sync=no_reverse_sync,
             verbose=cli_ctx.verbose,
         )

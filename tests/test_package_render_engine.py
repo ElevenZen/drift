@@ -24,7 +24,8 @@ from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRe
 from drift.primitives.render_repo import run_primitive_2_render_packages
 from drift.render.render_package import render_package
 from drift.primitives.reverse_sync import run_primitive_1_reverse_sync
-from drift.primitives.adopt_repo import resolve_source_file_path, adopt_one_package_drifts, AdoptOptions
+from drift.adopt import adopt_one_package_drifts, resolve_source_file_path
+from drift.models import AdoptOptions
 from drift.utils.toml_utils import parse_toml
 from drift.core.exceptions import ConfigError
 from drift.utils.file_inspect import check_can_symlink
@@ -369,6 +370,9 @@ class TestPackageRenderEngine(unittest.TestCase):
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
         (install_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (install_pkg_dir / "config.ini").write_text("[section]\nkey=val\n", encoding="utf-8")
+        render_pkg_dir = self.drift_root / "render" / "pkg_rev"
+        render_pkg_dir.mkdir(parents=True, exist_ok=True)
+        (render_pkg_dir / "config.ini").write_text("[section]\nkey=val\n", encoding="utf-8")
         (install_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
             (pkg_dir / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"),
             encoding="utf-8"
@@ -392,9 +396,11 @@ class TestPackageRenderEngine(unittest.TestCase):
         # Verify resolve_source_file_path uses overlaid package engines
         pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
         effective_engines = pkg_config.package_render_engines(workspace_config)
-        src_path = resolve_source_file_path(effective_engines, pkg_dir, Path("config.ini"))
-        self.assertIsNotNone(src_path)
-        self.assertEqual(src_path, pkg_dir / "config.custom.ini")
+        src_match = resolve_source_file_path(effective_engines, pkg_dir, Path("config.ini"))
+        self.assertIsNotNone(src_match)
+        assert src_match is not None
+        self.assertEqual(src_match.path, pkg_dir / "config.custom.ini")
+        self.assertTrue(src_match.is_templated)
 
         # Verify adopt_one_package_drifts works with effective_engines
         pkg_adopt_res = adopt_one_package_drifts(

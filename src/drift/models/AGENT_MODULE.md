@@ -49,9 +49,10 @@
 ### [`adopt_models.py`](adopt_models.py) — `drift adopt` Models
 * `AdoptStatus(str, Enum)`: 5-state adoption status (`UP_TO_DATE`, `SUCCESS`, `PARTIAL`, `SKIPPED`, `FAILED`).
 * `ItemAdoptOutcome(str, Enum)`: 3-state single-item outcome (`ADOPTED`, `SKIPPED`, `CONFLICT`; truthy iff `ADOPTED`).
-* `AdoptOptions(interactive=False, accept_conflicts=False, force=False, dry_run=False, no_render=False, no_reverse_sync=False, skip_patches=False, flags=None)`.
+* `TemplateHunk(t_start, t_end, r_start, r_end)`, `TemplateHunkClassification(str, Enum)`, & `DerenderedPair(r_derendered, h_derendered)`: 3-way hunk-map de-rendering models for translating host edits on rendered files back into template-compatible diffs.
+* `AdoptOptions(interactive=False, accept_conflicts=False, force=False, dry_run=False, no_render=False, with_render=False, no_reverse_sync=False, skip_patches=False, flags=None)`.
 * `PackageDriftFiles(additions, deletions, modifications, renames, converged_files)`.
-* `PackageAdoptPlan` & `AdoptPlan`: Pre-computed adoption plans holding unified patches (`mod_patches`, `rename_patches`) and `.format_text(verbose=False)`.
+* `PackageAdoptPlan(..., render_pkg_dir, mod_targets, mod_conflicts)` & `AdoptPlan`: Self-contained pre-computed adoption plans holding unified or 3-way de-rendered patches (`mod_patches`, `rename_patches`), resolved source matches (`mod_targets`), conflict flags (`mod_conflicts`), and pure `.format_text(verbose=False)`.
 * `PackageAdoptResult` & `AdoptResult`: Tracks `adopted_*`, `conflicted_files`, `skipped_files`, and `.format_text(dry_run=False, verbose=False)`.
 
 ### [`deploy_models.py`](deploy_models.py) — `drift deploy`, `drift rollback` & `drift plan` Models

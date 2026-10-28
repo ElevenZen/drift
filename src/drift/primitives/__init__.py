@@ -115,18 +115,22 @@ from .plan_repo import (
     preview_deploy,
     run_primitive_plan,
 )
-from .adopt_repo import (
-    ItemAdoptOutcome,
+from ..adopt import (
+    adopt_one_package_drifts,
+    execute_package_adopt,
+    plan_package_adopt,
+)
+from ..models import (
     AdoptOptions,
     AdoptPlan,
+    ItemAdoptOutcome,
     PackageAdoptPlan,
     PackageDriftFiles,
-    prepare_adopt,
+)
+from .adopt_repo import (
     execute_adopt,
-    plan_package_adopt,
-    execute_package_adopt,
+    prepare_adopt,
     run_primitive_adopt_drifts,
-    adopt_one_package_drifts,
 )
 from .workspace_check import (
     check_existing_workspace_status,

@@ -5,6 +5,10 @@ title = "Gitleaks Configuration"
 useDefault = true
 
 [[allowlists]]
+description = "Sample llm key"
+regexes = ['sk-live-12345']
+
+[[allowlists]]
 description = "Sample github key"
 regexes = ['ghp_x{10,}']
 

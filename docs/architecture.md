@@ -137,7 +137,7 @@ Drift separates configuration management into four physical tiers backed by `bac
 
 ## 4. Codebase Package Architecture & Dependency Layers
 
-The codebase under `src/drift/` is organized into 8 subpackages ordered strictly bottom-up by dependency layer. **Before modifying or calling code in any subpackage, consult its co-located `AGENT_MODULE.md` file**:
+The codebase under `src/drift/` is organized into 9 subpackages ordered strictly bottom-up by dependency layer. **Before modifying or calling code in any subpackage, consult its co-located `AGENT_MODULE.md` file**:
 
 | Layer | Subpackage | Co-located Module Map | Core Scope |
 | :--- | :--- | :--- | :--- |
@@ -147,6 +147,7 @@ The codebase under `src/drift/` is organized into 8 subpackages ordered strictly
 | **Layer 2** | `src/drift/config/` | [`config/AGENT_MODULE.md`](../src/drift/config/AGENT_MODULE.md) | `WorkspaceConfig`, `PackageConfig`, `RenderEngineRegistry`, templates |
 | **Layer 2** | `src/drift/hooks/` | [`hooks/AGENT_MODULE.md`](../src/drift/hooks/AGENT_MODULE.md) | `HookExecFlags`, subprocess hook runner, Python config hooks |
 | **Layer 2–3** | `src/drift/render/` | [`render/AGENT_MODULE.md`](../src/drift/render/AGENT_MODULE.md) | Merkle AST (`render_dag`), graph expansion, `RenderLockfile`, `RenderCache` |
+| **Layer 2–3** | `src/drift/adopt/` | [`adopt/AGENT_MODULE.md`](../src/drift/adopt/AGENT_MODULE.md) | 3-way template de-rendering, `git merge-file` patching, single-pkg adoption |
 | **Layer 3–4** | `src/drift/primitives/` | [`primitives/AGENT_MODULE.md`](../src/drift/primitives/AGENT_MODULE.md) | Primitives `P1`–`P17`, `deploy_repo`, `adopt_repo`, dependency/workspace guards |
 | **Layer 5** | `src/drift/cli/` | [`cli/AGENT_MODULE.md`](../src/drift/cli/AGENT_MODULE.md) | Declarative `schema.py`, Argparse/Typer backends, handlers, tab-completions |
 
@@ -204,6 +205,7 @@ The codebase under `src/drift/` is organized into 8 subpackages ordered strictly
 | **WAL, Rollback & GC** | [`rollback_and_wal.md`](features/rollback_and_wal.md) | `state.toml`, `wal/actions.json` & `stash/`, `RollbackPolicy`, `drift gc` |
 | **Config, Hooks & Deps** | [`configuration_and_hooks.md`](features/configuration_and_hooks.md) | Workspace/package TOML, engines, hooks, DAG, `.drift_ignore`, 3-state paths |
 | **Drift Adoption & FCDs** | [`drift_adoption_and_fcd.md`](features/drift_adoption_and_fcd.md) | `reverse-sync`, convergent drift, `drift adopt`, `fully_controlled_dirs` |
+| **3-Way Template De-Rendering** | [`template_adopt_derendering.md`](features/template_adopt_derendering.md) | 3-way hunk-map de-rendering (`T <-> R <-> H`), `git merge-file`, `src/drift/adopt/` |
 | **Dry-Run (`drift plan`)** | [`plan_engine.md`](features/plan_engine.md) | Ephemeral sandbox, `source_dir_mask`, fault isolation |
 | **Environment Precedence** | [`env_modeling.md`](features/env_modeling.md) | 6-tier precedence, `SystemFacts`, Kahn's DAG, secret masking |
 | **Empty Folders** | [`empty_folder_dataflow.md`](features/empty_folder_dataflow.md) | `.drift_keep` synthesis, `CREATE_DIR`, FCD & `adopt` handling |

@@ -6,10 +6,13 @@ from .adopt_models import (
     AdoptPlan,
     AdoptResult,
     AdoptStatus,
+    DerenderedPair,
     ItemAdoptOutcome,
     PackageAdoptPlan,
     PackageAdoptResult,
     PackageDriftFiles,
+    TemplateHunk,
+    TemplateHunkClassification,
     get_rename_patch_key,
 )
 from .deploy_models import (
@@ -87,6 +90,9 @@ __all__ = [
     # Adopt (Primitive 8)
     "AdoptStatus",
     "ItemAdoptOutcome",
+    "TemplateHunk",
+    "TemplateHunkClassification",
+    "DerenderedPair",
     "get_rename_patch_key",
     "AdoptOptions",
     "PackageDriftFiles",

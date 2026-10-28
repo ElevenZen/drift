@@ -11,15 +11,60 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, FrozenSet, List, Optional, Tuple, TYPE_CHECKING
 
+from ..core.constants import DRIFT_KEEP_FILE_NAME
 from ..core.mixins import AlwaysTruthy
 from ..core.serialization import SerializableModel
+from ..utils.func_utils import choose
 
 if TYPE_CHECKING:
-    from ..config.render_engine_config import RenderEngineRegistry
+    from ..config.render_engine_config import RenderEngineRegistry, RenderSourceMatch
     from ..config.workspace_config import SettingsConfig
     from ..hooks.lifecycle_hooks import HookExecFlags
+
+
+@dataclass(frozen=True)
+class TemplateHunk:
+    """Represents a single non-equal opcode span between Template (T) and Rendered (R) lines."""
+    t_start: int
+    t_end: int
+    r_start: int
+    r_end: int
+
+    def to_dict(self) -> Dict[str, int]:
+        return {
+            "t_start": self.t_start,
+            "t_end": self.t_end,
+            "r_start": self.r_start,
+            "r_end": self.r_end,
+        }
+
+
+class TemplateHunkClassification(str, Enum):
+    """Classification of a TemplateHunk against R <-> H host diff opcodes."""
+    EQUAL = "equal"
+    EDIT = "edit"
+    CONFLICT = "conflict"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass
+class DerenderedPair(SerializableModel):
+    """Holds the de-rendered Rendered baseline (R_derendered), Host lines (H_derendered),
+    and 0-based line index sets belonging to Case 3 conflict hunks so unified diff generation
+    anchors strictly on outer template lines rather than matching rendered lines inside conflicts.
+    """
+    _SERIALIZE_EXCLUDE: ClassVar[FrozenSet[str]] = frozenset(
+        {"r_conflict_indices", "h_conflict_indices"}
+    )
+
+    r_derendered: List[str] = field(default_factory=list)
+    h_derendered: List[str] = field(default_factory=list)
+    r_conflict_indices: FrozenSet[int] = field(default_factory=frozenset)
+    h_conflict_indices: FrozenSet[int] = field(default_factory=frozenset)
 
 
 class AdoptStatus(str, Enum):
@@ -70,17 +115,18 @@ class AdoptOptions(SerializableModel, AlwaysTruthy):
     force: bool = False
     dry_run: bool = False
     no_render: bool = False
+    with_render: bool = False
     no_reverse_sync: bool = False
     skip_patches: bool = False
     flags: Optional[HookExecFlags] = None
 
     def get_hook_flags(self, settings: Optional[SettingsConfig] = None) -> HookExecFlags:
-        """Derives HookExecFlags, assigning dry_run from AdoptOptions to HookExecFlags."""
+        """Derives HookExecFlags, assigning dry_run from AdoptOptions unless with_render is True."""
         from ..hooks.lifecycle_hooks import HookExecFlags
         return HookExecFlags.resolve(
             self.flags,
             settings=settings,
-            override=HookExecFlags(dry_run=self.dry_run),
+            override=HookExecFlags(dry_run=self.dry_run and not self.with_render),
         )
 
 
@@ -119,12 +165,14 @@ class PackageAdoptPlan(SerializableModel):
     src_pkg_dir: Path = field(default_factory=Path)
     src_dir_to_render: Path = field(default_factory=Path)
     install_pkg_dir: Path = field(default_factory=Path)
+    render_pkg_dir: Path = field(default_factory=Path)
     render_engines: RenderEngineRegistry = field(default_factory=_default_render_engines)
     drifts: PackageDriftFiles = field(default_factory=PackageDriftFiles)
     mod_patches: Dict[str, str] = field(default_factory=dict)
     rename_patches: Dict[str, str] = field(default_factory=dict)
+    mod_targets: Dict[str, Optional[RenderSourceMatch]] = field(default_factory=dict)
+    mod_conflicts: Dict[str, bool] = field(default_factory=dict)
     pre_source_already_triggered: bool = False
-    status: str = "PENDING"
     error: Optional[str] = None
 
     @property
@@ -159,32 +207,30 @@ class PackageAdoptPlan(SerializableModel):
     def total_drifts(self) -> int:
         return self.drifts.total_drifts
 
-    def _format_modification_line(self, file: Path, install_base: Path) -> str:
-        """Formats a single modification preview line with template/static and conflict status."""
-        from ..primitives.adopt_repo import (
-            check_patch_conflicts,
-            resolve_source_file_path,
-            test_file_conflict,
-        )
+    def _format_modification_line(self, file: Path) -> str:
+        """Formats a single modification preview line from pre-computed plan metadata."""
+        if file.name == DRIFT_KEEP_FILE_NAME:
+            return f"       ~ {file} [Discard corrupt keep file modification]"
 
-        src_file = resolve_source_file_path(self.render_engines, self.src_dir_to_render, file)
-        if not src_file:
+        key = file.as_posix()
+        src_match = self.mod_targets.get(key)
+        if src_match is None:
             return f"       ~ {file} [Static Overwrite]"
 
-        is_templated = self.render_engines.find_engine_for_file(src_file.name) is not None
-        if is_templated:
-            patch_content = self.mod_patches.get(file.as_posix())
-            if patch_content is None:
-                install_file = self.install_pkg_dir / file
-                pkg_rel_path = Path(self.package) / file
-                has_conflict = test_file_conflict(src_file, install_file, install_base, pkg_rel_path)
-            else:
-                has_conflict = check_patch_conflicts(src_file, patch_content)
-            if has_conflict:
-                return f"       ~ {file} [CONFLICTS with template: {src_file.name}]"
-            return f"       ~ {file} [Patch applies cleanly to: {src_file.name}]"
+        src_name = src_match.path.name
+        has_conflict = self.mod_conflicts.get(key, False)
+        if src_match.is_templated:
+            return choose(
+                has_conflict,
+                f"       ~ {file} [CONFLICTS with template: {src_name}]",
+                f"       ~ {file} [Patch applies cleanly to: {src_name}]",
+            )
 
-        return f"       ~ {file} [Static Overwrite of: {src_file.name}]"
+        return choose(
+            has_conflict,
+            f"       ~ {file} [CONFLICTS with source: {src_name}]",
+            f"       ~ {file} [Static Overwrite of: {src_name}]",
+        )
 
     def format_text(self, verbose: bool = False) -> str:
         """Formats a human-readable preview of all planned drift changes and potential conflicts."""
@@ -192,8 +238,6 @@ class PackageAdoptPlan(SerializableModel):
         if not self.has_drifts:
             lines.append("   No drifts detected.")
             return "\n".join(lines)
-
-        install_base = self.install_pkg_dir.parent
 
         if self.converged_files:
             lines.append("   [=] Converged (already identical to render/, will be staged directly):")
@@ -225,7 +269,7 @@ class PackageAdoptPlan(SerializableModel):
         if self.modifications:
             lines.append("   [~] Modifications:")
             for file in self.modifications:
-                lines.append(self._format_modification_line(file, install_base))
+                lines.append(self._format_modification_line(file))
                 if verbose:
                     patch_str = self.mod_patches.get(file.as_posix(), "").strip()
                     if patch_str:

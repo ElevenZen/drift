@@ -194,6 +194,11 @@ class RenderSourceMatch:
     target_name: str
     status: str = "match"  # "match" or "block"
 
+    @property
+    def is_templated(self) -> bool:
+        """Returns True if the matched source file is rendered by a template engine."""
+        return self.engine is not None
+
 
 class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]):
     """First-class collection registry managing multiple named RenderEngineConfig objects.
