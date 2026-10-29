@@ -10,71 +10,81 @@
 ---
 
 ## 2. Internal Dependency Order (Bottom-Up)
-1. **Layer 1a — 3-Way Template De-Rendering**: [`adopt_derender.py`](adopt_derender.py)
-2. **Layer 1b — Unified Patch & Conflict Engine**: [`adopt_patch.py`](adopt_patch.py)
-3. **Layer 1c — Drift Discovery, Convergence & Planning**: [`adopt_plan.py`](adopt_plan.py)
-4. **Layer 2 — Atomic Single-File Reconciliation Actions**: [`adopt_actions.py`](adopt_actions.py)
-5. **Layer 3 — Single-Item Interactive & Non-Interactive Dispatchers**: [`adopt_handlers.py`](adopt_handlers.py)
-6. **Layer 4 — Single-Package Adoption Execution & Status Derivation**: [`adopt_package.py`](adopt_package.py)
+1. **Layer 1a-1 — Word Tokenization, Hunk Fission & Single-Line Calculus**: [`adopt_fission.py`](adopt_fission.py)
+2. **Layer 1a-2 — Orthogonal 3-Way Classification & Two-Step De-Rendering**: [`adopt_derender.py`](adopt_derender.py)
+3. **Layer 1b — Unified Patch & Two-Step Conflict Engine**: [`adopt_patch.py`](adopt_patch.py)
+4. **Layer 1c — Drift Discovery, Convergence & Planning**: [`adopt_plan.py`](adopt_plan.py)
+5. **Layer 2 — Atomic Single-File Reconciliation Actions**: [`adopt_actions.py`](adopt_actions.py)
+6. **Layer 3 — Single-Item Interactive & Non-Interactive Dispatchers**: [`adopt_handlers.py`](adopt_handlers.py)
+7. **Layer 4 — Single-Package Adoption Execution & Status Derivation**: [`adopt_package.py`](adopt_package.py)
 
 ---
 
 ## 3. Module & Public API Catalog
 
-### [`adopt_derender.py`](adopt_derender.py) — Layer 1a: 3-Way Hunk-Map Template De-Rendering
-* `build_template_hunk_map(t_lines, r_lines) -> List[TemplateHunk]`: Extracts non-`"equal"` opcodes between Template (`T`) and Rendered baseline (`R`).
-* `_classify_template_hunk(hunk, r_h_opcodes) -> Tuple[TemplateHunkClassification, Optional[int]]`: Classifies each `TemplateHunk` against `R <-> H` opcodes into Case 1 (`TemplateHunkClassification.EQUAL`), Case 2 (`TemplateHunkClassification.EDIT`), or Case 3 (`TemplateHunkClassification.CONFLICT`).
-* `_apply_subline_containment(h_block, edit_hunks, t_lines, r_lines) -> List[str]`: Handles Case 2a sub-line containment (where the rendered value still appears uniquely inside the host edit block, e.g. adding a trailing comma) vs Case 2b full replacement.
-* `_format_conflict_base_lines(t_slice, r_slice) -> List[str]`: Formats Case 3 conflict baselines so `len(r_derendered) == len(t_lines)` and subsequent hunks maintain 1-to-1 line alignment with `T`.
-* `derender_host_lines(t_lines, r_lines, h_lines) -> DerenderedPair`: Pure 3-way de-rendering function returning `DerenderedPair(r_derendered, h_derendered, r_conflict_indices, h_conflict_indices)`.
-* `_build_anchored_unified_diff(pair, fromfile, tofile, n=3) -> str`: Builds a unified diff where Case 3 conflict spans never match as equal context lines, anchoring every diff hunk strictly on the outer template lines of `T`.
+### [`adopt_fission.py`](adopt_fission.py) — Layer 1a-1: Hunk Fission & Single-Line Token Calculus
+* `tokenize_line(line) -> TokenizedLine`: Lossless Neovim-style 3-class Unicode tokenization (`TokenKind.WORD`, `TokenKind.PUNCT`, `TokenKind.SPACE`) with cached `word_set` for $O(1)$ disjointness pruning.
+* `_coalesce_space_bridged_opcodes(opcodes, line_a, line_b)`: Coalesces non-`"equal"` token opcodes bridged solely by whitespace so multi-word template expressions/values remain a single variable slot.
+* `compute_skeleton_match(line_a, line_b) -> SkeletonMatch`: Evaluates the valid skeleton gate ($N_{\text{word}} \ge 1$ or $N_{\text{punct}} \ge 2$) and slot-normalized score $S = E_{\text{skel}} / (E_{\text{skel}} + N_{\text{slots}})$.
+* `find_monotonic_line_matches(lines_a, lines_b) -> List[Tuple[int, int]]`: Applies bidirectional uniqueness filtering (loop-unrolling guard) and 2D DP maximum monotonic matching.
+* `fission_diff_units(src_tokens, dst_tokens, relation) -> List[DiffUnit]`: Replaces matched line pairs with unique sentinels and runs a second-pass `SequenceMatcher` to split coarse `"replace"` blocks into `SINGLE_EDIT`, `BLOCK_EDIT`, `INSERT`, and `DELETE` `DiffUnit` instances.
+* `try_derender_single_line(t_tok, r_tok, h_tok) -> Optional[str]`, `refine_single_line_units(tr_units, rh_units, t_tokens, r_tokens, h_tokens) -> List[DiffUnit]`: Evaluates closed token intervals $\max(p_1, c_1) \le \min(p_2, c_2)$ on $1 \leftrightarrow 1 \leftrightarrow 1$ units to distinguish Case 1.2 (`SINGLE_SKEL_EDIT`) from Case 1.3 (`SINGLE_EDIT` conflict).
+
+### [`adopt_derender.py`](adopt_derender.py) — Layer 1a-2: Orthogonal 3-Way De-Rendering & Two-Step Plan
+* `split_rh_deletes_at_tr_boundaries(tr_units, rh_units) -> List[DiffUnit]`: Splits `RH_DELETE` units across positive-length `TR` boundaries (Case 2.4) and injects conflict markers at strictly enclosed `TR_DELETE` points ($r_1 < r_0 < r_2$, Case 2.5b).
+* `_classify_orthogonal_units(tr_units, rh_units)`: Evaluates the $(T \to R) \times (R \to H)$ Orthogonal Classification Matrix (`0.1`–`4.2`).
+* `_build_sync_blocks(tr_units, rh_units)`, `_coalesce_sync_blocks(blocks)`: Partitions the $R$ axis into synchronized blocks and computes the connected conflict envelope closure.
+* `build_two_step_derender_plan(t_lines, r_lines, h_lines) -> TwoStepDerenderPlan`: Pure 3-way de-rendering pipeline producing `t_clean_lines`, `clean_hunks: Tuple[CleanPatchHunk, ...]`, and `conflict_clusters` with shifted $[t_{\text{clean\_start}}, t_{\text{clean\_end}})$ coordinates.
+* `build_display_unified_diff(plan, fromfile, tofile) -> str`: Synthesizes the human-readable display unified diff (`-T/+H'` for clean hunks, `-R/+H` for conflicts).
 * `read_rendered_baseline_lines(render_pkg_dir, rel_rendered_path) -> List[str]`: Reads `R` from `render/<pkg>/<rel_path>`, or raises `SafeguardError` advising `drift adopt --with-render` when missing.
-* `generate_derendered_patch(target_file, patch_from, render_pkg_dir, rel_rendered_path, src_rel_path) -> str`: Synthesizes a unified diff (`R_derendered -> H_derendered`) targeting `src_rel_path`.
+* `generate_derendered_patch(target_file, patch_from, render_pkg_dir, rel_rendered_path, src_rel_path, src_match=None) -> AdoptPatch`: Returns the structured `AdoptPatch` for a templated modification or rename.
 
-### [`adopt_patch.py`](adopt_patch.py) — Layer 1b: Unified Patch & Cross-Platform Conflict Engine
-* `check_patch_has_hunks(patch_content) -> bool`: Returns `True` if the diff contains `'@@'` hunk headers.
+### [`adopt_patch.py`](adopt_patch.py) — Layer 1b: Unified Patch & Two-Step Conflict Engine
 * `generate_install_git_patch(install_base, pkg_rel_path, old_rel_path=None) -> str`: Runs `git -C <install_base> diff HEAD -- <paths>`.
-* `rewrite_patch_target_headers(patch_content, patch_target_path) -> str`: Pure helper that strips pre-hunk Git metadata and rewrites `--- a/` and `+++ b/` headers to target `patch_target_path`.
-* `generate_retargeted_patch(install_base, pkg, new_rel_path, old_rel_path, patch_target_path) -> str`: Composes `generate_install_git_patch` with `rewrite_patch_target_headers` to target `patch_target_path`.
-* `check_patch_conflicts(src_file, patch_content) -> bool`: Runs standard POSIX `patch --dry-run --no-backup-if-mismatch <src_file>`.
-* `_parse_unified_patch_hunks(patch_content)`, `_apply_hunk_slice(lines, hunk, use_new)`, `_apply_patch_with_git_merge_file(src_file, patch_content) -> bool`: Synthesizes 3-way merge inputs (`current`, `base`, `other`) in a temporary directory and runs `git merge-file --diff3 -L "" -L "" -L ""` for platform-independent 3-way conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`).
-* `apply_source_patch(src_file, patch_content, accept_conflicts=False) -> bool`: Uses POSIX `patch --no-backup-if-mismatch` when `accept_conflicts=False` and delegates unconditionally to `_apply_patch_with_git_merge_file` when `accept_conflicts=True`.
+* `generate_source_to_install_patch(src_file, install_file) -> str`: Runs `git diff --no-index -- <src_file> <install_file>` when an untracked addition in `install/` (not in `install/` `HEAD`) is promoted to a static file modification.
+* `parse_unified_patch_hunks(patch_content) -> Tuple[CleanPatchHunk, ...]`, `_check_hunk_matches(src_lines, hunk, src_has_eof_nl=True) -> bool`, `_check_patch_hunks_conflict(src_file, clean_hunks) -> bool`: Purely parses unified diff text at the planning stage into structured 0-based `CleanPatchHunk` instances (with newline-stripped `old_lines`/`new_lines` and `old_eof_newline`/`new_eof_newline` flags, raising `ValueError` on malformed diff text) and probes for conflicts in pure Python without external `patch` or `git merge-file` subprocesses.
+* `check_patch_conflicts(src_file, patch_content: AdoptPatch) -> bool`: Returns `True` if `patch_content.conflict_clusters` is non-empty or if `patch_content.clean_hunks` has any mismatched hunk against `src_file`.
+* `_format_hunk_2way_conflict`, `_apply_hunk_to_lines`, `_apply_step1_clean_hunks`: Applies Step 1 `CleanPatchHunk`s in reverse order directly in memory, writing standard 2-way conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) when `accept_conflicts=True` on static files (`not patch_content.conflict_clusters`).
+* `_format_conflict_cluster_diff3`, `_apply_step2_conflict_clusters(src_file, clusters)`: Injects `diff3` conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`) in reverse order for Step 2 `ConflictCluster`s on templated files.
+* `apply_source_patch(src_file, patch_content: AdoptPatch, accept_conflicts=False) -> bool`: Executes Two-Step Patching in pure Python (`Step 1` $\to T_{\text{clean}}$, followed by `Step 2` `ConflictCluster` `diff3` injection when `accept_conflicts=True`), raising `SafeguardError` if Step 1 conflicts while `patch_content.conflict_clusters` is non-empty.
 
-### [`adopt_plan.py`](adopt_plan.py) — Layer 1c: Drift Discovery, Convergence & Planning
-* `get_drifted_packages(workspace_config) -> List[str]`: Identifies drifted packages in `install/` that exist in both `install/` and `src/`.
-* `resolve_source_file_path(render_engines, src_dir_to_render, rel_path) -> Optional[RenderSourceMatch]`: Resolves rendered filenames back to source files/templates via `RenderEngineRegistry`, returning `RenderSourceMatch` (with `.path` and `.is_templated`).
+### [`adopt_plan.py`](adopt_plan.py) — Layer 1c: Drift Discovery, Category Routing & Planning
+* `get_drifted_packages(workspace_config) -> List[str]`, `_resolve_package_source_context(...)`, `_temporary_stage_package_index(...)`, `_normalize_keep_file_drifts(...)`, `_collect_package_git_status(...)`: Stage 1 raw Git status collection and `.drift_keep` normalization.
+* `find_source_path_conflict(render_engines, src_dir_to_render, rel_path) -> Optional[RenderSourceMatch]`: Delegates to `render_engines.find_conflict_in_source_dir`, returning any `RenderSourceMatch` (`status == "match"` for leaf file/template collisions or `status == "block"` for blocking directories, intermediate files/templates, or broken symlinks).
+* `resolve_source_file_path(render_engines, src_dir_to_render, rel_path) -> Optional[RenderSourceMatch]`: Resolves rendered filenames back to source files/templates via `find_conflict_in_source_dir`, returning the `RenderSourceMatch` strictly when `match.status == "match"`.
 * `check_is_drifted_path_converged(install_pkg_dir, render_pkg_dir, rel_path, expect_src_exists=False) -> bool`, `_is_path_converged_with_render(...)`: Detects whether `install/<pkg>/<rel>` already matches `render/<pkg>/<rel>`.
-* `assert_source_file_clean(src_file, pkg, force=False) -> None`: Raises `DirtySourceFileError` if `src_file` has uncommitted Git modifications and `force=False`.
-* `_normalize_keep_file_drifts`, `_partition_converged_package_drifts`, `_precompute_modification_patch`, `_precompute_rename_patch`, `_precompute_package_drift_patches`, `_precompute_modification_conflicts`, `plan_package_adopt(workspace_config, pkg, skip_patches=False, pre_source_already_triggered=False) -> PackageAdoptPlan`.
+* `_route_package_drifts(install_pkg_dir, render_pkg_dir, src_dir_to_render, render_engines, diff) -> PackageDriftFiles`: Stage 2 category router that routes normalized `GitStatusChanges` into `converged_files`, `additions`, `deletions`, `modifications`, and `renames` (keeping only renames where `old` exists in `src/` and `new` is absent in `src/`, decomposing all other renames, promoting additions with existing `src/` matches to modifications, and promoting modifications without `src/` matches to additions).
+* `assert_source_file_clean(src_file, pkg, force=False) -> None`, `_assert_deletion_source_clean(...)`: Enforces the Git cleanliness safeguard on target source files and directories during Stage 3 (`plan_package_adopt`), raising `DirtySourceFileError` if any target source has uncommitted modifications and `force=False`.
+* `_build_static_adopt_patch`, `_precompute_modification_patch`, `_precompute_rename_patch`, `_precompute_package_drift_patches`, `plan_package_adopt(workspace_config, pkg, skip_patches=False, pre_source_already_triggered=False, force=False) -> PackageAdoptPlan`: Stage 3 patch pre-computation and 3-stage planning entry point.
 
 ### [`adopt_actions.py`](adopt_actions.py) — Layer 2: Atomic Single-File Reconciliation Actions
-* `_sync_file_mode(target_file, patch_from)`, `ensure_empty_keep_file(keep_file)`, `adopt_addition(pkg_dir, install_pkg_dir, rel_path)`, `ignore_addition(pkg_dir, install_pkg_dir, rel_path)`, `adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg)`.
-* `patch_and_edit(target_file, patch_content, patch_from, accept_conflicts=False, open_editor=False) -> bool`.
-* `adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, patch_from, has_patch_conflict=False, accept_conflicts=False) -> Optional[Path]`.
+* `_sync_file_mode(target_file, patch_from)`, `ensure_empty_keep_file(keep_file)`, `adopt_addition(pkg_dir, install_pkg_dir, rel_path)`, `ignore_addition(pkg_dir, install_pkg_dir, rel_path)`, `adopt_deletion(render_engines, src_dir_to_render, rel_path)`.
+* `patch_and_edit(target_file, patch_content: AdoptPatch, accept_conflicts=False, open_editor=False) -> bool`.
+* `adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content: AdoptPatch, accept_conflicts=False) -> Optional[Path]`.
 * `fallback_over_render(src_file, static_file)`, `fallback_side_by_side(src_file, install_file) -> bool`.
 
 ### [`adopt_handlers.py`](adopt_handlers.py) — Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
 * `handle_single_addition(...) -> ItemAdoptOutcome`, `handle_single_deletion(...) -> ItemAdoptOutcome`.
-* `handle_rename_non_interactive(...)`, `handle_rename_interactive(...)`, `handle_single_rename(...) -> ItemAdoptOutcome`.
-* `handle_modification_non_interactive(...)`, `handle_modification_interactive(...)`, `handle_single_modification(...) -> ItemAdoptOutcome`.
+* `_prompt_rename_clean_interactive(...)`, `_prompt_rename_conflict_interactive(...)`, `handle_rename_non_interactive(...)`, `handle_rename_interactive(...)`, `handle_single_rename(...) -> ItemAdoptOutcome`.
+* `_prompt_templated_modification_clean_interactive(...)`, `_prompt_static_modification_clean_interactive(...)`, `_prompt_modification_conflict_interactive(...)`, `handle_modification_non_interactive(...)`, `handle_modification_interactive(...)`, `handle_single_modification(...) -> ItemAdoptOutcome`.
 
 ### [`adopt_package.py`](adopt_package.py) — Layer 4: Single-Package Adoption Execution
 * `_derive_package_adopt_status(...) -> AdoptStatus`, `_derive_adopt_result_status(...) -> AdoptStatus`.
 * `stage_converged_package_drifts(workspace_config, plan) -> List[Path]`, `_dry_run_package_adopt(pkg_plan) -> PackageAdoptResult`.
-* `execute_package_adopt(workspace_config, plan, options=None) -> PackageAdoptResult`: Reconciles divergent drifts into `src/<pkg>/` and stages resolved paths in `install/<pkg>/` without committing.
+* `execute_package_adopt(workspace_config, plan, options=None) -> PackageAdoptResult`: Reconciles divergent drifts into `src/<pkg>/` using pre-computed `AdoptPatch` entries in `plan.mod_patches` (raising `SafeguardError` if any modification or rename entry is missing) and stages resolved paths in `install/<pkg>/` without committing.
 * `adopt_one_package_drifts(workspace_config, pkg, options=None) -> PackageAdoptResult`.
 
 ---
 
 ## 4. Local Invariants & Modification Rules
-1. **Cross-Platform Patch Uniformity**: Never pass GNU-only `--merge` to `patch`. Always use POSIX `patch --no-backup-if-mismatch` when `accept_conflicts=False` and `_apply_patch_with_git_merge_file` (`git merge-file -L "" -L "" -L ""`) when `accept_conflicts=True`.
-2. **3-Way De-Rendering Alignment**: In `derender_host_lines`, `R_derendered` must maintain 1-to-1 line alignment with `T` across Case 1, Case 2, and Case 3 hunks so unified diffs apply at exact template line numbers.
+1. **Pure-Python Cross-Platform Patch Uniformity**: `adopt_patch.py` parses and applies unified diffs directly in memory without external `patch` or `git merge-file` subprocesses. Step 1 static-file conflicts write 2-way conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`), while Step 2 template `ConflictCluster`s write 3-way `diff3` markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`).
+2. **Two-Step De-Rendering Isolation ($T \to T_{\text{clean}} \to T_{\text{merged}}$) & Step 1 Conflict Guard**: Clean operations (`0.2, 1.2, 2.3, 2.4, 3.1`) must be applied in Step 1 (`clean_patch`) to produce $T_{\text{clean}}$ before Step 2 injects `ConflictCluster` `diff3` blocks at $[t_{\text{clean\_start}}, t_{\text{clean\_end}})$. If `patch_content.conflict_clusters` is non-empty and Step 1 conflicts against `src_file`, `apply_source_patch` raises `SafeguardError`.
 3. **Stage-Only Boundary in Layer 4**: `execute_package_adopt` and `adopt_one_package_drifts` must only stage resolved files (`git add -- <paths>`) in `install/`; committing staged changes belongs strictly to Layer 5 (`primitives/adopt_repo.py`).
 
 ---
 
 ## 5. Related Feature Docs & Targeted Tests
-* **Feature Specifications**: [`docs/features/template_adopt_derendering.md`](../../../docs/features/template_adopt_derendering.md), [`docs/features/drift_adoption_and_fcd.md`](../../../docs/features/drift_adoption_and_fcd.md)
+* **Feature Specifications**: [`docs/features/template_adopt_derendering_draft.md`](../../../docs/features/template_adopt_derendering_draft.md), [`docs/features/template_adopt_architecture_plan.md`](../../../docs/features/template_adopt_architecture_plan.md), [`docs/features/drift_adoption_and_fcd.md`](../../../docs/features/drift_adoption_and_fcd.md)
 * **Targeted Unit Tests**:
   ```bash
   PYTHONPATH=src python3 -m unittest tests/test_adopt.py

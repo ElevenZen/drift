@@ -49,10 +49,12 @@
 ### [`adopt_models.py`](adopt_models.py) — `drift adopt` Models
 * `AdoptStatus(str, Enum)`: 5-state adoption status (`UP_TO_DATE`, `SUCCESS`, `PARTIAL`, `SKIPPED`, `FAILED`).
 * `ItemAdoptOutcome(str, Enum)`: 3-state single-item outcome (`ADOPTED`, `SKIPPED`, `CONFLICT`; truthy iff `ADOPTED`).
-* `TemplateHunk(t_start, t_end, r_start, r_end)`, `TemplateHunkClassification(str, Enum)`, & `DerenderedPair(r_derendered, h_derendered)`: 3-way hunk-map de-rendering models for translating host edits on rendered files back into template-compatible diffs.
+* `TokenKind(str, Enum)`, `TokenizedLine`, `SkeletonMatch`: Lossless Neovim-style word tokenization and slot-normalized skeleton similarity models.
+* `DiffRelation(str, Enum)` (`TR`, `RH`), `DiffUnitType(str, Enum)` (`EQUAL`, `SINGLE_EDIT`, `SINGLE_SKEL_EDIT`, `BLOCK_EDIT`, `INSERT`, `DELETE`), & `DiffUnit`: Unified atomic alignment unit models across $T \to R$ and $R \to H$.
+* `CleanPatchHunk(t_start, t_end, old_lines, new_lines, old_eof_newline=True, new_eof_newline=True)` (with `.is_old_eof_nl_valid`, `.is_new_eof_nl_valid`), `ConflictCluster`, `TwoStepDerenderPlan`, & `AdoptPatch(src_match, patch_from, has_conflict, clean_hunks, conflict_clusters, display_diff)`: Two-step 3-way de-rendering and unified patch/target containers.
 * `AdoptOptions(interactive=False, accept_conflicts=False, force=False, dry_run=False, no_render=False, with_render=False, no_reverse_sync=False, skip_patches=False, flags=None)`.
 * `PackageDriftFiles(additions, deletions, modifications, renames, converged_files)`.
-* `PackageAdoptPlan(..., render_pkg_dir, mod_targets, mod_conflicts)` & `AdoptPlan`: Self-contained pre-computed adoption plans holding unified or 3-way de-rendered patches (`mod_patches`, `rename_patches`), resolved source matches (`mod_targets`), conflict flags (`mod_conflicts`), and pure `.format_text(verbose=False)`.
+* `PackageAdoptPlan(..., render_pkg_dir, mod_patches: Dict[str, AdoptPatch])` & `AdoptPlan`: Self-contained pre-computed adoption plans holding unified `AdoptPatch` entries for both modifications (`rel_mod.as_posix()`) and renames (`get_rename_patch_key(old_rel, new_rel)`), with pure `.format_text(verbose=False)`.
 * `PackageAdoptResult` & `AdoptResult`: Tracks `adopted_*`, `conflicted_files`, `skipped_files`, and `.format_text(dry_run=False, verbose=False)`.
 
 ### [`deploy_models.py`](deploy_models.py) — `drift deploy`, `drift rollback` & `drift plan` Models

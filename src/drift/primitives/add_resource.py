@@ -181,7 +181,10 @@ def check_import_conflict(
     src_on_system: Path,
     rel_target: Path,
 ) -> Optional[Tuple[Path, Path]]:
-    """Checks if a single import path conflicts with existing source templates/files."""
+    """
+    Checks if a single import path conflicts with existing source templates/files.
+    returns Tuple[absolute_source_path, conflicting_template_path] if conflict exists, else None.
+    """
     match = render_engines.find_conflict_in_source_dir(src_dir_to_render, rel_target)
     return (src_on_system, match.path) if match else None
 

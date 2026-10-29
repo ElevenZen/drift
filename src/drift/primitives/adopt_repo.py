@@ -1,58 +1,74 @@
 """Primitive 8: Multi-Package Drift Adoption Orchestrator (`drift adopt`, Layer 5).
 
-Architecture & Call Chain Overview:
-===================================
-Orchestrates workspace-wide drift adoption (`install/` -> `src/`) on top of the modular
-`drift.adopt` engine (`adopt_derender`, `adopt_patch`, `adopt_plan`, `adopt_actions`,
-`adopt_handlers`, `adopt_package`):
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
 
-Call Chain:
------------
-run_primitive_adopt_drifts (Layer 5)
- ├── prepare_adopt (Layer 5)
- │    ├── _sync_and_render_before_adopt
- │    │    ├── run_primitive_1_reverse_sync
- │    │    ├── get_drifted_packages (Layer 1c)
- │    │    └── run_primitive_2_render_packages
- │    └── plan_package_adopt (Layer 1c, per package)
- │         ├── _temporary_stage_package_index
- │         ├── _normalize_keep_file_drifts
- │         ├── _partition_converged_package_drifts
- │         └── _precompute_package_drift_patches
- │              ├── generate_derendered_patch (Layer 1a, templated modifications & renames)
- │              └── generate_install_git_patch / generate_retargeted_patch (Layer 1b, static files)
- ├── _dry_run_package_adopt (Layer 4, when options.dry_run=True)
- └── execute_adopt (Layer 5)
-      ├── execute_package_adopt (Layer 4, per package)
-      │    ├── trigger_pre_source_hook
-      │    ├── handle_single_addition (Layer 3 -> Layer 2)
-      │    ├── handle_single_deletion (Layer 3 -> Layer 2)
-      │    ├── handle_single_rename (Layer 3 -> Layer 2)
-      │    ├── handle_single_modification (Layer 3 -> Layer 2)
-      │    └── git -C <install_path> add -- <resolved_paths>
-      └── commit_staged_repo_changes (commits staged changes in install/)
+Pipeline Architecture:
+    1. Pre-Flight Synchronization, Rendering & Adoption Planning:
+        prepare_adopt(workspace_config, package_names, options) [Layer 5]
+            - Optional Reverse Sync & Render Refresh (_sync_and_render_before_adopt):
+                * run_primitive_1_reverse_sync (when not options.no_reverse_sync)
+                * get_drifted_packages [Layer 1c]
+                * run_primitive_2_render_packages (when options.with_render or not options.no_render)
+            - Per-Package 3-Stage Planning (plan_package_adopt [Layer 1c]):
+                * Stage 1 — Collect & Normalize Raw Git Status (_collect_package_git_status)
+                * Stage 2 — Route Drift Categories (_route_package_drifts)
+                * Stage 3 — Validate Source Cleanliness & Calculate Patches (_precompute_package_drift_patches)
+            -> Returns AdoptPlan(packages, package_plans, options)
 
-Dedicated Converged-Only Entry Point (called by deploy_repo):
--------------------------------------------------------------
-resolve_and_commit_converged_drifts (Layer 5)
- ├── prepare_adopt(..., no_render=True, no_reverse_sync=True, skip_patches=True)
- └── execute_converged_drifts (Layer 5)
-      ├── stage_converged_package_drifts (Layer 4)
-      └── commit_staged_repo_changes
+    2. Multi-Package Adoption Execution & Commit Boundary:
+        execute_adopt(workspace_config, plan: AdoptPlan) [Layer 5]
+            - If dry_run -> compiles inspectable PackageAdoptResult summaries (_dry_run_package_adopt [Layer 4])
+            - Iterates over plan.package_plans:
+                execute_package_adopt(workspace_config, pkg_plan, options) [Layer 4]
+                    * trigger_pre_source_hook (when package has divergent drifts)
+                    * handle_single_addition [Layer 3 -> Layer 2]
+                    * handle_single_deletion [Layer 3 -> Layer 2]
+                    * handle_single_rename [Layer 3 -> Layer 2]
+                    * handle_single_modification [Layer 3 -> Layer 2]
+                    * Stages resolved paths in install/ ('git add -- <resolved_paths>')
+            - Commits staged changes in install/ (commit_staged_repo_changes)
+            -> Returns Aggregated AdoptResult
 
+    3. Public Composite Primitive Entry Points:
+        run_primitive_adopt_drifts(workspace_config, package_names, options) [Layer 5]
+            = prepare_adopt >> execute_adopt
+        resolve_and_commit_converged_drifts(workspace_config, package_names, dry_run) [Layer 5]
+            = prepare_adopt(no_render=True, no_reverse_sync=True, skip_patches=True)
+              >> execute_converged_drifts (stage_converged_package_drifts + commit_staged_repo_changes)
+
+-------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
------------------------------------------
-- Layer 0 (`models/adopt_models.py`): `AdoptStatus`, `ItemAdoptOutcome`, `TemplateHunk`,
-  `DerenderedPair`, `AdoptOptions`, `PackageDriftFiles`, `PackageAdoptPlan`, `AdoptPlan`,
-  `PackageAdoptResult`, `AdoptResult`.
-- Layer 1a (`adopt/adopt_derender.py`): 3-way hunk-map template de-rendering (`T <-> R <-> H`).
-- Layer 1b (`adopt/adopt_patch.py`): Unified diff generation, conflict probing, and
-  cross-platform patch application (`patch` + `git merge-file`).
-- Layer 1c (`adopt/adopt_plan.py`): Drift discovery, convergence partitioning, and planning.
-- Layer 2 (`adopt/adopt_actions.py`): Atomic single-file reconciliation actions.
-- Layer 3 (`adopt/adopt_handlers.py`): Single-item interactive & non-interactive dispatchers.
-- Layer 4 (`adopt/adopt_package.py`): Single-package adoption execution & status derivation.
-- Layer 5 (`primitives/adopt_repo.py`): Multi-package primitive orchestrator & commit boundary.
+    Layer 0: Domain Models (`models/adopt_models.py`)
+        AdoptStatus, ItemAdoptOutcome, TokenKind, TokenizedLine, SkeletonMatch,
+        DiffRelation, DiffUnitType, DiffUnit, CleanPatchHunk, ConflictCluster,
+        TwoStepDerenderPlan, AdoptPatch, AdoptOptions, PackageDriftFiles,
+        PackageAdoptPlan, AdoptPlan, PackageAdoptResult, AdoptResult
+    Layer 1a-1: Hunk Fission & Single-Line Token Calculus (`adopt/adopt_fission.py`)
+        tokenize_line, compute_skeleton_match, find_monotonic_line_matches,
+        fission_diff_units, try_derender_single_line, refine_single_line_units
+    Layer 1a-2: Orthogonal 3-Way Classification & Two-Step Plan (`adopt/adopt_derender.py`)
+        split_rh_deletes_at_tr_boundaries, build_two_step_derender_plan,
+        build_display_unified_diff, generate_derendered_patch
+    Layer 1b: Pure-Python Unified Patch & Conflict Engine (`adopt/adopt_patch.py`)
+        generate_install_git_patch, generate_source_to_install_patch,
+        parse_unified_patch_hunks, check_patch_conflicts, apply_source_patch
+    Layer 1c: 3-Stage Drift Discovery, Category Routing & Planning (`adopt/adopt_plan.py`)
+        get_drifted_packages, _collect_package_git_status, _route_package_drifts,
+        assert_source_file_clean, _precompute_package_drift_patches, plan_package_adopt
+    Layer 2: Atomic Single-File Reconciliation Actions (`adopt/adopt_actions.py`)
+        adopt_addition, ignore_addition, adopt_deletion, patch_and_edit,
+        adopt_rename, fallback_over_render, fallback_side_by_side
+    Layer 3: Single-Item Interactive & Non-Interactive Dispatchers (`adopt/adopt_handlers.py`)
+        handle_single_addition, handle_single_deletion,
+        handle_single_rename, handle_single_modification
+    Layer 4: Single-Package Adoption Execution (`adopt/adopt_package.py`)
+        stage_converged_package_drifts, execute_package_adopt, adopt_one_package_drifts
+    Layer 5: Multi-Package Primitive Orchestrator (`primitives/adopt_repo.py`)
+        prepare_adopt, execute_converged_drifts,
+        resolve_and_commit_converged_drifts, execute_adopt, run_primitive_adopt_drifts
+===============================================================================
 """
 
 from __future__ import annotations
@@ -216,6 +232,7 @@ def prepare_adopt(
             pkg,
             skip_patches=opts.skip_patches,
             pre_source_already_triggered=(pkg in rendered_pkg_set),
+            force=opts.force,
         )
         for pkg in resolved_packages
     ]
@@ -228,6 +245,17 @@ def execute_adopt(
 ) -> AdoptResult:
     """Executes adoption for all plans in AdoptPlan, staging adopted/converged files and committing changes."""
     opts = plan.options
+
+    # Dry-run Mode
+    if opts.dry_run:
+        dry_run_pkgs = [_dry_run_package_adopt(pkg_plan) for pkg_plan in plan.plans]
+        return AdoptResult(
+            command="adopt",
+            status=_derive_adopt_result_status(dry_run_pkgs),
+            packages=dry_run_pkgs,
+            dry_run=True,
+        )
+
     package_results: List[PackageAdoptResult] = [
         execute_package_adopt(
             workspace_config=workspace_config,
@@ -291,17 +319,7 @@ def run_primitive_adopt_drifts(
             dry_run=opts.dry_run,
         )
 
-    # 2. Dry-run Mode
-    if opts.dry_run:
-        dry_run_pkgs = [_dry_run_package_adopt(pkg_plan) for pkg_plan in plan.plans]
-        return AdoptResult(
-            command="adopt",
-            status=_derive_adopt_result_status(dry_run_pkgs),
-            packages=dry_run_pkgs,
-            dry_run=True,
-        )
-
-    # 3. Execution (stages converged_files directly and reconciles divergent drifts)
+    # 2. Execution (stages converged_files directly and reconciles divergent drifts)
     return execute_adopt(
         workspace_config=workspace_config,
         plan=plan,

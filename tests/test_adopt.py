@@ -33,21 +33,27 @@ from drift.adopt import (
     execute_package_adopt,
     fallback_over_render,
     fallback_side_by_side,
+    find_source_path_conflict,
     generate_install_git_patch,
-    generate_retargeted_patch,
+    generate_source_to_install_patch,
     get_drifted_packages,
     handle_single_addition,
     handle_single_deletion,
+    handle_single_modification,
+    handle_single_rename,
     ignore_addition,
+    parse_unified_patch_hunks,
     patch_and_edit,
     plan_package_adopt,
     resolve_source_file_path,
-    rewrite_patch_target_headers,
 )
 from drift.models import (
     AdoptOptions,
+    AdoptPatch,
     AdoptPlan,
     AdoptStatus,
+    CleanPatchHunk,
+    ConflictCluster,
     ItemAdoptOutcome,
     PackageAdoptPlan,
     get_rename_patch_key,
@@ -190,10 +196,17 @@ class TestAdopt(unittest.TestCase):
 
     def test_plan_package_adopt(self) -> None:
         pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
 
-        # Setup a tracked file in Git HEAD
+        # Setup tracked and deleted files in src/ and install/ Git HEAD
+        (src_pkg_dir / "tracked.txt").write_text("original content", encoding="utf-8")
+        (src_pkg_dir / "deleted.txt").write_text("will be deleted", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src files"], cwd=self.workspace_path, check=True, capture_output=True)
+
         tracked_file = pkg_install_dir / "tracked.txt"
         tracked_file.write_text("original content", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
@@ -221,10 +234,16 @@ class TestAdopt(unittest.TestCase):
 
     def test_plan_package_adopt_rename(self) -> None:
         pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Setup tracked file
+        # 1. Setup tracked file in src/ and install/
+        (src_pkg_dir / "old_name.txt").write_text("hello", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add src old_name"], cwd=self.workspace_path, check=True, capture_output=True)
+
         orig_file = pkg_install_dir / "old_name.txt"
         orig_file.write_text("hello", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
@@ -265,8 +284,14 @@ class TestAdopt(unittest.TestCase):
         # 4. Generate diff & apply patch
         patch_content = generate_install_git_patch(self.install_dir, Path(pkg) / "file.txt")
         self.assertTrue(bool(patch_content.strip()))
+        parsed_hunks = parse_unified_patch_hunks(patch_content)
+        assert parsed_hunks is not None
 
-        success = apply_source_patch(src_file, patch_content, accept_conflicts=False)
+        success = apply_source_patch(
+            src_file,
+            AdoptPatch(clean_hunks=parsed_hunks, display_diff=patch_content),
+            accept_conflicts=False,
+        )
         self.assertTrue(success)
         self.assertEqual(src_file.read_text(encoding="utf-8"), "line 1 modified\nline 2\n")
 
@@ -356,7 +381,7 @@ class TestAdopt(unittest.TestCase):
         src_file.write_text("bash", encoding="utf-8")
 
         # Run adopt deletion
-        adopt_deletion(self.workspace_config.render_engine_configs, src_pkg_dir, rel_path, pkg=pkg)
+        adopt_deletion(self.workspace_config.render_engine_configs, src_pkg_dir, rel_path)
 
         # File should be removed from src/
         self.assertFalse(src_file.exists())
@@ -384,20 +409,22 @@ class TestAdopt(unittest.TestCase):
         (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content\ntemplate content modified\n", encoding="utf-8")
 
         # 4. Adopt the rename
-        patch_content = generate_retargeted_patch(
+        patch_content = generate_install_git_patch(
             self.install_dir,
-            pkg,
-            Path("dot-new_name.txt"),
-            old_rel_path=Path("dot-old_name.txt"),
-            patch_target_path=Path("dot-new_name.envst.txt"),
+            Path(pkg) / "dot-new_name.txt",
+            old_rel_path=Path(pkg) / "dot-old_name.txt",
         )
+        parsed_hunks = parse_unified_patch_hunks(patch_content)
         adopt_rename(
             self.workspace_config.render_engine_configs,
             src_pkg_dir,
             Path("dot-old_name.txt"),
             Path("dot-new_name.txt"),
-            patch_content,
-            patch_from=pkg_install_dir / "dot-new_name.txt",
+            AdoptPatch(
+                patch_from=pkg_install_dir / "dot-new_name.txt",
+                clean_hunks=parsed_hunks,
+                display_diff=patch_content,
+            ),
         )
 
         # Verify old template is deleted, new template is created with dot- prefix and correct template suffixes, and modifications are applied!
@@ -408,7 +435,7 @@ class TestAdopt(unittest.TestCase):
         self.assertEqual(src_new_file.read_text(encoding="utf-8"), "template content\ntemplate content\ntemplate content modified\n")
 
     def test_adopt_rename_missing_old_source_file(self) -> None:
-        """Verifies that adopting a rename when the old source file does not exist correctly creates a new file and applies the full content."""
+        """Verifies that when the old source file does not exist in src/, adopt_rename returns None and plan_package_adopt routes the rename to converged_files(old) + additions(new)."""
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -416,39 +443,46 @@ class TestAdopt(unittest.TestCase):
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. Setup old file in install/ and commit, but NO template in src/
+        shared_prefix = "line 1 = alpha\nline 2 = beta\nline 3 = gamma\nline 4 = delta\n"
         install_old_file = pkg_install_dir / "dot-old_name.txt"
-        install_old_file.write_text("template content\n", encoding="utf-8")
+        install_old_file.write_text(shared_prefix + "template content\n", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=self.install_dir, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "add old_name"], cwd=self.install_dir, check=True, capture_output=True)
 
-        # 2. Rename and modify file inside install/
+        # 2. Rename and modify file inside install/ (>= 50% similarity so Git detects R old -> new)
         subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=self.install_dir, check=True, capture_output=True)
-        (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content modified\n", encoding="utf-8")
+        (pkg_install_dir / "dot-new_name.txt").write_text(shared_prefix + "template content modified\n", encoding="utf-8")
 
-        # 3. Generate the addition patch and retarget its headers
-        raw_patch = generate_install_git_patch(
+        # 3. Direct call to adopt_rename when old_src_file is missing returns None
+        patch_content = generate_install_git_patch(
             self.install_dir,
             Path(pkg) / "dot-new_name.txt",
         )
-        patch_content = rewrite_patch_target_headers(
-            raw_patch,
-            Path("dot-new_name.txt"),
+        parsed_hunks = parse_unified_patch_hunks(patch_content)
+        self.assertIsNone(
+            adopt_rename(
+                self.workspace_config.render_engine_configs,
+                src_pkg_dir,
+                Path("dot-old_name.txt"),
+                Path("dot-new_name.txt"),
+                AdoptPatch(
+                    patch_from=pkg_install_dir / "dot-new_name.txt",
+                    clean_hunks=parsed_hunks,
+                    display_diff=patch_content,
+                ),
+            )
         )
 
-        # 4. Adopt the rename
-        adopt_rename(
-            self.workspace_config.render_engine_configs,
-            src_pkg_dir,
-            Path("dot-old_name.txt"),
-            Path("dot-new_name.txt"),
-            patch_content,
-            patch_from=pkg_install_dir / "dot-new_name.txt",
-        )
+        # 4. Planning and adopting routes dot-old_name.txt to converged_files and dot-new_name.txt to additions
+        plan = plan_package_adopt(self.workspace_config, pkg)
+        self.assertEqual(plan.renames, [])
+        self.assertEqual(plan.converged_files, [Path("dot-old_name.txt")])
+        self.assertEqual(plan.additions, [Path("dot-new_name.txt")])
+        execute_package_adopt(self.workspace_config, plan, AdoptOptions(interactive=False))
 
-        # Verify a new file is created with new name in src/ and contains full content
         src_new_file = src_pkg_dir / "dot-new_name.txt"
         self.assertTrue(src_new_file.exists())
-        self.assertEqual(src_new_file.read_text(encoding="utf-8"), "template content\ntemplate content modified\n")
+        self.assertEqual(src_new_file.read_text(encoding="utf-8"), shared_prefix + "template content modified\n")
 
     def test_adopt_rename_rollback_on_patch_failure(self) -> None:
         """Verifies that when a patch fails during adopt_rename, new_src_file is unlinked and old_src_file remains untouched."""
@@ -466,15 +500,19 @@ class TestAdopt(unittest.TestCase):
             "-nonexistent line that fails\n"
             "+replacement\n"
         )
+        invalid_hunks = parse_unified_patch_hunks(invalid_patch)
+        assert invalid_hunks is not None
 
         res = adopt_rename(
             self.workspace_config.render_engine_configs,
             src_pkg_dir,
             Path("dot-old.txt"),
             Path("dot-new.txt"),
-            invalid_patch,
-            patch_from=self.install_dir / pkg / "dot-new.txt",
-            has_patch_conflict=False,
+            AdoptPatch(
+                patch_from=self.install_dir / pkg / "dot-new.txt",
+                clean_hunks=invalid_hunks,
+                display_diff=invalid_patch,
+            ),
             accept_conflicts=False,
         )
 
@@ -524,7 +562,6 @@ class TestAdopt(unittest.TestCase):
 
         resolved = handle_single_deletion(
             self.workspace_config.render_engine_configs,
-            pkg,
             src_pkg_dir,
             rel_path,
             interactive=False
@@ -552,9 +589,13 @@ class TestAdopt(unittest.TestCase):
         install_new_file = pkg_install_dir / "dot-new.txt"
         install_old_file.rename(install_new_file)
         
-        # Create dot-new.txt in src/ to cause a target collision conflict, forcing the rename to skip/fail
-        src_new_file = src_pkg_dir / "dot-new.txt"
-        src_new_file.write_text("collision", encoding="utf-8")
+        # Create a blocking directory at dot-new.txt in src/ to cause a target block conflict, forcing the rename to skip/fail
+        src_new_dir = src_pkg_dir / "dot-new.txt"
+        src_new_dir.mkdir(parents=True, exist_ok=True)
+        (src_new_dir / "inside.txt").write_text("blocking dir", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src old and blocking dir"], cwd=self.workspace_path, check=True, capture_output=True)
 
         # 3. Run adopt_one_package_drifts non-interactively
         adopt_one_package_drifts(self.workspace_config, pkg, options=AdoptOptions(interactive=False))
@@ -1243,33 +1284,55 @@ class TestAdopt(unittest.TestCase):
         install_file.chmod(0o755)
 
         # 1. Clean patch without editor, with file mode sync
-        self.assertTrue(patch_and_edit(src_file, "patch content", patch_from=install_file, accept_conflicts=False, open_editor=False))
-        mock_apply.assert_called_once_with(src_file, "patch content", accept_conflicts=False)
+        dummy_hunk = (CleanPatchHunk(t_start=0, t_end=1, old_lines=("orig",), new_lines=("mod",)),)
+        clean_ap = AdoptPatch(
+            patch_from=install_file,
+            clean_hunks=dummy_hunk,
+            display_diff="patch content",
+        )
+        self.assertTrue(patch_and_edit(src_file, clean_ap, accept_conflicts=False, open_editor=False))
+        mock_apply.assert_called_once_with(src_file, clean_ap, accept_conflicts=False)
         mock_launch.assert_not_called()
         if sys.platform != "win32":
             self.assertTrue(bool(src_file.stat().st_mode & 0o111))
 
         # 2. Conflicted patch with editor
+        conflict_ap = AdoptPatch(
+            patch_from=install_file,
+            clean_hunks=dummy_hunk,
+            display_diff="conflict patch",
+            has_conflict=True,
+        )
         mock_apply.reset_mock()
         mock_launch.reset_mock()
-        self.assertTrue(patch_and_edit(src_file, "conflict patch", patch_from=install_file, accept_conflicts=True, open_editor=True))
-        mock_apply.assert_called_once_with(src_file, "conflict patch", accept_conflicts=True)
+        self.assertTrue(patch_and_edit(src_file, conflict_ap, accept_conflicts=True, open_editor=True))
+        mock_apply.assert_called_once_with(src_file, conflict_ap, accept_conflicts=True)
         mock_launch.assert_called_once_with(src_file)
 
         # 3. Patch application failure returns False (passing non-existing patch_from path)
         non_existent_patch_from = self.install_dir / "pkg_a" / "non_existent.txt"
+        failing_ap = AdoptPatch(
+            patch_from=non_existent_patch_from,
+            clean_hunks=dummy_hunk,
+            display_diff="failing patch",
+        )
         mock_apply.reset_mock()
         mock_launch.reset_mock()
         mock_apply.return_value = False
-        self.assertFalse(patch_and_edit(src_file, "failing patch", patch_from=non_existent_patch_from))
+        self.assertFalse(patch_and_edit(src_file, failing_ap))
         mock_launch.assert_not_called()
 
         # 4. Failure when EDITOR is unset or invalid
+        clean_non_existent_ap = AdoptPatch(
+            patch_from=non_existent_patch_from,
+            clean_hunks=dummy_hunk,
+            display_diff="patch content",
+        )
         mock_apply.reset_mock()
         mock_launch.reset_mock()
         mock_apply.return_value = True
         mock_launch.side_effect = RuntimeError("Environment variable $EDITOR is not set")
-        self.assertFalse(patch_and_edit(src_file, "patch content", patch_from=non_existent_patch_from, open_editor=True))
+        self.assertFalse(patch_and_edit(src_file, clean_non_existent_ap, open_editor=True))
 
     @patch("drift.adopt.adopt_actions.launch_side_by_side_editor")
     def test_fallback_side_by_side_success_and_failure(self, mock_launch: MagicMock) -> None:
@@ -1663,7 +1726,7 @@ render_command = "bash -c 'cat %i %s'"
         assert plan1 is not None
         self.assertEqual(plan1.modifications, [Path("config.txt")])
         self.assertIn("config.txt", plan1.mod_patches)
-        self.assertIn("v2_modified", plan1.mod_patches["config.txt"])
+        self.assertIn("v2_modified", plan1.mod_patches["config.txt"].display_diff)
 
         plan2 = plan.get_package_plan(pkg2)
         self.assertIsNotNone(plan2)
@@ -1721,8 +1784,8 @@ render_command = "bash -c 'cat %i %s'"
         # Patch must be precomputed and stored under get_rename_patch_key("old_name.conf", "new_name.conf")
         patch_key = get_rename_patch_key(Path("old_name.conf"), Path("new_name.conf"))
         self.assertEqual(patch_key, "old_name.conf//->//new_name.conf")
-        self.assertIn(patch_key, pkg_plan.rename_patches)
-        self.assertIn("cherry_modified", pkg_plan.rename_patches[patch_key])
+        self.assertIn(patch_key, pkg_plan.mod_patches)
+        self.assertIn("cherry_modified", pkg_plan.mod_patches[patch_key].display_diff)
 
         # Index in install/ must be clean (un-staged)
         res_cached = subprocess.run(
@@ -1966,7 +2029,6 @@ render_command = "bash -c 'cat %i %s'"
 
         resolved = handle_single_deletion(
             self.workspace_config.render_engine_configs,
-            pkg,
             src_pkg_dir,
             rel_path,
             interactive=False,
@@ -1994,7 +2056,6 @@ render_command = "bash -c 'cat %i %s'"
             with self.assertLogs("drift.adopt", level="WARNING") as log_cm:
                 resolved = handle_single_deletion(
                     self.workspace_config.render_engine_configs,
-                    pkg,
                     src_pkg_dir,
                     rel_path,
                     interactive=False,
@@ -2022,7 +2083,6 @@ render_command = "bash -c 'cat %i %s'"
         with patch("builtins.input", return_value="1"):
             resolved = handle_single_deletion(
                 self.workspace_config.render_engine_configs,
-                pkg,
                 src_pkg_dir,
                 rel_path,
                 interactive=True,
@@ -2035,7 +2095,6 @@ render_command = "bash -c 'cat %i %s'"
         with patch("builtins.input", side_effect=["2", "n"]):
             resolved = handle_single_deletion(
                 self.workspace_config.render_engine_configs,
-                pkg,
                 src_pkg_dir,
                 rel_path,
                 interactive=True,
@@ -2048,7 +2107,6 @@ render_command = "bash -c 'cat %i %s'"
         with patch("builtins.input", side_effect=["2", "y"]):
             resolved = handle_single_deletion(
                 self.workspace_config.render_engine_configs,
-                pkg,
                 src_pkg_dir,
                 rel_path,
                 interactive=True,
@@ -2079,7 +2137,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(get_drifted_packages(self.workspace_config), [pkg_rename, pkg_space])
 
     def test_generate_retargeted_patch_preserves_dash_and_plus_body_lines(self) -> None:
-        """Verifies generate_retargeted_patch and rewrite_patch_target_headers only rewrite headers before '@@' and preserve '--- '/'+++ ' lines in hunks."""
+        """Verifies generate_install_git_patch and parse_unified_patch_hunks preserve '--- '/'+++ ' body lines inside hunks."""
         pkg = "pkg_patch_body"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -2109,32 +2167,14 @@ render_command = "bash -c 'cat %i %s'"
             encoding="utf-8",
         )
 
-        adj_patch = generate_retargeted_patch(
-            install_base=self.install_dir,
-            pkg=pkg,
-            new_rel_path=Path("new_script.lua"),
-            old_rel_path=Path("old_script.lua"),
-            patch_target_path=Path("new_script.envst.lua"),
-        )
         raw_patch = generate_install_git_patch(
             self.install_dir,
             Path(pkg) / "new_script.lua",
             old_rel_path=Path(pkg) / "old_script.lua",
         )
-        self.assertEqual(
-            rewrite_patch_target_headers(raw_patch, Path("new_script.envst.lua")),
-            adj_patch,
-        )
-        self.assertEqual(rewrite_patch_target_headers("", Path("new_script.envst.lua")), "")
-
-        lines = adj_patch.splitlines()
-        self.assertEqual(lines[0], "--- a/new_script.envst.lua")
-        self.assertEqual(lines[1], "+++ b/new_script.envst.lua")
-        # Body lines inside the hunk must NOT be rewritten into `--- a/...` or `+++ b/...`
+        lines = raw_patch.splitlines()
         self.assertIn("--- old lua comment", lines)
         self.assertIn("+++ counter comment", lines)
-        self.assertEqual(lines.count("--- a/new_script.envst.lua"), 1)
-        self.assertEqual(lines.count("+++ b/new_script.envst.lua"), 1)
 
         # Verify patch applies cleanly to a source template
         src_pkg_dir = self.src_dir / pkg
@@ -2148,7 +2188,13 @@ render_command = "bash -c 'cat %i %s'"
             "-- old lua comment\n",
             encoding="utf-8",
         )
-        self.assertTrue(apply_source_patch(target_src, adj_patch))
+        adj_hunks = parse_unified_patch_hunks(raw_patch)
+        self.assertTrue(
+            apply_source_patch(
+                target_src,
+                AdoptPatch(clean_hunks=adj_hunks, display_diff=raw_patch),
+            )
+        )
         self.assertEqual(
             target_src.read_text(encoding="utf-8"),
             "local x = $X_VAL\n"
@@ -2362,7 +2408,6 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(no_patch_pkg_plan.converged_files, [Path("conv_mod.txt")])
         self.assertEqual(no_patch_pkg_plan.modifications, [Path("div_mod.txt")])
         self.assertEqual(no_patch_pkg_plan.mod_patches, {})
-        self.assertEqual(no_patch_pkg_plan.rename_patches, {})
 
         # 3. Verify pkg_plan.format_text() formats converged files
         preview_text = pkg_plan.format_text()
@@ -2544,8 +2589,15 @@ render_command = "bash -c 'cat %i %s'"
 
         # 2. With no_reverse_sync=False and no_render=True, reverse-sync pulls "hello v2\n" into install/,
         #    but render/ still has "hello v1\n", so msg.txt is classified as a divergent modification (NOT converged)!
+        #    Because msg.envst.txt has uncommitted changes in src/, planning without force=True fails fast with DirtySourceFileError:
+        from drift.core.exceptions import DirtySourceFileError
+
+        with self.assertRaises(DirtySourceFileError):
+            prepare_adopt(
+                self.workspace_config, [pkg], AdoptOptions(no_reverse_sync=False, no_render=True, force=False)
+            )
         plan_no_render = prepare_adopt(
-            self.workspace_config, [pkg], AdoptOptions(no_reverse_sync=False, no_render=True)
+            self.workspace_config, [pkg], AdoptOptions(no_reverse_sync=False, no_render=True, force=True)
         )
         pkg_plan_no_render = plan_no_render.get_package_plan(pkg)
         assert pkg_plan_no_render is not None
@@ -2777,6 +2829,10 @@ render_command = "bash -c 'cat %i %s'"
         adopt_model_names = (
             "AdoptStatus",
             "ItemAdoptOutcome",
+            "CleanPatchHunk",
+            "ConflictCluster",
+            "TwoStepDerenderPlan",
+            "AdoptPatch",
             "get_rename_patch_key",
             "AdoptOptions",
             "PackageDriftFiles",
@@ -2843,16 +2899,19 @@ render_command = "bash -c 'cat %i %s'"
             self.assertEqual(proc.returncode, 0, msg=f"Import failed for '{import_stmt}': {proc.stderr}")
 
     def test_apply_source_patch_accept_conflicts_exit_code_1_and_failures(self) -> None:
-        """Verifies apply_source_patch and patch_and_edit handle real 'patch --merge' exit code 1
-        by writing conflict markers and returning True, while rejecting fatal/reject failures.
+        """Verifies apply_source_patch and patch_and_edit handle Step 1 static conflicts
+        in pure Python (writing 2-way conflict markers without subprocess calls) and raise
+        SafeguardError when Step 1 conflicts while Step 2 conflict_clusters are present.
         """
+        from drift.core.exceptions import SafeguardError
+
         pkg = "pkg_merge_conflict_patch"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Rendered baseline in install/ HEAD
+        # 1. Baseline in install/ HEAD
         install_file = pkg_install_dir / "auth.json"
         install_file.write_text(
             '{\n  "newapi": {\n    "type": "api_key",\n    "key": "real_key_1"\n  }\n}\n',
@@ -2867,23 +2926,32 @@ render_command = "bash -c 'cat %i %s'"
             '  "google": {\n    "type": "api_key",\n    "key": "real_key_2"\n  }\n}\n',
             encoding="utf-8",
         )
-        patch_content = generate_install_git_patch(self.install_dir, Path(pkg) / "auth.json")
-        self.assertTrue(bool(patch_content.strip()))
+        raw_patch = generate_install_git_patch(self.install_dir, Path(pkg) / "auth.json")
+        self.assertTrue(bool(raw_patch.strip()))
+        raw_hunks = parse_unified_patch_hunks(raw_patch)
+        assert raw_hunks is not None
+        adopt_patch = AdoptPatch(
+            patch_from=install_file,
+            clean_hunks=raw_hunks,
+            display_diff=raw_patch,
+            has_conflict=True,
+        )
 
-        # 3. Source template with ${NEW_API_KEY}
+        # 3. Source file with conflicting line ("${NEW_API_KEY}" instead of "real_key_1")
         template_text = '{\n  "newapi": {\n    "type": "api_key",\n    "key": "${NEW_API_KEY}"\n  }\n}\n'
         src_file = src_pkg_dir / "auth.envst.json"
         src_file.write_text(template_text, encoding="utf-8")
 
         # 4. Without accept_conflicts: returns False and does not write conflict markers or leave .rej
-        self.assertFalse(apply_source_patch(src_file, patch_content, accept_conflicts=False))
+        self.assertFalse(apply_source_patch(src_file, adopt_patch, accept_conflicts=False))
         self.assertEqual(src_file.read_text(encoding="utf-8"), template_text)
         self.assertFalse(src_file.with_suffix(".json.rej").exists())
 
-        # 5. With accept_conflicts=True ('patch --merge' exits with code 1): returns True and writes markers
-        self.assertTrue(apply_source_patch(src_file, patch_content, accept_conflicts=True))
+        # 5. With accept_conflicts=True (and no conflict_clusters): returns True and writes 2-way markers
+        self.assertTrue(apply_source_patch(src_file, adopt_patch, accept_conflicts=True))
         merged_text = src_file.read_text(encoding="utf-8")
         self.assertIn("<<<<<<<", merged_text)
+        self.assertNotIn("|||||||", merged_text)
         self.assertIn('"key": "${NEW_API_KEY}"', merged_text)
         self.assertIn("=======", merged_text)
         self.assertIn('"google": {', merged_text)
@@ -2896,8 +2964,7 @@ render_command = "bash -c 'cat %i %s'"
             self.assertTrue(
                 patch_and_edit(
                     src_file,
-                    patch_content,
-                    patch_from=install_file,
+                    adopt_patch,
                     accept_conflicts=True,
                     open_editor=True,
                 )
@@ -2905,30 +2972,48 @@ render_command = "bash -c 'cat %i %s'"
             mock_editor.assert_called_once_with(src_file)
         self.assertIn("<<<<<<<", src_file.read_text(encoding="utf-8"))
 
-        # 7. Verify accept_conflicts=True delegates unconditionally to 'git merge-file' without calling 'patch --merge'
+        # 7. Verify apply_source_patch and check_patch_conflicts run in pure Python without ANY subprocess calls
         src_file.write_text(template_text, encoding="utf-8")
-        real_run = subprocess.run
+        with patch("drift.adopt.adopt_patch.subprocess.run") as mock_subproc:
+            self.assertTrue(check_patch_conflicts(src_file, adopt_patch))
+            self.assertTrue(apply_source_patch(src_file, adopt_patch, accept_conflicts=True))
+            mock_subproc.assert_not_called()
 
-        def forbid_gnu_patch_merge(cmd, *args, **kwargs):
-            if cmd and cmd[0] == "patch" and "--merge" in cmd:
-                raise AssertionError("GNU-only 'patch --merge' must never be invoked")
-            return real_run(cmd, *args, **kwargs)
-
-        with patch("drift.adopt.adopt_patch.subprocess.run", side_effect=forbid_gnu_patch_merge):
-            self.assertTrue(apply_source_patch(src_file, patch_content, accept_conflicts=True))
-        bsd_merged = src_file.read_text(encoding="utf-8")
-        self.assertIn("<<<<<<<", bsd_merged)
-        self.assertIn('"key": "${NEW_API_KEY}"', bsd_merged)
-        self.assertIn("=======", bsd_merged)
-        self.assertIn('"google": {', bsd_merged)
-        self.assertIn(">>>>>>>", bsd_merged)
-
-        # 8. Malformed hunk body or fatal failure returns False even when accept_conflicts=True
+        # 8. Malformed hunk body raises ValueError in parse_unified_patch_hunks; invalid CleanPatchHunk returns False
         src_file.write_text(template_text, encoding="utf-8")
-        self.assertFalse(apply_source_patch(src_file, "@@ -1,2 +1,2 @@\ncorrupt_hunk_line\n", accept_conflicts=True))
-        with patch("drift.adopt.adopt_patch.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(args=["git", "merge-file"], returncode=255, stdout="", stderr="fatal")
-            self.assertFalse(apply_source_patch(src_file, patch_content, accept_conflicts=True))
+        with self.assertRaises(ValueError):
+            parse_unified_patch_hunks("@@ -1,2 +1,2 @@\ncorrupt_hunk_line\n")
+        corrupt_patch = AdoptPatch(
+            clean_hunks=(CleanPatchHunk(t_start=0, t_end=2, old_lines=("only_one",), new_lines=("a",)),),
+            display_diff="@@ -1,2 +1,2 @@\ncorrupt_hunk_line\n",
+            has_conflict=True,
+        )
+        self.assertFalse(apply_source_patch(src_file, corrupt_patch, accept_conflicts=True))
+        self.assertEqual(src_file.read_text(encoding="utf-8"), template_text)
+
+        # 9. Step 1 conflict guard: when conflict_clusters is non-empty and Step 1 clean_hunks
+        #    conflicts with src_file, apply_source_patch MUST raise SafeguardError!
+        invalid_two_step_patch = AdoptPatch(
+            clean_hunks=raw_hunks,
+            conflict_clusters=(
+                ConflictCluster(
+                    t_start=0,
+                    t_end=1,
+                    t_clean_start=0,
+                    t_clean_end=1,
+                    t_lines=("{",),
+                    r_lines=("{",),
+                    h_lines=("{",),
+                ),
+            ),
+            display_diff=raw_patch,
+            has_conflict=True,
+        )
+        with self.assertRaises(SafeguardError):
+            apply_source_patch(src_file, invalid_two_step_patch, accept_conflicts=False)
+        with self.assertRaises(SafeguardError):
+            apply_source_patch(src_file, invalid_two_step_patch, accept_conflicts=True)
+        self.assertEqual(src_file.read_text(encoding="utf-8"), template_text)
 
     def test_adopt_interactive_conflict_menu_6_options_modification_and_rename(self) -> None:
         """Verifies the 6-option conflict menu order for both modifications and renames:
@@ -3149,25 +3234,30 @@ render_command = "bash -c 'cat %i %s'"
         self.assertFalse((src_pkg / "new_auth.envst.json").exists())
 
     def test_parse_unified_patch_hunks_and_git_merge_file_comprehensive(self) -> None:
-        """Exhaustively tests _parse_unified_patch_hunks, _apply_hunk_slice, and
-        _apply_patch_with_git_merge_file across boundary edge cases, multi-hunk patches,
-        omitted line counts, '\\ No newline at end of file' comments, zero-side-effect
-        failure isolation, and full interactive/non-interactive adoption under BSD patch.
+        """Exhaustively tests parse_unified_patch_hunks, _apply_hunk_to_lines, and
+        _apply_step1_clean_hunks across boundary edge cases, multi-hunk patches,
+        omitted line counts, '\\ No newline at end of file' comments, and zero-side-effect
+        failure isolation.
         """
         from drift.adopt.adopt_patch import (
-            _apply_hunk_slice,
-            _apply_patch_with_git_merge_file,
-            _parse_unified_patch_hunks,
+            _apply_hunk_to_lines,
+            _apply_step1_clean_hunks,
+            parse_unified_patch_hunks,
         )
 
-        # 1. Empty / hunkless / malformed inputs return None
-        self.assertIsNone(_parse_unified_patch_hunks(""))
-        self.assertIsNone(_parse_unified_patch_hunks("diff --git a/x b/x\n--- a/x\n+++ b/x\n"))
-        self.assertIsNone(_parse_unified_patch_hunks("@@ -1,2 +1,2 @@\n valid\ninvalid_line\n"))
+        # 1. Empty / hunkless inputs return (), malformed inputs raise ValueError
+        self.assertEqual(parse_unified_patch_hunks(""), ())
+        self.assertEqual(parse_unified_patch_hunks("diff --git a/x b/x\n--- a/x\n+++ b/x\n"), ())
+        with self.assertRaises(ValueError):
+            parse_unified_patch_hunks("@@ -1,2 +1,2 @@\n valid\ninvalid_line\n")
+        with self.assertRaises(ValueError):
+            parse_unified_patch_hunks("@@ malformed_header @@\n+line\n")
         # Mismatched old_count (says 2, only 1 line provided)
-        self.assertIsNone(_parse_unified_patch_hunks("@@ -1,2 +1,1 @@\n only_one\n"))
+        with self.assertRaises(ValueError):
+            parse_unified_patch_hunks("@@ -1,2 +1,1 @@\n only_one\n")
         # Mismatched new_count (says 2, only 1 line provided)
-        self.assertIsNone(_parse_unified_patch_hunks("@@ -1,1 +1,2 @@\n only_one\n"))
+        with self.assertRaises(ValueError):
+            parse_unified_patch_hunks("@@ -1,1 +1,2 @@\n only_one\n")
 
         # 2. Single-line hunk with omitted ',count' ('@@ -1 +1 @@' and '@@ -2 +2,2 @@') and '\\ No newline'
         single_line_patch = (
@@ -3179,19 +3269,102 @@ render_command = "bash -c 'cat %i %s'"
             "+new_line_2\n"
             "\\ No newline at end of file\n"
         )
-        parsed_single = _parse_unified_patch_hunks(single_line_patch)
-        self.assertEqual(parsed_single, [(1, 1, ["old_line"], ["new_line_1", "new_line_2"])])
-
-        # 3. _apply_hunk_slice pure replacement for base (use_new=False) vs target (use_new=True)
-        orig_lines = ["line1\n", "line2\n", "line3\n"]
-        hunk_tuple = (2, 1, ["base_line2"], ["new_line2a", "new_line2b"])
+        parsed_single = parse_unified_patch_hunks(single_line_patch)
         self.assertEqual(
-            _apply_hunk_slice(orig_lines, hunk_tuple, use_new=False),
-            ["line1\n", "base_line2\n", "line3\n"],
+            parsed_single,
+            (
+                CleanPatchHunk(
+                    t_start=0,
+                    t_end=1,
+                    old_lines=("old_line",),
+                    new_lines=("new_line_1", "new_line_2"),
+                    old_eof_newline=True,
+                    new_eof_newline=False,
+                ),
+            ),
+        )
+        self.assertTrue(parsed_single[0].is_old_eof_nl_valid)
+        self.assertTrue(parsed_single[0].is_new_eof_nl_valid)
+        empty_hunk = CleanPatchHunk(t_start=0, t_end=0, old_lines=(), new_lines=())
+        self.assertFalse(empty_hunk.is_old_eof_nl_valid)
+        self.assertFalse(empty_hunk.is_new_eof_nl_valid)
+
+        # Verify '\\ No newline at end of file' after '-' (old_eof_newline=False, new_eof_newline=True)
+        # and after ' ' context line (old_eof_newline=False, new_eof_newline=False)
+        add_eof_nl_patch = (
+            "@@ -1 +1 @@\n"
+            "-no_nl_line\n"
+            "\\ No newline at end of file\n"
+            "+no_nl_line\n"
+        )
+        parsed_add_nl = parse_unified_patch_hunks(add_eof_nl_patch)
+        self.assertEqual(
+            parsed_add_nl,
+            (
+                CleanPatchHunk(
+                    t_start=0,
+                    t_end=1,
+                    old_lines=("no_nl_line",),
+                    new_lines=("no_nl_line",),
+                    old_eof_newline=False,
+                    new_eof_newline=True,
+                ),
+            ),
+        )
+        ctx_no_nl_patch = (
+            "@@ -1,2 +1,2 @@\n"
+            "-top_old\n"
+            "+top_new\n"
+            " bottom_ctx\n"
+            "\\ No newline at end of file\n"
+        )
+        parsed_ctx_no_nl = parse_unified_patch_hunks(ctx_no_nl_patch)
+        self.assertEqual(
+            parsed_ctx_no_nl,
+            (
+                CleanPatchHunk(
+                    t_start=0,
+                    t_end=2,
+                    old_lines=("top_old", "bottom_ctx"),
+                    new_lines=("top_new", "bottom_ctx"),
+                    old_eof_newline=False,
+                    new_eof_newline=False,
+                ),
+            ),
+        )
+
+        # 3. _apply_hunk_to_lines pure replacement for clean match vs 2-way conflict marker
+        orig_stripped = ["line1", "line2", "line3"]
+        clean_hunk = CleanPatchHunk(
+            t_start=1,
+            t_end=2,
+            old_lines=("line2",),
+            new_lines=("new_line2a", "new_line2b"),
         )
         self.assertEqual(
-            _apply_hunk_slice(orig_lines, hunk_tuple, use_new=True),
-            ["line1\n", "new_line2a\n", "new_line2b\n", "line3\n"],
+            _apply_hunk_to_lines(orig_stripped, clean_hunk, accept_conflicts=False),
+            ["line1", "new_line2a", "new_line2b", "line3"],
+        )
+        mismatch_hunk = CleanPatchHunk(
+            t_start=1,
+            t_end=2,
+            old_lines=("base_line2",),
+            new_lines=("new_line2a", "new_line2b"),
+        )
+        with self.assertRaises(ValueError):
+            _apply_hunk_to_lines(orig_stripped, mismatch_hunk, accept_conflicts=False)
+        self.assertEqual(
+            _apply_hunk_to_lines(orig_stripped, mismatch_hunk, accept_conflicts=True),
+            [
+                "line1",
+                "<<<<<<< ",
+                "line2",
+                "=======",
+                "new_line2a",
+                "new_line2b",
+                ">>>>>>> ",
+                "line3",
+            ],
         )
 
         # 4. Multi-hunk patch where Hunk 1 expands line count and Hunk 2 conflicts near the end:
@@ -3225,49 +3398,60 @@ render_command = "bash -c 'cat %i %s'"
             "+added_bottom = true\n"
             " footer = end\n"
         )
-        self.assertTrue(_apply_patch_with_git_merge_file(multi_src, multi_patch))
+        multi_hunks = parse_unified_patch_hunks(multi_patch)
+        self.assertTrue(_apply_step1_clean_hunks(multi_src, multi_hunks, accept_conflicts=True))
         multi_merged = multi_src.read_text(encoding="utf-8")
         # Hunk 1 applied cleanly at the top
         self.assertIn("top_val = new_top_1\ntop_extra_1 = 2\ntop_extra_2 = 3\n", multi_merged)
-        # Hunk 2 wrote conflict markers around ${SECRET_VAR} vs rendered_secret_value + added_bottom
+        # Hunk 2 wrote 2-way conflict markers around ${SECRET_VAR} vs rendered_secret_value + added_bottom
         self.assertIn("<<<<<<<", multi_merged)
+        self.assertNotIn("|||||||", multi_merged)
         self.assertIn("secret = ${SECRET_VAR}", multi_merged)
         self.assertIn("=======", multi_merged)
         self.assertIn("secret = rendered_secret_value\nadded_bottom = true", multi_merged)
         self.assertIn(">>>>>>>", multi_merged)
 
-        # 5. Clean (non-conflicting) patch via _apply_patch_with_git_merge_file (git merge-file exit code 0)
+        # 5. Clean (non-conflicting) patch via _apply_step1_clean_hunks & EOF newline transitions
         clean_src = self.src_dir / "clean_merge.txt"
         clean_src.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
         clean_patch = "@@ -1,3 +1,3 @@\n alpha\n-beta\n+beta_updated\n gamma\n"
-        self.assertTrue(_apply_patch_with_git_merge_file(clean_src, clean_patch))
+        clean_hunks = parse_unified_patch_hunks(clean_patch)
+        self.assertTrue(_apply_step1_clean_hunks(clean_src, clean_hunks, accept_conflicts=True))
         self.assertEqual(clean_src.read_text(encoding="utf-8"), "alpha\nbeta_updated\ngamma\n")
 
-        # 6. Zero side-effect guarantee when _apply_patch_with_git_merge_file fails:
-        #    (a) missing file, (b) malformed hunk, (c) git merge-file error exit code (> 127),
-        #    (d) git merge-file returning > 0 without writing conflict markers
+        # EOF newline transitions: (a) removing EOF newline, (b) adding EOF newline, (c) EOF newline mismatch conflict
+        eof_src = self.src_dir / "eof_nl.txt"
+        eof_src.write_text("old_line\n", encoding="utf-8")
+        self.assertTrue(_apply_step1_clean_hunks(eof_src, parsed_single, accept_conflicts=False))
+        self.assertEqual(eof_src.read_text(encoding="utf-8"), "new_line_1\nnew_line_2")
+
+        eof_src.write_text("no_nl_line", encoding="utf-8")
+        self.assertTrue(_apply_step1_clean_hunks(eof_src, parsed_add_nl, accept_conflicts=False))
+        self.assertEqual(eof_src.read_text(encoding="utf-8"), "no_nl_line\n")
+        # Re-applying parsed_add_nl (which expects old_eof_newline=False) on "no_nl_line\n" must detect mismatch!
+        self.assertFalse(_apply_step1_clean_hunks(eof_src, parsed_add_nl, accept_conflicts=False))
+
+        # 6. Zero side-effect guarantee when _apply_step1_clean_hunks fails:
+        #    (a) missing file, (b) invalid hunk bounds, (c) mismatched hunk with accept_conflicts=False
         missing_path = self.src_dir / "does_not_exist.txt"
-        self.assertFalse(_apply_patch_with_git_merge_file(missing_path, clean_patch))
+        self.assertFalse(_apply_step1_clean_hunks(missing_path, clean_hunks, accept_conflicts=True))
         self.assertFalse(missing_path.exists())
 
         untouched_src = self.src_dir / "untouched.envst.txt"
         untouched_init = "keep_me = ${SAFE}\n"
         untouched_src.write_text(untouched_init, encoding="utf-8")
-        self.assertFalse(_apply_patch_with_git_merge_file(untouched_src, "@@ -1,2 +1,2 @@\nbad_hunk\n"))
-        self.assertEqual(untouched_src.read_text(encoding="utf-8"), untouched_init)
-
-        with patch("drift.adopt.adopt_patch.subprocess.run") as mock_git_err:
-            mock_git_err.return_value = subprocess.CompletedProcess(
-                args=["git", "merge-file"], returncode=255, stdout="", stderr="error"
+        self.assertFalse(
+            _apply_step1_clean_hunks(
+                untouched_src,
+                (CleanPatchHunk(t_start=0, t_end=2, old_lines=("bad_hunk",), new_lines=("a",)),),
+                accept_conflicts=True,
             )
-            self.assertFalse(_apply_patch_with_git_merge_file(untouched_src, "@@ -1,1 +1,1 @@\n-a\n+b\n"))
+        )
         self.assertEqual(untouched_src.read_text(encoding="utf-8"), untouched_init)
-
-        with patch("drift.adopt.adopt_patch.subprocess.run") as mock_no_markers:
-            mock_no_markers.return_value = subprocess.CompletedProcess(
-                args=["git", "merge-file"], returncode=1, stdout="", stderr=""
-            )
-            self.assertFalse(_apply_patch_with_git_merge_file(untouched_src, "@@ -1,1 +1,1 @@\n-a\n+b\n"))
+        mismatch_one = parse_unified_patch_hunks("@@ -1,1 +1,1 @@\n-a\n+b\n")
+        self.assertFalse(
+            _apply_step1_clean_hunks(untouched_src, mismatch_one, accept_conflicts=False)
+        )
         self.assertEqual(untouched_src.read_text(encoding="utf-8"), untouched_init)
 
         # 7. Full end-to-end interactive ('[1]' & '[2]') and non-interactive adoption on Case 3 conflict
@@ -3314,24 +3498,33 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIn("<<<<<<<", s_bsd_file.read_text(encoding="utf-8"))
 
     def test_derender_host_lines_four_cases_and_helpers_unit(self) -> None:
-        """Exhaustively unit-tests Layer 1a 3-way hunk-map de-rendering across:
-        - Case 1: Untouched template hunk adjacent to host insertion (and 0-line rendered directive)
-        - Case 2a: Sub-line containment (adding trailing comma / inline comment to template line)
-          plus uniqueness & whitespace guards
-        - Case 2b: Full replacement or deletion of 1-line and multi-line template hunks
-        - Case 3: Border-crossing partial edit and interior insertion on multi-line template hunks,
-          including line-count alignment via _format_conflict_base_lines when t_len != r_len.
+        """Exhaustively unit-tests Layer 1a-1 (`adopt_fission`) and Layer 1a-2 (`adopt_derender`) across:
+        - Case 1.1: Untouched template hunk (`TR_SINGLE_EDIT` + `RH_EQUAL`) adjacent to host insertion
+        - Case 2.1: Untouched 0-line rendered template directive (`TR_DELETE` + `RH_EQUAL`)
+        - Case 1.2: Single-line skeleton edit (`TR_SINGLE_EDIT` + `RH_SINGLE_SKEL_EDIT`, e.g., trailing comma / comment)
+        - Case 1.3: Variable slot content edit (`TR_SINGLE_EDIT` + `RH_SINGLE_EDIT` -> conflict)
+        - Case 2.3: Complete deletion of template unit (`TR_SINGLE_EDIT` + `RH_DELETE` -> clean deletion)
+        - Case 2.2: Partial edit / interior insertion inside multi-line `TR_BLOCK_EDIT` -> conflict cluster.
         """
         from drift.adopt.adopt_derender import (
-            _apply_subline_containment,
-            _classify_template_hunk,
-            _format_conflict_base_lines,
-            build_template_hunk_map,
-            derender_host_lines,
+            build_display_unified_diff,
+            build_two_step_derender_plan,
         )
-        from drift.models.adopt_models import DerenderedPair, TemplateHunk
+        from drift.adopt.adopt_fission import (
+            compute_skeleton_match,
+            fission_diff_units,
+            refine_single_line_units,
+            tokenize_line,
+            try_derender_single_line,
+        )
+        from drift.models.adopt_models import (
+            DiffRelation,
+            DiffUnit,
+            DiffUnitType,
+            TwoStepDerenderPlan,
+        )
 
-        # --- Case 1: Untouched template hunk in context of adjacent host insertion ---
+        # --- Case 1.1: Untouched template hunk in context of adjacent host insertion ---
         t_case1 = [
             "{\n",
             '  "newapi": {\n',
@@ -3360,105 +3553,117 @@ render_command = "bash -c 'cat %i %s'"
             "  }\n",
             "}\n",
         ]
-        hunks_c1 = build_template_hunk_map(t_case1, r_case1)
-        self.assertEqual(hunks_c1, [TemplateHunk(t_start=3, t_end=4, r_start=3, r_end=4)])
-        self.assertEqual(
-            hunks_c1[0].to_dict(),
-            {"t_start": 3, "t_end": 4, "r_start": 3, "r_end": 4},
+        tr_units_c1 = fission_diff_units(
+            [tokenize_line(line) for line in t_case1],
+            [tokenize_line(line) for line in r_case1],
+            DiffRelation.TR,
         )
-        pair_c1 = derender_host_lines(t_case1, r_case1, h_case1)
-        self.assertIsInstance(pair_c1, DerenderedPair)
-        self.assertEqual(pair_c1.r_derendered, t_case1)
-        self.assertIn('    "key": "${NEW_API_KEY}"\n', pair_c1.h_derendered)
-        self.assertNotIn("sk-live-12345", "".join(pair_c1.h_derendered))
+        non_eq_tr_c1 = [u for u in tr_units_c1 if u.unit_type != DiffUnitType.EQUAL]
+        self.assertEqual(
+            non_eq_tr_c1,
+            [
+                DiffUnit(
+                    relation=DiffRelation.TR,
+                    unit_type=DiffUnitType.SINGLE_EDIT,
+                    src_start=3,
+                    src_end=4,
+                    dst_start=3,
+                    dst_end=4,
+                )
+            ],
+        )
+        self.assertEqual(
+            non_eq_tr_c1[0].to_dict()["src_start"],
+            3,
+        )
+        plan_c1 = build_two_step_derender_plan(t_case1, r_case1, h_case1)
+        self.assertIsInstance(plan_c1, TwoStepDerenderPlan)
+        self.assertFalse(plan_c1.has_conflicts)
+        self.assertIn('    "key": "${NEW_API_KEY}"\n', plan_c1.t_clean_lines)
+        self.assertNotIn("sk-live-12345", "".join(plan_c1.t_clean_lines))
 
-        # --- Case 1 & 2 with 0-line rendered template directive (r_start == r_end) ---
+        # --- Case 2.1 with 0-line rendered template directive (TR_DELETE, r_start == r_end) ---
         t_zero = ["# template-only comment\n", "keep = 1\n", "mod = 2\n"]
         r_zero = ["keep = 1\n", "mod = 2\n"]
         h_zero_eq = ["keep = 1\n", "mod = 99\n"]
-        pair_zero_eq = derender_host_lines(t_zero, r_zero, h_zero_eq)
-        self.assertEqual(pair_zero_eq.r_derendered, t_zero)
+        plan_zero_eq = build_two_step_derender_plan(t_zero, r_zero, h_zero_eq)
+        self.assertFalse(plan_zero_eq.has_conflicts)
         self.assertEqual(
-            pair_zero_eq.h_derendered,
+            list(plan_zero_eq.t_clean_lines),
             ["# template-only comment\n", "keep = 1\n", "mod = 99\n"],
         )
         # When host edits the very first line at r_start == 0 == r_end:
         h_zero_ed = ["keep = 100\n", "mod = 2\n"]
-        pair_zero_ed = derender_host_lines(t_zero, r_zero, h_zero_ed)
-        self.assertEqual(pair_zero_ed.r_derendered, t_zero)
+        plan_zero_ed = build_two_step_derender_plan(t_zero, r_zero, h_zero_ed)
+        self.assertFalse(plan_zero_ed.has_conflicts)
+        self.assertEqual(
+            list(plan_zero_ed.t_clean_lines),
+            ["# template-only comment\n", "keep = 100\n", "mod = 2\n"],
+        )
 
-        # --- Case 2a: Sub-line containment (host adds trailing comma / comment to template line) ---
+        # --- Case 1.2: Single-line skeleton edit (host adds trailing comma / comment to template line) ---
         t_c2a = ['{\n', '  "key": "${NEW_API_KEY}"\n', '}\n']
         r_c2a = ['{\n', '  "key": "sk-live-12345"\n', '}\n']
         h_c2a = ['{\n', '  "key": "sk-live-12345",\n', '  "extra": true\n', '}\n']
-        pair_c2a = derender_host_lines(t_c2a, r_c2a, h_c2a)
-        self.assertEqual(pair_c2a.r_derendered, t_c2a)
+        plan_c2a = build_two_step_derender_plan(t_c2a, r_c2a, h_c2a)
+        self.assertFalse(plan_c2a.has_conflicts)
         self.assertEqual(
-            pair_c2a.h_derendered,
+            list(plan_c2a.t_clean_lines),
             ['{\n', '  "key": "${NEW_API_KEY}",\n', '  "extra": true\n', '}\n'],
         )
 
-        # Uniqueness guard in Case 2a: if rendered line appears twice in host edit block, do not substitute
-        ambig_h_block = ['  "key": "sk-live-12345",\n', '  "key": "sk-live-12345"\n']
-        ambig_res = _apply_subline_containment(
-            ambig_h_block,
-            [TemplateHunk(1, 2, 1, 2)],
-            t_c2a,
-            r_c2a,
-        )
-        self.assertEqual(ambig_res, ambig_h_block)
+        # Bidirectional uniqueness guard: if rendered line signature appears twice in host edit block,
+        # find_monotonic_line_matches rejects ambiguous matching and emits BLOCK_EDIT -> ConflictCluster
+        h_ambig = ['{\n', '  "key": "sk-live-12345",\n', '  "key": "sk-live-12345",\n', '}\n']
+        plan_ambig = build_two_step_derender_plan(t_c2a, r_c2a, h_ambig)
+        self.assertTrue(plan_ambig.has_conflicts)
 
-        # --- Case 2b: Full replacement and deletion of template hunk ---
-        h_c2b_replace = ['{\n', '  "key": "completely_new_key"\n', '}\n']
-        pair_c2b = derender_host_lines(t_c2a, r_c2a, h_c2b_replace)
-        self.assertEqual(pair_c2b.r_derendered, t_c2a)
-        self.assertEqual(pair_c2b.h_derendered, h_c2b_replace)
+        # --- Case 1.3 vs Case 2.3: Variable slot replacement (Conflict) vs Full line deletion (Clean) ---
+        h_c1_3_var_edit = ['{\n', '  "key": "completely_new_key"\n', '}\n']
+        plan_c1_3 = build_two_step_derender_plan(t_c2a, r_c2a, h_c1_3_var_edit)
+        self.assertTrue(plan_c1_3.has_conflicts)
+        self.assertEqual(len(plan_c1_3.conflict_clusters), 1)
+        self.assertEqual(plan_c1_3.conflict_clusters[0].t_lines, ('  "key": "${NEW_API_KEY}"\n',))
+        self.assertEqual(plan_c1_3.conflict_clusters[0].r_lines, ('  "key": "sk-live-12345"\n',))
+        self.assertEqual(plan_c1_3.conflict_clusters[0].h_lines, ('  "key": "completely_new_key"\n',))
 
-        h_c2b_delete = ['{\n', '}\n']
-        pair_c2b_del = derender_host_lines(t_c2a, r_c2a, h_c2b_delete)
-        self.assertEqual(pair_c2b_del.r_derendered, t_c2a)
-        self.assertEqual(pair_c2b_del.h_derendered, h_c2b_delete)
+        h_c2_3_delete = ['{\n', '}\n']
+        plan_c2_3_del = build_two_step_derender_plan(t_c2a, r_c2a, h_c2_3_delete)
+        self.assertFalse(plan_c2_3_del.has_conflicts)
+        self.assertEqual(list(plan_c2_3_del.t_clean_lines), ['{\n', '}\n'])
 
-        # --- Case 3: Border-crossing partial edit & interior insertion on multi-line template hunk ---
+        # --- Case 1.1 + 1.3 Fission Isolation vs Case 2.2 Multi-Line Block Conflict ---
         t_c3 = ["header\n", "A=$VAR_A\n", "B=$VAR_B\n", "footer\n"]
         r_c3 = ["header\n", "A=val_a\n", "B=val_b\n", "footer\n"]
-        # Partial edit of line 1 only
+        # Partial edit of line 1 only: Hunk Fission splits A and B into 2 independent TR_SINGLE_EDITs,
+        # so only A=$VAR_A conflicts while B=$VAR_B stays untouched!
         h_c3_partial = ["header\n", "A=modified_a\n", "B=val_b\n", "footer\n"]
-        pair_c3 = derender_host_lines(t_c3, r_c3, h_c3_partial)
-        self.assertEqual(pair_c3.r_derendered, r_c3)
-        self.assertEqual(pair_c3.h_derendered, h_c3_partial)
+        plan_c3 = build_two_step_derender_plan(t_c3, r_c3, h_c3_partial)
+        self.assertTrue(plan_c3.has_conflicts)
+        self.assertEqual(len(plan_c3.conflict_clusters), 1)
+        self.assertEqual(plan_c3.conflict_clusters[0].t_lines, ("A=$VAR_A\n",))
 
-        # Interior insertion inside a 2-line template hunk (between A=val_a and B=val_b)
+        # Interior insertion between two fissioned TR_SINGLE_EDITs (Case 3.1 clean insertion!)
         h_c3_insert = ["header\n", "A=val_a\n", "INSERTED=mid\n", "B=val_b\n", "footer\n"]
-        pair_c3_ins = derender_host_lines(t_c3, r_c3, h_c3_insert)
-        self.assertEqual(pair_c3_ins.r_derendered, r_c3)
-        self.assertEqual(pair_c3_ins.h_derendered, h_c3_insert)
+        plan_c3_ins = build_two_step_derender_plan(t_c3, r_c3, h_c3_insert)
+        self.assertFalse(plan_c3_ins.has_conflicts)
+        self.assertEqual(
+            list(plan_c3_ins.t_clean_lines),
+            ["header\n", "A=$VAR_A\n", "INSERTED=mid\n", "B=$VAR_B\n", "footer\n"],
+        )
 
-        # _format_conflict_base_lines alignment when t_len != r_len (1->3, 2->4, 3->1, 2->0, 0->2)
+        # True multi-line TR_BLOCK_EDIT (e.g., {% for %} loop expanding into 2 lines with no 1-to-1 fission)
+        t_loop = ["header\n", "{% for x in items %}\n", "item={{ x }}\n", "{% endfor %}\n", "footer\n"]
+        r_loop = ["header\n", "item=one\n", "item=two\n", "footer\n"]
+        h_loop_ins = ["header\n", "item=one\n", "INSERTED=mid\n", "item=two\n", "footer\n"]
+        plan_loop_ins = build_two_step_derender_plan(t_loop, r_loop, h_loop_ins)
+        self.assertTrue(plan_loop_ins.has_conflicts)
         self.assertEqual(
-            _format_conflict_base_lines(["$MULTI\n"], ["l1\n", "l2\n", "l3\n"]),
-            ["l1 / l2 / l3\n"],
+            plan_loop_ins.conflict_clusters[0].t_lines,
+            ("{% for x in items %}\n", "item={{ x }}\n", "{% endfor %}\n"),
         )
-        self.assertEqual(
-            _format_conflict_base_lines(["$M1\n", "$M2\n"], ["l1\n", "l2\n", "l3\n"]),
-            ["l1\n", "l2 / l3\n"],
-        )
-        self.assertEqual(
-            len(_format_conflict_base_lines(["$A\n", "$B\n", "$C\n"], ["only_one\n"])),
-            3,
-        )
-        self.assertEqual(
-            len(_format_conflict_base_lines(["$A\n", "$B\n"], [])),
-            2,
-        )
-        self.assertEqual(
-            _format_conflict_base_lines([], ["l1\n", "l2\n"]),
-            ["l1\n", "l2\n"],
-        )
-        self.assertEqual(
-            _classify_template_hunk(TemplateHunk(0, 1, 1, 1), [("equal", 0, 0, 0, 0)]),
-            ("equal", 0),
-        )
+        self.assertIn("@@", build_display_unified_diff(plan_loop_ins, "a/t", "b/t"))
+        self.assertEqual(plan_loop_ins.clean_hunks, ())
 
     def test_adopt_templated_auth_json_clean_derendering_two_pass_idempotency(self) -> None:
         """Verifies the motivating auth.envst.json scenario (Case 1 + Case 2a + Case 2b) end-to-end
@@ -3628,7 +3833,8 @@ render_command = "bash -c 'cat %i %s'"
         subprocess.run(["git", "commit", "-m", "init polymorphic install"], cwd=self.install_dir, check=True, capture_output=True)
 
         # Apply host drifts in install/
-        inst_toml.write_text('token = "tok_secret_99" # keep secret\nport = 9090\n', encoding="utf-8")
+        # Line 1: Case 1.2 inline comment added to $API_TOKEN; Line 2: Case 1.2 key renamed port -> http_port while preserving $OLD_PORT
+        inst_toml.write_text('token = "tok_secret_99" # keep secret\nhttp_port = 8080\n', encoding="utf-8")
         inst_custom.write_text("# AUTO-HEADER\nlisten = 127.0.0.1\nworkers = 8\n", encoding="utf-8")
         subprocess.run(
             ["git", "mv", f"{pkg}/old_auth.json", f"{pkg}/new_auth.json"],
@@ -3651,10 +3857,10 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res1.status, "SUCCESS")
         self.assertEqual(res1.packages[0].conflicted_files, [])
 
-        # Verify Case 2a preserved ${API_TOKEN} with inline comment and Case 2b updated port = 9090
+        # Verify Case 1.2 preserved ${API_TOKEN} with inline comment and preserved ${OLD_PORT} with renamed key http_port
         self.assertEqual(
             src_toml.read_text(encoding="utf-8"),
-            'token = "${API_TOKEN}" # keep secret\nport = 9090\n',
+            'token = "${API_TOKEN}" # keep secret\nhttp_port = ${OLD_PORT}\n',
         )
         # Verify custom engine stripped "# AUTO-HEADER\n" (0-line template hunk in T vs 1-line in R) and updated workers = 8!
         self.assertEqual(
@@ -3690,6 +3896,7 @@ render_command = "bash -c 'cat %i %s'"
         from drift.adopt import (
             adopt_actions,
             adopt_derender,
+            adopt_fission,
             adopt_handlers,
             adopt_package,
             adopt_patch,
@@ -3699,11 +3906,13 @@ render_command = "bash -c 'cat %i %s'"
 
         # 1. Verify submodule attributes match drift.adopt facade re-exports
         for mod, sym in (
-            (adopt_derender, "derender_host_lines"),
+            (adopt_fission, "tokenize_line"),
+            (adopt_fission, "fission_diff_units"),
+            (adopt_derender, "build_two_step_derender_plan"),
             (adopt_derender, "generate_derendered_patch"),
             (adopt_patch, "apply_source_patch"),
-            (adopt_patch, "generate_retargeted_patch"),
-            (adopt_patch, "rewrite_patch_target_headers"),
+            (adopt_patch, "generate_install_git_patch"),
+            (adopt_patch, "generate_source_to_install_patch"),
             (adopt_plan, "plan_package_adopt"),
             (adopt_actions, "patch_and_edit"),
             (adopt_handlers, "handle_single_modification"),
@@ -3803,13 +4012,12 @@ render_command = "bash -c 'cat %i %s'"
     def test_rename_already_moved_in_src_and_pure_plan_format_text(self) -> None:
         """Verifies:
         1. When old_src_file has already been moved to new_rel in src/ (for both nested templated
-           and static files), _precompute_rename_patch generates the patch for new_rel using the full
-           relative path inside src_dir_to_render, and handle_single_rename applies the modification
-           to new_rel cleanly (two-pass idempotency).
+           and static files), _route_package_drifts routes old_rel to converged_files and new_rel
+           to modifications (or additions when neither exists in src/), generating the patch for
+           new_rel using the full relative path inside src_dir_to_render (two-pass idempotency).
         2. PackageAdoptPlan.format_text() is self-contained and never invokes patch generation,
            check_patch_conflicts, or resolve_source_file_path during formatting.
         """
-        from drift.models.adopt_models import get_rename_patch_key
         from drift.utils.git_utils import get_git_status_porcelain
 
         pkg = "pkg_already_moved_rename"
@@ -3894,28 +4102,39 @@ render_command = "bash -c 'cat %i %s'"
         )
 
         plan = plan_package_adopt(self.workspace_config, pkg)
-        tmpl_key = get_rename_patch_key(Path("nested/old_cfg.conf"), Path("nested/new_cfg.conf"))
-        static_key = get_rename_patch_key(Path("nested/old_static.txt"), Path("nested/new_static.txt"))
-        missing_key = get_rename_patch_key(Path("nested/missing_old.txt"), Path("nested/brand_new.txt"))
-        self.assertIn(tmpl_key, plan.rename_patches)
-        self.assertIn(static_key, plan.rename_patches)
-        self.assertIn(missing_key, plan.rename_patches)
-        # Verify src_rel_path in patch headers is the full relative path inside src_dir_to_render (not bare filename),
-        # and when neither old nor new exists in src/, src_rel_path points to new_rel (nested/brand_new.txt)
-        self.assertIn("--- a/nested/new_cfg.envst.conf", plan.rename_patches[tmpl_key])
-        self.assertIn("+++ b/nested/new_cfg.envst.conf", plan.rename_patches[tmpl_key])
-        self.assertIn("secret = ${SECRET_KEY}", plan.rename_patches[tmpl_key])
-        self.assertIn("--- a/nested/new_static.txt", plan.rename_patches[static_key])
-        self.assertIn("+++ b/nested/new_static.txt", plan.rename_patches[static_key])
-        self.assertIn("--- a/nested/brand_new.txt", plan.rename_patches[missing_key])
-        self.assertIn("+++ b/nested/brand_new.txt", plan.rename_patches[missing_key])
+        self.assertEqual(plan.renames, [])
+        self.assertEqual(
+            plan.converged_files,
+            [
+                Path("nested/missing_old.txt"),
+                Path("nested/old_cfg.conf"),
+                Path("nested/old_static.txt"),
+            ],
+        )
+        self.assertEqual(
+            plan.modifications,
+            [Path("nested/new_cfg.conf"), Path("nested/new_static.txt")],
+        )
+        self.assertEqual(plan.additions, [Path("nested/brand_new.txt")])
+
+        tmpl_key = "nested/new_cfg.conf"
+        static_key = "nested/new_static.txt"
+        self.assertIn(tmpl_key, plan.mod_patches)
+        self.assertIn(static_key, plan.mod_patches)
+        self.assertIn("--- a/nested/new_cfg.envst.conf", plan.mod_patches[tmpl_key].display_diff)
+        self.assertIn("+++ b/nested/new_cfg.envst.conf", plan.mod_patches[tmpl_key].display_diff)
+        self.assertIn("secret = ${SECRET_KEY}", plan.mod_patches[tmpl_key].display_diff)
+        self.assertIn("nested/new_static.txt", plan.mod_patches[static_key].display_diff)
+        self.assertIn("-mode = v1", plan.mod_patches[static_key].display_diff)
+        self.assertIn("+mode = v2", plan.mod_patches[static_key].display_diff)
 
         # Verify plan.format_text() is completely self-contained and makes zero external calls
         with patch("drift.adopt.adopt_plan.resolve_source_file_path", side_effect=AssertionError("must not be called")), \
              patch("drift.adopt.adopt_patch.check_patch_conflicts", side_effect=AssertionError("must not be called")), \
              patch("drift.adopt.adopt_derender.generate_derendered_patch", side_effect=AssertionError("must not be called")):
             formatted = plan.format_text(verbose=True)
-        self.assertIn("R nested/old_cfg.conf -> nested/new_cfg.conf", formatted)
+        self.assertIn("~ nested/new_cfg.conf", formatted)
+        self.assertIn("+ nested/brand_new.txt", formatted)
 
         # Pass 1 (Cold): Execute adoption and verify already-moved files and missing-in-src file adopt cleanly
         res1 = execute_package_adopt(self.workspace_config, plan, AdoptOptions(interactive=False))
@@ -3945,11 +4164,12 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(get_git_status_porcelain(self.install_dir, f"{pkg}/"), [])
 
     def test_adopt_rename_three_source_states_and_rollback_safety(self) -> None:
-        """Exhaustively tests rename patch generation, execution, logging, permission syncing,
-        and rollback isolation across all 3 non-colliding (old_src_match, new_src_match) states:
-        - State 1 (old exists, new missing): cross-file delta via generate_retargeted_patch; unlinks copy on failure.
-        - State 2 (old missing, new exists): cross-file delta targeting existing new file; info log; preserves existing file on failure.
-        - State 3 (both missing): full addition diff targeting new_rel; info log; creates file + syncs mode; unlinks touched file on failure.
+        """Exhaustively tests rename routing, patch generation, execution, permission syncing,
+        and rollback isolation across all 4 (old_src_match, new_src_match) states:
+        - State 1 (old exists, new missing): routed to renames(old, new); unlinks copy on failure.
+        - State 2 (old missing, new exists): routed to converged_files(old) + modifications(new).
+        - State 3 (both missing): routed to converged_files(old) + additions(new); syncs file mode.
+        - State 4 (both exist): routed to deletions(old) + modifications(new).
         """
         from drift.models.adopt_models import get_rename_patch_key
         from drift.utils.git_utils import get_git_status_porcelain
@@ -3964,15 +4184,21 @@ render_command = "bash -c 'cat %i %s'"
 
         ctx = "alpha = 1\nbeta = 2\ngamma = 3\ndelta = 4\n"
 
-        # 1. Verify rollback isolation across all 3 states when a patch fails to apply
-        unmatchable_patch = (
+        # 1. Verify rollback isolation in adopt_rename when a patch fails to apply or old source is missing
+        unmatchable_raw = (
             "--- a/target.txt\n"
             "+++ b/target.txt\n"
             "@@ -1,1 +1,1 @@\n"
             "-line_that_does_not_exist_anywhere\n"
             "+replacement_line\n"
         )
+        unmatchable_hunks = parse_unified_patch_hunks(unmatchable_raw)
         non_existent_from = install_pkg / "dir_b" / "non_existent.txt"
+        unmatchable_patch = AdoptPatch(
+            patch_from=non_existent_from,
+            clean_hunks=unmatchable_hunks,
+            display_diff=unmatchable_raw,
+        )
 
         # State 1 rollback: old exists -> newly copied target is unlinked, old stays intact
         s1_old = src_pkg / "dir_a" / "rb_s1_old.txt"
@@ -3985,14 +4211,13 @@ render_command = "bash -c 'cat %i %s'"
                 Path("dir_a/rb_s1_old.txt"),
                 Path("dir_b/rb_s1_new.txt"),
                 unmatchable_patch,
-                patch_from=non_existent_from,
             )
         )
         self.assertTrue(s1_old.is_file())
         self.assertFalse(s1_new.exists())
         s1_old.unlink()
 
-        # State 2 rollback: old missing, new already exists -> existing new file MUST NOT be deleted on failure!
+        # When old is missing in src/, adopt_rename returns None without touching existing or new target files
         s2_existing = src_pkg / "dir_b" / "rb_s2_new.envst.txt"
         s2_existing.write_text("existing template $VAR\n", encoding="utf-8")
         self.assertIsNone(
@@ -4002,14 +4227,12 @@ render_command = "bash -c 'cat %i %s'"
                 Path("dir_a/rb_s2_old.txt"),
                 Path("dir_b/rb_s2_new.txt"),
                 unmatchable_patch,
-                patch_from=non_existent_from,
             )
         )
         self.assertTrue(s2_existing.is_file())
         self.assertEqual(s2_existing.read_text(encoding="utf-8"), "existing template $VAR\n")
         s2_existing.unlink()
 
-        # State 3 rollback: neither old nor new exists -> newly touched file MUST be unlinked on failure!
         s3_created = src_pkg / "dir_b" / "rb_s3_new.txt"
         self.assertIsNone(
             adopt_rename(
@@ -4018,18 +4241,17 @@ render_command = "bash -c 'cat %i %s'"
                 Path("dir_a/rb_s3_old.txt"),
                 Path("dir_b/rb_s3_new.txt"),
                 unmatchable_patch,
-                patch_from=non_existent_from,
             )
         )
         self.assertFalse(s3_created.exists())
 
-        # 2. Setup all 3 states in install/ HEAD and src/ for end-to-end 2-pass adoption
-        # State 1: old exists in src/ (dir_a/s1_orig.txt)
+        # 2. Setup all 4 states in install/ HEAD and src/ for end-to-end 2-pass adoption
+        # State 1: old exists in src/ (dir_a/s1_orig.txt), new missing in src/
         (src_pkg / "dir_a" / "s1_orig.txt").write_text(ctx + "s1 = old\n", encoding="utf-8")
         (install_pkg / "dir_a" / "s1_orig.txt").write_text(ctx + "s1 = old\n", encoding="utf-8")
         (render_pkg / "dir_a" / "s1_orig.txt").write_text(ctx + "s1 = old\n", encoding="utf-8")
 
-        # State 2: already moved in src/ (dir_b/s2_moved.txt)
+        # State 2: old missing in src/, new exists in src/ (dir_b/s2_moved.txt)
         (src_pkg / "dir_b" / "s2_moved.txt").write_text(ctx + "s2 = old\n", encoding="utf-8")
         (install_pkg / "dir_a" / "s2_orig.txt").write_text(ctx + "s2 = old\n", encoding="utf-8")
         (render_pkg / "dir_b" / "s2_moved.txt").write_text(ctx + "s2 = old\n", encoding="utf-8")
@@ -4039,10 +4261,16 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "dir_a" / "s3_pure_orig.sh").write_text("#!/bin/sh\necho pure\n", encoding="utf-8")
         (install_pkg / "dir_a" / "s3_pure_orig.sh").chmod(0o755)
 
+        # State 4: both old and new exist in src/ (dir_a/s4_orig.txt and dir_b/s4_target.envst.txt)
+        (src_pkg / "dir_a" / "s4_orig.txt").write_text(ctx + "s4 = old\n", encoding="utf-8")
+        (src_pkg / "dir_b" / "s4_target.envst.txt").write_text(ctx + "app = ${APP}\ns4 = old\n", encoding="utf-8")
+        (install_pkg / "dir_a" / "s4_orig.txt").write_text(ctx + "s4 = old\n", encoding="utf-8")
+        (render_pkg / "dir_b" / "s4_target.txt").write_text(ctx + "app = drift\ns4 = old\n", encoding="utf-8")
+
         subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init install 3 states"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install 4 states"], cwd=self.install_dir, check=True, capture_output=True)
         subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init src 3 states"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src 4 states"], cwd=self.workspace_path, check=True, capture_output=True)
 
         # Perform renames in install/
         subprocess.run(["git", "mv", f"{pkg}/dir_a/s1_orig.txt", f"{pkg}/dir_b/s1_moved.txt"], cwd=self.install_dir, check=True, capture_output=True)
@@ -4056,58 +4284,71 @@ render_command = "bash -c 'cat %i %s'"
 
         subprocess.run(["git", "mv", f"{pkg}/dir_a/s3_pure_orig.sh", f"{pkg}/dir_b/s3_pure_moved.sh"], cwd=self.install_dir, check=True, capture_output=True)
 
+        subprocess.run(["git", "mv", f"{pkg}/dir_a/s4_orig.txt", f"{pkg}/dir_b/s4_target.txt"], cwd=self.install_dir, check=True, capture_output=True)
+        (install_pkg / "dir_b" / "s4_target.txt").write_text(ctx + "app = drift\ns4 = new\n", encoding="utf-8")
+
         plan = plan_package_adopt(self.workspace_config, pkg)
+        # Verify routing across all 4 states:
+        # State 1 -> renames
+        self.assertEqual(plan.renames, [(Path("dir_a/s1_orig.txt"), Path("dir_b/s1_moved.txt"))])
+        # State 2 & State 3 old paths -> converged_files
+        self.assertEqual(
+            plan.converged_files,
+            [
+                Path("dir_a/s2_orig.txt"),
+                Path("dir_a/s3_mod_orig.txt"),
+                Path("dir_a/s3_pure_orig.sh"),
+            ],
+        )
+        # State 4 old path -> deletions
+        self.assertEqual(plan.deletions, [Path("dir_a/s4_orig.txt")])
+        # State 2 & State 4 new paths -> modifications
+        self.assertEqual(
+            plan.modifications,
+            [Path("dir_b/s2_moved.txt"), Path("dir_b/s4_target.txt")],
+        )
+        # State 3 new paths -> additions
+        self.assertEqual(
+            plan.additions,
+            [Path("dir_b/s3_mod_moved.txt"), Path("dir_b/s3_pure_moved.sh")],
+        )
+
         k_s1 = get_rename_patch_key(Path("dir_a/s1_orig.txt"), Path("dir_b/s1_moved.txt"))
-        k_s2 = get_rename_patch_key(Path("dir_a/s2_orig.txt"), Path("dir_b/s2_moved.txt"))
-        k_s3_mod = get_rename_patch_key(Path("dir_a/s3_mod_orig.txt"), Path("dir_b/s3_mod_moved.txt"))
-        k_s3_pure = get_rename_patch_key(Path("dir_a/s3_pure_orig.sh"), Path("dir_b/s3_pure_moved.sh"))
+        self.assertIn("dir_a/s1_orig.txt", plan.mod_patches[k_s1].display_diff)
+        self.assertIn("dir_b/s1_moved.txt", plan.mod_patches[k_s1].display_diff)
+        self.assertIn("-s1 = old", plan.mod_patches[k_s1].display_diff)
+        self.assertIn("+s1 = new", plan.mod_patches[k_s1].display_diff)
 
-        # State 1 & State 2 patches are cross-file deltas (containing '-s1 = old' / '-s2 = old')
-        self.assertIn("--- a/dir_a/s1_orig.txt", plan.rename_patches[k_s1])
-        self.assertIn("-s1 = old", plan.rename_patches[k_s1])
-        self.assertIn("+s1 = new", plan.rename_patches[k_s1])
+        self.assertIn("dir_b/s2_moved.txt", plan.mod_patches["dir_b/s2_moved.txt"].display_diff)
+        self.assertIn("-s2 = old", plan.mod_patches["dir_b/s2_moved.txt"].display_diff)
+        self.assertIn("+s2 = new", plan.mod_patches["dir_b/s2_moved.txt"].display_diff)
 
-        self.assertIn("--- a/dir_b/s2_moved.txt", plan.rename_patches[k_s2])
-        self.assertIn("-s2 = old", plan.rename_patches[k_s2])
-        self.assertIn("+s2 = new", plan.rename_patches[k_s2])
+        self.assertIn("--- a/dir_b/s4_target.envst.txt", plan.mod_patches["dir_b/s4_target.txt"].display_diff)
+        self.assertIn("app = ${APP}", plan.mod_patches["dir_b/s4_target.txt"].display_diff)
+        self.assertIn("-s4 = old", plan.mod_patches["dir_b/s4_target.txt"].display_diff)
+        self.assertIn("+s4 = new", plan.mod_patches["dir_b/s4_target.txt"].display_diff)
 
-        # State 3 patches are full-file addition diffs targeting new_rel ('@@ -0,0' with all lines added)
-        self.assertIn("--- a/dir_b/s3_mod_moved.txt", plan.rename_patches[k_s3_mod])
-        self.assertIn("+++ b/dir_b/s3_mod_moved.txt", plan.rename_patches[k_s3_mod])
-        self.assertIn("@@ -0,0 +1,5 @@", plan.rename_patches[k_s3_mod])
-        self.assertIn("+s3 = new", plan.rename_patches[k_s3_mod])
-
-        self.assertIn("--- a/dir_b/s3_pure_moved.sh", plan.rename_patches[k_s3_pure])
-        self.assertIn("@@ -0,0 +1,2 @@", plan.rename_patches[k_s3_pure])
-        self.assertIn("+echo pure", plan.rename_patches[k_s3_pure])
-
-        # Pass 1 (Cold): Execute adoption and verify INFO logs for State 2 and State 3
-        set_test_mode(True, enable_logging=True)
-        try:
-            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
-                with self.assertLogs("drift.adopt.adopt_actions", level="INFO") as log_cm:
-                    res1 = execute_package_adopt(
-                        self.workspace_config, plan, AdoptOptions(interactive=False)
-                    )
-        finally:
-            set_test_mode(True, enable_logging=False)
-
+        # Pass 1 (Cold): Execute adoption
+        res1 = execute_package_adopt(
+            self.workspace_config, plan, AdoptOptions(interactive=False)
+        )
         self.assertEqual(res1.status, "SUCCESS")
-        joined_logs = "\n".join(log_cm.output)
-        self.assertIn("applying rename patch to existing target file 's2_moved.txt'", joined_logs)
-        self.assertIn("Creating a new source file for 'dir_b/s3_mod_moved.txt'", joined_logs)
-        self.assertIn("Creating a new source file for 'dir_b/s3_pure_moved.sh'", joined_logs)
 
         self.assertFalse((src_pkg / "dir_a" / "s1_orig.txt").exists())
+        self.assertFalse((src_pkg / "dir_a" / "s4_orig.txt").exists())
         self.assertEqual((src_pkg / "dir_b" / "s1_moved.txt").read_text(encoding="utf-8"), ctx + "s1 = new\n")
         self.assertEqual((src_pkg / "dir_b" / "s2_moved.txt").read_text(encoding="utf-8"), ctx + "s2 = new\n")
         self.assertEqual((src_pkg / "dir_b" / "s3_mod_moved.txt").read_text(encoding="utf-8"), ctx + "s3 = new\n")
         self.assertEqual((src_pkg / "dir_b" / "s3_pure_moved.sh").read_text(encoding="utf-8"), "#!/bin/sh\necho pure\n")
+        self.assertEqual(
+            (src_pkg / "dir_b" / "s4_target.envst.txt").read_text(encoding="utf-8"),
+            ctx + "app = ${APP}\ns4 = new\n",
+        )
         if sys.platform != "win32":
             self.assertTrue(bool((src_pkg / "dir_b" / "s3_pure_moved.sh").stat().st_mode & 0o111))
 
         # Pass 2 (Warm): Commit install/ and verify re-running adopt reports UP_TO_DATE with zero drifts
-        subprocess.run(["git", "commit", "-m", "commit 3 states adopted"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit 4 states adopted"], cwd=self.install_dir, check=True, capture_output=True)
         res2 = run_primitive_adopt_drifts(
             self.workspace_config,
             [pkg],
@@ -4152,7 +4393,7 @@ render_command = "bash -c 'cat %i %s'"
         # 3. Verify plan_package_adopt detects the static file conflict and formats it in preview text
         plan = plan_package_adopt(self.workspace_config, pkg)
         self.assertEqual(plan.modifications, [Path("static.conf")])
-        self.assertTrue(plan.mod_conflicts.get("static.conf"))
+        self.assertTrue(plan.mod_patches["static.conf"].has_conflict)
         self.assertIn("static.conf [CONFLICTS with source: static.conf]", plan.format_text())
 
         # 4. Non-interactive execution with accept_conflicts=False refuses to overwrite src/static.conf
@@ -4182,7 +4423,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIn("[PATCH CONFLICT]", mock_out.getvalue())
         self.assertEqual((src_pkg / "static.conf").read_text(encoding="utf-8"), src_diverged)
 
-        # 6. Non-interactive execution with accept_conflicts=True writes 3-way conflict markers into src/static.conf
+        # 6. Non-interactive execution with accept_conflicts=True writes 2-way conflict markers into src/static.conf
         res_accept = execute_package_adopt(
             self.workspace_config,
             plan,
@@ -4193,8 +4434,7 @@ render_command = "bash -c 'cat %i %s'"
         merged_content = (src_pkg / "static.conf").read_text(encoding="utf-8")
         self.assertIn("<<<<<<<", merged_content)
         self.assertIn("key1 = src_committed_change", merged_content)
-        self.assertIn("|||||||", merged_content)
-        self.assertIn("key1 = base_1", merged_content)
+        self.assertNotIn("|||||||", merged_content)
         self.assertIn("=======", merged_content)
         self.assertIn("key1 = host_conflicting_change", merged_content)
         self.assertIn(">>>>>>>", merged_content)
@@ -4250,13 +4490,15 @@ render_command = "bash -c 'cat %i %s'"
             rel_rendered_path=Path("ten.conf"),
             src_rel_path=Path("ten.envst.conf"),
         )
-        # Context lines (' ') must ONLY be the outer template lines (ctx_before / ctx_after),
-        # never the untouched rendered lines (' VAR_2=r2', etc.) inside the conflict hunk!
-        for line in patch_ten.splitlines():
+        # Hunk Fission splits VAR_1..VAR_10 into 10 independent TR_SINGLE_EDIT units,
+        # so context lines (' ') around the conflict on VAR_5 are the de-rendered template lines
+        # (' VAR_2=$V2', ' VAR_3=$V3', ' VAR_4=$V4', etc.), NEVER the raw rendered values (' VAR_2=r2')!
+        for line in patch_ten.display_diff.splitlines():
             if line.startswith(" "):
-                self.assertTrue(
-                    line[1:].startswith("ctx_before_") or line[1:].startswith("ctx_after_"),
-                    f"Unexpected rendered line used as diff context anchor: {line!r}",
+                self.assertNotIn(
+                    "=r",
+                    line,
+                    f"Unexpected raw rendered line used as diff context anchor: {line!r}",
                 )
         self.assertTrue(check_patch_conflicts(src_ten, patch_ten))
         self.assertTrue(apply_source_patch(src_ten, patch_ten, accept_conflicts=True))
@@ -4265,11 +4507,11 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIn("|||||||", merged_ten)
         self.assertIn("=======", merged_ten)
         self.assertIn(">>>>>>>", merged_ten)
-        # All 10 variable references ($V1..$V10) must be preserved in the template section
+        # All 10 variable references ($V1..$V10) must be preserved in the merged file,
+        # and ONLY VAR_5 is inside the diff3 conflict block!
         for i in range(1, 11):
             self.assertIn(f"VAR_{i}=$V{i}\n", merged_ten)
-        self.assertIn("VAR_5=r5\n", merged_ten)
-        self.assertIn("VAR_5=MODIFIED_5\n", merged_ten)
+        self.assertIn("<<<<<<< \nVAR_5=$V5\n||||||| \nVAR_5=r5\n=======\nVAR_5=MODIFIED_5\n>>>>>>> \n", merged_ten)
 
         # --- Scenario 2: 5 template lines expand into 20 rendered lines, host edits only line 15 ---
         t_exp = ctx_before + "".join(f"TMPL_BLOCK_{i}=${{BLOCK_{i}}}\n" for i in range(1, 6)) + ctx_after
@@ -4298,7 +4540,7 @@ render_command = "bash -c 'cat %i %s'"
             src_rel_path=Path("exp.envst.conf"),
         )
         # Must anchor at @@ -1,11 +1,26 @@ (3 ctx_before + 5 template lines + 3 ctx_after)
-        self.assertIn("@@ -1,11 +1,26 @@", patch_exp)
+        self.assertIn("@@ -1,11 +1,26 @@", patch_exp.display_diff)
         self.assertTrue(check_patch_conflicts(src_exp, patch_exp))
         self.assertTrue(apply_source_patch(src_exp, patch_exp, accept_conflicts=True))
         merged_exp = src_exp.read_text(encoding="utf-8")
@@ -4318,6 +4560,772 @@ render_command = "bash -c 'cat %i %s'"
         self.assertIn("rendered_cert_line_15_DRIFTED\n", drift_section)
         self.assertTrue(merged_exp.startswith(ctx_before))
         self.assertTrue(merged_exp.endswith(ctx_after))
+
+    def test_adopt_fission_tokenizer_skeleton_uniqueness_and_2d_dp_unit(self) -> None:
+        """Exhaustively tests Layer 1a-1 (`adopt_fission`) primitives:
+        1. Neovim-style Unicode word tokenization (`WORD`, `PUNCT`, `SPACE`) and line-ending preservation.
+        2. Slot-normalized skeleton similarity (`compute_skeleton_match`), space-bridged slot coalescing,
+           O(1) disjoint word-set pruning, punctuation-only rejection, and max-slot threshold.
+        3. Bidirectional uniqueness filtering (loop-unrolling guard) + 2D DP monotonic matching.
+        4. Closed token interval calculus (`try_derender_single_line`) including boundary collisions.
+        """
+        from drift.adopt.adopt_fission import (
+            compute_skeleton_match,
+            find_monotonic_line_matches,
+            fission_diff_units,
+            refine_single_line_units,
+            tokenize_line,
+            try_derender_single_line,
+        )
+        from drift.models.adopt_models import (
+            DiffRelation,
+            DiffUnitType,
+            TokenKind,
+        )
+
+        # 1. Tokenization: ASCII, non-Latin Unicode, punctuation, whitespace, CRLF/LF/no-newline
+        tok_crlf = tokenize_line("  ключ_1 = {{ значение }}\r\n")
+        self.assertEqual(tok_crlf.line_ending, "\r\n")
+        self.assertEqual("".join(tok_crlf.tokens), tok_crlf.stripped_line)
+        self.assertIn("ключ_1", tok_crlf.word_set)
+        self.assertIn("значение", tok_crlf.word_set)
+        self.assertEqual(
+            tok_crlf.token_kinds,
+            (
+                TokenKind.SPACE,
+                TokenKind.WORD,
+                TokenKind.SPACE,
+                TokenKind.PUNCT,
+                TokenKind.SPACE,
+                TokenKind.PUNCT,
+                TokenKind.PUNCT,
+                TokenKind.SPACE,
+                TokenKind.WORD,
+                TokenKind.SPACE,
+                TokenKind.PUNCT,
+                TokenKind.PUNCT,
+            ),
+        )
+        # Verify}}; splits into individual PUNCT tokens so trailing ';' matches static skeleton
+        tok_semi = tokenize_line("variable4 = {{ value4 }};\n")
+        self.assertEqual(tok_semi.tokens[-3:], ("}", "}", ";"))
+        tok_empty = tokenize_line("")
+        self.assertEqual(tok_empty.tokens, ())
+        self.assertEqual(tok_empty.line_ending, "")
+
+        # 2. Skeleton similarity: multi-word variable slot coalescing, disjoint pruning, punct-only, max slots
+        t_multi = tokenize_line('greeting = "{{ user_full_title }}"\n')
+        r_multi = tokenize_line('greeting = "Dr. Alice Smith"\n')
+        match_multi = compute_skeleton_match(t_multi, r_multi)
+        self.assertTrue(match_multi.is_valid)
+        self.assertGreaterEqual(match_multi.score, 0.5)
+        self.assertEqual(match_multi.signature.count("\x00"), 1)
+
+        # Disjoint word sets -> fast O(1) rejection
+        self.assertFalse(
+            compute_skeleton_match(
+                tokenize_line("alpha = 1\n"),
+                tokenize_line("beta = 2\n"),
+            ).is_valid
+        )
+        # Punctuation-only lines -> rejected (no WORD tokens in common)
+        self.assertFalse(
+            compute_skeleton_match(
+                tokenize_line("{{}}\n"),
+                tokenize_line("[]\n"),
+            ).is_valid
+        )
+        # > 4 slots -> rejected
+        t_many_slots = tokenize_line("key = $A:$B:$C:$D:$E\n")
+        r_many_slots = tokenize_line("key = 1:2:3:4:5\n")
+        self.assertFalse(compute_skeleton_match(t_many_slots, r_many_slots).is_valid)
+
+        # 3. Loop-unrolling guard: 1 template line expanding into 3 rendered lines with same skeleton
+        t_loop = [tokenize_line("server = {{ host }}\n")]
+        r_loop = [
+            tokenize_line("server = node1\n"),
+            tokenize_line("server = node2\n"),
+            tokenize_line("server = node3\n"),
+        ]
+        self.assertEqual(find_monotonic_line_matches(t_loop, r_loop), [])
+        loop_units = fission_diff_units(t_loop, r_loop, DiffRelation.TR)
+        self.assertEqual(len(loop_units), 1)
+        self.assertEqual(loop_units[0].unit_type, DiffUnitType.BLOCK_EDIT)
+
+        # 4. Closed token interval calculus: boundary edits at start/end of variable slot must return None
+        # Variable at end of line: host appends "_extra" right onto the rendered value "val1" -> single token "val1_extra"
+        self.assertIsNone(
+            try_derender_single_line(
+                tokenize_line("key = ${VAR}\n"),
+                tokenize_line("key = val1\n"),
+                tokenize_line("key = val1_extra\n"),
+            )
+        )
+        # Variable at end of line: host appends punctuation ":8080" right at the variable's right token boundary!
+        self.assertIsNone(
+            try_derender_single_line(
+                tokenize_line("host = ${HOST}\n"),
+                tokenize_line("host = localhost\n"),
+                tokenize_line("host = localhost:8080\n"),
+            )
+        )
+        # Variable at start of line: host prepends "https://" right at the variable's left token boundary!
+        self.assertIsNone(
+            try_derender_single_line(
+                tokenize_line("${ENDPOINT}/api\n"),
+                tokenize_line("localhost/api\n"),
+                tokenize_line("https://localhost/api\n"),
+            )
+        )
+        # Variable at end of line without static delimiter: appending ' # active' at p1=p2=|T_r| touches right boundary c2!
+        self.assertIsNone(
+            try_derender_single_line(
+                tokenize_line("host = ${HOST}\n"),
+                tokenize_line("host = my_server_01\n"),
+                tokenize_line("host = my_server_01 # active\n"),
+            )
+        )
+        # Clean skeleton edit when separated from variable slot by static skeleton token ('"' or ';')
+        self.assertEqual(
+            try_derender_single_line(
+                tokenize_line('host = "${HOST}"\n'),
+                tokenize_line('host = "my_server_01"\n'),
+                tokenize_line('primary_host = "my_server_01" # active\n'),
+            ),
+            'primary_host = "${HOST}" # active\n',
+        )
+
+    def test_adopt_orthogonal_classification_all_matrix_cases_unit(self) -> None:
+        """Verifies all Orthogonal Classification Matrix cases (`0.1` through `4.2`) in Layer 1a-2:
+        - Case 2.4: Complete deletion of multi-line `TR_BLOCK_EDIT` (including boundary-split `RH_DELETE`) -> CLEAN
+          vs partial deletion of `TR_BLOCK_EDIT` -> CONFLICT.
+        - Case 2.5a vs Case 2.5b: Adjacent deletion next to 0-line `TR_DELETE` -> CLEAN (preserves `TR_DELETE`)
+          vs strictly enclosing deletion ($r_1 < r_0 < r_2$) -> CONFLICT on `TR_DELETE`, CLEAN on outer lines.
+        - Case 3.1 vs Case 3.2 vs Case 3.3: `RH_INSERT` at clean boundary vs inside `TR_BLOCK_EDIT` vs at `TR_DELETE`.
+        - Case 4.1 vs Case 4.2: `TR_INSERT` untouched (`NO-OP`) vs edited/deleted/inserted (`CONFLICT`).
+        """
+        from drift.adopt.adopt_derender import build_two_step_derender_plan
+
+        # --- Case 2.4: Complete vs Partial deletion of a multi-line TR_BLOCK_EDIT ---
+        t_blk = [
+            "head = 1\n",
+            "{% for x in list %}\n",
+            "item = {{ x }}\n",
+            "{% endfor %}\n",
+            "tail = 2\n",
+        ]
+        r_blk = [
+            "head = 1\n",
+            "item = a\n",
+            "item = b\n",
+            "tail = 2\n",
+        ]
+        # Complete deletion of the 2 rendered loop lines (plus 'head = 1\n' in a single contiguous RH_DELETE!)
+        # split_rh_deletes_at_tr_boundaries splits RH_DELETE[0:3] at r=1 into RH_DELETE[0:1] + RH_DELETE[1:3],
+        # so both 'head = 1\n' and the entire {% for %} block are cleanly deleted!
+        h_blk_full_del = ["tail = 2\n"]
+        plan_2_4_clean = build_two_step_derender_plan(t_blk, r_blk, h_blk_full_del)
+        self.assertFalse(plan_2_4_clean.has_conflicts)
+        self.assertEqual(list(plan_2_4_clean.t_clean_lines), ["tail = 2\n"])
+
+        # Partial deletion of only 1 of the 2 rendered loop lines -> CONFLICT
+        h_blk_part_del = ["head = 1\n", "item = b\n", "tail = 2\n"]
+        plan_2_4_conflict = build_two_step_derender_plan(t_blk, r_blk, h_blk_part_del)
+        self.assertTrue(plan_2_4_conflict.has_conflicts)
+        self.assertEqual(
+            plan_2_4_conflict.conflict_clusters[0].t_lines,
+            ("{% for x in list %}\n", "item = {{ x }}\n", "{% endfor %}\n"),
+        )
+
+        # --- Case 2.5a vs Case 2.5b: TR_DELETE (0 rendered lines) + RH_DELETE ---
+        t_if_false = [
+            "before = 1\n",
+            "{% if false %}\n",
+            "hidden = 2\n",
+            "{% endif %}\n",
+            "after = 3\n",
+            "end = 4\n",
+        ]
+        r_if_false = [
+            "before = 1\n",
+            "after = 3\n",
+            "end = 4\n",
+        ]
+        # Case 2.5a: Host deletes ONLY 'after = 3\n' (R[1:2]), touching r_0=1 from the right only.
+        # The unrendered {% if false %} block MUST be preserved cleanly!
+        h_2_5a = ["before = 1\n", "end = 4\n"]
+        plan_2_5a = build_two_step_derender_plan(t_if_false, r_if_false, h_2_5a)
+        self.assertFalse(plan_2_5a.has_conflicts)
+        self.assertEqual(
+            list(plan_2_5a.t_clean_lines),
+            [
+                "before = 1\n",
+                "{% if false %}\n",
+                "hidden = 2\n",
+                "{% endif %}\n",
+                "end = 4\n",
+            ],
+        )
+
+        # Case 2.5b: Host deletes BOTH 'before = 1\n' AND 'after = 3\n' (R[0:2]), strictly enclosing r_0=1!
+        # Step 1 cleanly deletes 'before = 1\n' and 'after = 3\n', while Step 2 marks the enclosed
+        # {% if false %} block as a ConflictCluster!
+        h_2_5b = ["end = 4\n"]
+        plan_2_5b = build_two_step_derender_plan(t_if_false, r_if_false, h_2_5b)
+        self.assertTrue(plan_2_5b.has_conflicts)
+        self.assertEqual(
+            list(plan_2_5b.t_clean_lines),
+            [
+                "{% if false %}\n",
+                "hidden = 2\n",
+                "{% endif %}\n",
+                "end = 4\n",
+            ],
+        )
+        self.assertEqual(len(plan_2_5b.conflict_clusters), 1)
+        self.assertEqual(
+            plan_2_5b.conflict_clusters[0].t_lines,
+            ("{% if false %}\n", "hidden = 2\n", "{% endif %}\n"),
+        )
+        self.assertEqual(plan_2_5b.conflict_clusters[0].r_lines, ())
+        self.assertEqual(plan_2_5b.conflict_clusters[0].h_lines, ())
+        self.assertEqual((plan_2_5b.conflict_clusters[0].t_clean_start, plan_2_5b.conflict_clusters[0].t_clean_end), (0, 3))
+
+        # --- Case 3.3: RH_INSERT at point r_0 where TR_DELETE sits -> CONFLICT ---
+        h_3_3 = ["before = 1\n", "inserted_at_zero_anchor = 99\n", "after = 3\n", "end = 4\n"]
+        plan_3_3 = build_two_step_derender_plan(t_if_false, r_if_false, h_3_3)
+        self.assertTrue(plan_3_3.has_conflicts)
+        self.assertEqual(
+            plan_3_3.conflict_clusters[0].t_lines,
+            ("{% if false %}\n", "hidden = 2\n", "{% endif %}\n"),
+        )
+        self.assertEqual(
+            plan_3_3.conflict_clusters[0].h_lines,
+            ("inserted_at_zero_anchor = 99\n",),
+        )
+
+        # --- Case 4.1 vs Case 4.2: TR_INSERT (lines injected by render engine with no source line in T) ---
+        t_tr_ins = ["keep = 1\n"]
+        r_tr_ins = ["# GENERATED HEADER\n", "keep = 1\n"]
+        # Case 4.1: Host leaves '# GENERATED HEADER\n' untouched and edits 'keep = 1\n' -> CLEAN
+        plan_4_1 = build_two_step_derender_plan(
+            t_tr_ins, r_tr_ins, ["# GENERATED HEADER\n", "keep = 2\n"]
+        )
+        self.assertFalse(plan_4_1.has_conflicts)
+        self.assertEqual(list(plan_4_1.t_clean_lines), ["keep = 2\n"])
+
+        # Case 4.2: Host edits '# GENERATED HEADER\n' -> CONFLICT
+        plan_4_2 = build_two_step_derender_plan(
+            t_tr_ins, r_tr_ins, ["# MODIFIED HEADER\n", "keep = 1\n"]
+        )
+        self.assertTrue(plan_4_2.has_conflicts)
+        self.assertEqual(plan_4_2.conflict_clusters[0].t_lines, ())
+        self.assertEqual(plan_4_2.conflict_clusters[0].r_lines, ("# GENERATED HEADER\n",))
+        self.assertEqual(plan_4_2.conflict_clusters[0].h_lines, ("# MODIFIED HEADER\n",))
+
+    def test_adopt_two_step_patching_adjacent_clean_and_conflict_end_to_end(self) -> None:
+        """Verifies the Two-Step Patching pipeline (`T -> T_clean -> T_merged`) end-to-end when
+        clean edits (skeleton rename, line deletion, line insertion) and variable-slot conflicts
+        are immediately adjacent on a 5-variable template (`variable1..variable5`), plus Case 2.5b
+        strictly enclosed `TR_DELETE` `diff3` marker injection.
+        """
+        from drift.adopt.adopt_derender import generate_derendered_patch
+
+        pkg = "pkg_two_step_mixed"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        render_pkg = self.workspace_config.render_path / pkg
+        for d in (src_pkg, install_pkg, render_pkg):
+            d.mkdir(parents=True, exist_ok=True)
+
+        # 1. Motivating 5-variable scenario from docs/features/template_adopt_derendering_draft.md Section 2.3:
+        t_five = (
+            "variable1 = ${VALUE1};\n"
+            "variable2 = ${VALUE2}\n"
+            "variable3 = ${VALUE3}\n"
+            "variable4 = ${VALUE4}\n"
+            "variable5 = ${VALUE5}\n"
+        )
+        r_five = (
+            "variable1 = v1;\n"
+            "variable2 = v2\n"
+            "variable3 = v3\n"
+            "variable4 = v4\n"
+            "variable5 = v5\n"
+        )
+        # Host:
+        # - Line 1: adds inline comment after ';' on variable1 (Case 1.2 CLEAN)
+        # - Lines 2..3: untouched (Case 0.1 NO-OP)
+        # - Lines 4..5: edits variable values 'v4 -> v4b', 'v5 -> v5b' (Case 1.3 CONFLICT)
+        # - Line 6: inserts 'variable6 = v6b' at r=5 after variable5 (Case 3.1 CLEAN)
+        h_five = (
+            "variable1 = v1; # comment\n"
+            "variable2 = v2\n"
+            "variable3 = v3\n"
+            "variable4 = v4b\n"
+            "variable5 = v5b\n"
+            "variable6 = v6b\n"
+        )
+
+        src_five = src_pkg / "five.envst.conf"
+        render_five = render_pkg / "five.conf"
+        install_five = install_pkg / "five.conf"
+        src_five.write_text(t_five, encoding="utf-8")
+        render_five.write_text(r_five, encoding="utf-8")
+        install_five.write_text(h_five, encoding="utf-8")
+
+        patch_five = generate_derendered_patch(
+            target_file=src_five,
+            patch_from=install_five,
+            render_pkg_dir=render_pkg,
+            rel_rendered_path=Path("five.conf"),
+            src_rel_path=Path("five.envst.conf"),
+        )
+        self.assertTrue(patch_five.has_conflict)
+        self.assertTrue(check_patch_conflicts(src_five, patch_five))
+        # Refuses when accept_conflicts=False and leaves src_five untouched
+        self.assertFalse(apply_source_patch(src_five, patch_five, accept_conflicts=False))
+        self.assertEqual(src_five.read_text(encoding="utf-8"), t_five)
+
+        # Applies Step 1 (T -> T_clean: variable1 comment + variable6 = v6b) + Step 2 (diff3 on variable4..5 only)!
+        self.assertTrue(apply_source_patch(src_five, patch_five, accept_conflicts=True))
+        expected_merged_five = (
+            "variable1 = ${VALUE1}; # comment\n"
+            "variable2 = ${VALUE2}\n"
+            "variable3 = ${VALUE3}\n"
+            "<<<<<<< \n"
+            "variable4 = ${VALUE4}\n"
+            "variable5 = ${VALUE5}\n"
+            "||||||| \n"
+            "variable4 = v4\n"
+            "variable5 = v5\n"
+            "=======\n"
+            "variable4 = v4b\n"
+            "variable5 = v5b\n"
+            ">>>>>>> \n"
+            "variable6 = v6b\n"
+        )
+        self.assertEqual(src_five.read_text(encoding="utf-8"), expected_merged_five)
+
+        # 2. Case 2.5b end-to-end: strictly enclosed TR_DELETE (where r_lines == () and h_lines == ())
+        t_enc = "before = 1\n# TMPL_ONLY_DIRECTIVE\nafter = 2\nkeep = 3\n"
+        r_enc = "before = 1\nafter = 2\nkeep = 3\n"
+        h_enc = "keep = 3\n"
+        src_enc = src_pkg / "enc.envst.conf"
+        render_enc = render_pkg / "enc.conf"
+        install_enc = install_pkg / "enc.conf"
+        src_enc.write_text(t_enc, encoding="utf-8")
+        render_enc.write_text(r_enc, encoding="utf-8")
+        install_enc.write_text(h_enc, encoding="utf-8")
+
+        patch_enc = generate_derendered_patch(
+            target_file=src_enc,
+            patch_from=install_enc,
+            render_pkg_dir=render_pkg,
+            rel_rendered_path=Path("enc.conf"),
+            src_rel_path=Path("enc.envst.conf"),
+        )
+        self.assertTrue(patch_enc.has_conflict)
+        self.assertTrue(apply_source_patch(src_enc, patch_enc, accept_conflicts=True))
+        expected_merged_enc = (
+            "<<<<<<< \n"
+            "# TMPL_ONLY_DIRECTIVE\n"
+            "||||||| \n"
+            "=======\n"
+            ">>>>>>> \n"
+            "keep = 3\n"
+        )
+        self.assertEqual(src_enc.read_text(encoding="utf-8"), expected_merged_enc)
+
+    def test_execute_package_adopt_raises_on_missing_adopt_patch(self) -> None:
+        """Verifies execute_package_adopt strictly enforces the planning boundary and raises
+        SafeguardError if a modification or rename in plan.drifts is missing from plan.mod_patches.
+        """
+        from drift.core.exceptions import SafeguardError
+        from drift.models.adopt_models import PackageDriftFiles
+
+        pkg = "pkg_missing_patch_guard"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        # 1. Missing modification patch in plan.mod_patches
+        mod_plan = PackageAdoptPlan(
+            package=pkg,
+            src_pkg_dir=src_pkg,
+            src_dir_to_render=src_pkg,
+            install_pkg_dir=install_pkg,
+            render_pkg_dir=self.workspace_config.render_path / pkg,
+            render_engines=self.workspace_config.render_engine_configs,
+            drifts=PackageDriftFiles(modifications=[Path("mod.txt")]),
+            mod_patches={},
+        )
+        with self.assertRaises(SafeguardError) as ctx_mod:
+            execute_package_adopt(self.workspace_config, mod_plan, AdoptOptions(interactive=False))
+        self.assertIn("Missing precomputed AdoptPatch for modification 'mod.txt'", str(ctx_mod.exception))
+
+        # 2. Missing rename patch in plan.mod_patches
+        ren_plan = PackageAdoptPlan(
+            package=pkg,
+            src_pkg_dir=src_pkg,
+            src_dir_to_render=src_pkg,
+            install_pkg_dir=install_pkg,
+            render_pkg_dir=self.workspace_config.render_path / pkg,
+            render_engines=self.workspace_config.render_engine_configs,
+            drifts=PackageDriftFiles(renames=[(Path("old.txt"), Path("new.txt"))]),
+            mod_patches={},
+        )
+        with self.assertRaises(SafeguardError) as ctx_ren:
+            execute_package_adopt(self.workspace_config, ren_plan, AdoptOptions(interactive=False))
+        self.assertIn("Missing precomputed AdoptPatch for rename 'old.txt -> new.txt'", str(ctx_ren.exception))
+
+    def test_plan_package_adopt_dirty_source_fail_fast_atomicity(self) -> None:
+        """Verifies that assert_source_file_clean is enforced at the planning stage (plan_package_adopt / prepare_adopt)
+        for divergent modifications, renames, and deletions (file & directory), ensuring fail-fast atomicity so that
+        no clean sibling files in src/ are mutated when any target source file is dirty.
+        """
+        from drift.core.exceptions import DirtySourceFileError
+
+        pkg = "pkg_plan_dirty_atomic"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        (src_pkg / "sub_dir").mkdir(parents=True, exist_ok=True)
+        (install_pkg / "sub_dir").mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "01_clean.txt").write_text("clean_orig\n", encoding="utf-8")
+        (install_pkg / "01_clean.txt").write_text("clean_orig\n", encoding="utf-8")
+
+        (src_pkg / "02_dirty_mod.txt").write_text("mod_orig\n", encoding="utf-8")
+        (install_pkg / "02_dirty_mod.txt").write_text("mod_orig\n", encoding="utf-8")
+
+        (src_pkg / "03_dirty_ren_old.txt").write_text("ren_orig\n", encoding="utf-8")
+        (install_pkg / "03_dirty_ren_old.txt").write_text("ren_orig\n", encoding="utf-8")
+
+        (src_pkg / "sub_dir" / "inside.txt").write_text("dir_orig\n", encoding="utf-8")
+        (install_pkg / "sub_dir" / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
+
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init atomic dirty test src"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init atomic dirty test install"], cwd=self.install_dir, check=True, capture_output=True)
+
+        # 1. Modify 01_clean.txt and 02_dirty_mod.txt in install/, while dirtying 02_dirty_mod.txt in src/
+        (install_pkg / "01_clean.txt").write_text("clean_drifted\n", encoding="utf-8")
+        (install_pkg / "02_dirty_mod.txt").write_text("mod_drifted\n", encoding="utf-8")
+        (src_pkg / "02_dirty_mod.txt").write_text("mod_uncommitted_src\n", encoding="utf-8")
+
+        # Calling run_primitive_adopt_drifts fails during planning BEFORE 01_clean.txt is mutated in src/!
+        with self.assertRaises(DirtySourceFileError) as ctx_mod:
+            run_primitive_adopt_drifts(
+                self.workspace_config,
+                [pkg],
+                AdoptOptions(interactive=False, force=False, no_render=True, no_reverse_sync=True),
+            )
+        self.assertIn("02_dirty_mod.txt", str(ctx_mod.exception))
+        # Fail-fast atomicity: 01_clean.txt in src/ MUST NOT have been modified!
+        self.assertEqual((src_pkg / "01_clean.txt").read_text(encoding="utf-8"), "clean_orig\n")
+
+        # Restore 02_dirty_mod.txt in src/ and install/
+        (src_pkg / "02_dirty_mod.txt").write_text("mod_orig\n", encoding="utf-8")
+        (install_pkg / "02_dirty_mod.txt").write_text("mod_orig\n", encoding="utf-8")
+
+        # 2. Rename 03_dirty_ren_old.txt -> 03_dirty_ren_new.txt in install/, while dirtying 03_dirty_ren_old.txt in src/
+        subprocess.run(
+            ["git", "mv", f"{pkg}/03_dirty_ren_old.txt", f"{pkg}/03_dirty_ren_new.txt"],
+            cwd=self.install_dir,
+            check=True,
+            capture_output=True,
+        )
+        (src_pkg / "03_dirty_ren_old.txt").write_text("ren_uncommitted_src\n", encoding="utf-8")
+
+        with self.assertRaises(DirtySourceFileError) as ctx_ren:
+            plan_package_adopt(self.workspace_config, pkg, force=False)
+        self.assertIn("03_dirty_ren_old.txt", str(ctx_ren.exception))
+        # Passing force=True plans cleanly
+        plan_ren_force = plan_package_adopt(self.workspace_config, pkg, force=True)
+        self.assertEqual(
+            plan_ren_force.renames,
+            [(Path("03_dirty_ren_old.txt"), Path("03_dirty_ren_new.txt"))],
+        )
+
+        # Restore rename and dirty state
+        (install_pkg / "03_dirty_ren_new.txt").rename(install_pkg / "03_dirty_ren_old.txt")
+        (src_pkg / "03_dirty_ren_old.txt").write_text("ren_orig\n", encoding="utf-8")
+
+        # 3. Directory deletion in install/ (removing sub_dir/.drift_keep) while sub_dir/inside.txt is dirty in src/
+        (install_pkg / "sub_dir" / DRIFT_KEEP_FILE_NAME).unlink()
+        (src_pkg / "sub_dir" / "inside.txt").write_text("dir_uncommitted_src\n", encoding="utf-8")
+
+        with self.assertRaises(DirtySourceFileError) as ctx_dir_del:
+            plan_package_adopt(self.workspace_config, pkg, force=False)
+        self.assertIn("sub_dir", str(ctx_dir_del.exception))
+
+        # Passing skip_patches=True (converged-only planning) bypasses divergent cleanliness checks
+        plan_skip = plan_package_adopt(self.workspace_config, pkg, skip_patches=True, force=False)
+        self.assertIn(Path("sub_dir"), plan_skip.deletions)
+
+    def test_resolve_source_file_path_vs_find_source_path_conflict(self) -> None:
+        """Verifies resolve_source_file_path returns only 'match' status while find_source_path_conflict returns both 'match' and 'block'."""
+        pkg = "pkg_match_vs_conflict"
+        src_pkg = self.src_dir / pkg
+        (src_pkg / "real_dir").mkdir(parents=True)
+        (src_pkg / "static.txt").write_text("static\n", encoding="utf-8")
+        (src_pkg / "tmpl.envst.txt").write_text("tmpl\n", encoding="utf-8")
+        (src_pkg / "anc_file.envst").write_text("blocking template\n", encoding="utf-8")
+        (src_pkg / "broken_link.txt").symlink_to(src_pkg / "nonexistent_target.txt")
+
+        engines = self.workspace_config.render_engine_configs
+
+        # 1. Static file match -> both return status="match", is_templated=False
+        m_static = resolve_source_file_path(engines, src_pkg, Path("static.txt"))
+        c_static = find_source_path_conflict(engines, src_pkg, Path("static.txt"))
+        self.assertIsNotNone(m_static)
+        assert m_static is not None
+        self.assertEqual(m_static.status, "match")
+        self.assertFalse(m_static.is_templated)
+        self.assertEqual(m_static, c_static)
+
+        # 2. Template file match -> both return status="match", is_templated=True
+        m_tmpl = resolve_source_file_path(engines, src_pkg, Path("tmpl.txt"))
+        c_tmpl = find_source_path_conflict(engines, src_pkg, Path("tmpl.txt"))
+        self.assertIsNotNone(m_tmpl)
+        assert m_tmpl is not None
+        self.assertEqual(m_tmpl.status, "match")
+        self.assertTrue(m_tmpl.is_templated)
+        self.assertEqual(m_tmpl, c_tmpl)
+
+        # 3. Leaf directory -> resolve_source_file_path returns None, find_source_path_conflict returns status="block"
+        self.assertIsNone(resolve_source_file_path(engines, src_pkg, Path("real_dir")))
+        c_dir = find_source_path_conflict(engines, src_pkg, Path("real_dir"))
+        self.assertIsNotNone(c_dir)
+        assert c_dir is not None
+        self.assertEqual(c_dir.status, "block")
+        self.assertEqual(c_dir.path, src_pkg / "real_dir")
+
+        # 4. Ancestor blocking template -> resolve_source_file_path returns None, find_source_path_conflict returns status="block"
+        self.assertIsNone(resolve_source_file_path(engines, src_pkg, Path("anc_file/nested/leaf.txt")))
+        c_anc = find_source_path_conflict(engines, src_pkg, Path("anc_file/nested/leaf.txt"))
+        self.assertIsNotNone(c_anc)
+        assert c_anc is not None
+        self.assertEqual(c_anc.status, "block")
+        self.assertTrue(c_anc.is_templated)
+        self.assertEqual(c_anc.path, src_pkg / "anc_file.envst")
+
+        # 5. Broken symlink at leaf -> resolve_source_file_path returns None, find_source_path_conflict returns status="block"
+        self.assertIsNone(resolve_source_file_path(engines, src_pkg, Path("broken_link.txt")))
+        c_sym = find_source_path_conflict(engines, src_pkg, Path("broken_link.txt"))
+        self.assertIsNotNone(c_sym)
+        assert c_sym is not None
+        self.assertEqual(c_sym.status, "block")
+        self.assertEqual(c_sym.path, src_pkg / "broken_link.txt")
+
+        # 6. Non-existent path -> both return None
+        self.assertIsNone(resolve_source_file_path(engines, src_pkg, Path("missing.txt")))
+        self.assertIsNone(find_source_path_conflict(engines, src_pkg, Path("missing.txt")))
+
+    def test_addition_promoted_to_modification_static_and_template_two_pass(self) -> None:
+        """Verifies Two-Pass Idempotency when untracked/added files in install/ match existing static or template files in src/."""
+        from drift.core.exceptions import DirtySourceFileError
+
+        pkg = "pkg_add_promote"
+        src_pkg = self.src_dir / pkg
+        render_pkg = self.workspace_path / "render" / pkg
+        install_pkg = self.install_dir / pkg
+        src_pkg.mkdir(parents=True)
+        render_pkg.mkdir(parents=True)
+        install_pkg.mkdir(parents=True)
+
+        # Static file with trailing newline, static file without trailing newline, and templated file in src/
+        (src_pkg / "static.txt").write_text("line1\nline2\n", encoding="utf-8")
+        (src_pkg / "no_nl.txt").write_text("alpha\nbeta", encoding="utf-8")
+        (src_pkg / "config.envst.txt").write_text("app=${APP_NAME}\nport=8080\n", encoding="utf-8")
+        # Rendered baseline in render/
+        (render_pkg / "static.txt").write_text("line1\nline2\n", encoding="utf-8")
+        (render_pkg / "no_nl.txt").write_text("alpha\nbeta", encoding="utf-8")
+        (render_pkg / "config.txt").write_text("app=drift\nport=8080\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src for add promotion"], cwd=self.workspace_path, check=True, capture_output=True)
+
+        # Create untracked files in install/ (not in install/ HEAD!) that differ from src/ and render/
+        (install_pkg / "static.txt").write_text("line1\nline2_edited\n", encoding="utf-8")
+        (install_pkg / "no_nl.txt").write_text("alpha\nbeta_edited", encoding="utf-8")
+        (install_pkg / "config.txt").write_text("app=drift\nport=9090\n", encoding="utf-8")
+        (install_pkg / "brand_new.txt").write_text("truly_new\n", encoding="utf-8")
+
+        # Safeguard check: dirtying src_pkg / "static.txt" causes DirtySourceFileError during planning
+        (src_pkg / "static.txt").write_text("dirty_in_src\n", encoding="utf-8")
+        with self.assertRaises(DirtySourceFileError) as ctx_dirty:
+            plan_package_adopt(self.workspace_config, pkg, force=False)
+        self.assertIn("static.txt", str(ctx_dirty.exception))
+        (src_pkg / "static.txt").write_text("line1\nline2\n", encoding="utf-8")
+
+        # Verify plan promotes static.txt, no_nl.txt, and config.txt to modifications while keeping brand_new.txt in additions
+        plan = plan_package_adopt(self.workspace_config, pkg, force=False)
+        self.assertEqual(plan.additions, [Path("brand_new.txt")])
+        self.assertEqual(
+             sorted(plan.modifications),
+            [Path("config.txt"), Path("no_nl.txt"), Path("static.txt")],
+        )
+        self.assertFalse(plan.mod_patches["static.txt"].has_conflict)
+        self.assertFalse(plan.mod_patches["no_nl.txt"].has_conflict)
+        self.assertFalse(plan.mod_patches["config.txt"].has_conflict)
+
+        # Pass 1 (Cold / Mutation Pass): Execute adoption
+        res_pass1 = adopt_one_package_drifts(
+            self.workspace_config,
+            pkg,
+            options=AdoptOptions(interactive=False, no_render=True, no_reverse_sync=True),
+        )
+        self.assertEqual(res_pass1.status, AdoptStatus.SUCCESS)
+        self.assertTrue(res_pass1.has_adopted_changes)
+        self.assertEqual((src_pkg / "static.txt").read_text(encoding="utf-8"), "line1\nline2_edited\n")
+        self.assertEqual((src_pkg / "no_nl.txt").read_text(encoding="utf-8"), "alpha\nbeta_edited")
+        self.assertEqual((src_pkg / "config.envst.txt").read_text(encoding="utf-8"), "app=${APP_NAME}\nport=9090\n")
+        self.assertEqual((src_pkg / "brand_new.txt").read_text(encoding="utf-8"), "truly_new\n")
+
+        # Commit install/ and workspace/ and update render/ baseline
+        subprocess.run(["git", "commit", "-m", "commit adopted install"], cwd=self.install_dir, check=True, capture_output=True)
+        (render_pkg / "static.txt").write_text("line1\nline2_edited\n", encoding="utf-8")
+        (render_pkg / "no_nl.txt").write_text("alpha\nbeta_edited", encoding="utf-8")
+        (render_pkg / "config.txt").write_text("app=drift\nport=9090\n", encoding="utf-8")
+        (render_pkg / "brand_new.txt").write_text("truly_new\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit adopted src"], cwd=self.workspace_path, check=True, capture_output=True)
+
+        # Pass 2 (Warm / Idempotent Pass): Re-execution returns UP_TO_DATE with zero mutations
+        res_pass2 = adopt_one_package_drifts(
+            self.workspace_config,
+            pkg,
+            options=AdoptOptions(interactive=False, no_render=True, no_reverse_sync=True),
+        )
+        self.assertEqual(res_pass2.status, AdoptStatus.UP_TO_DATE)
+        self.assertFalse(res_pass2.has_adopted_changes)
+
+    def test_blocking_conflicts_in_additions_and_renames_and_dirty_rename_target(self) -> None:
+        """Verifies find_source_path_conflict blocks structural collisions in additions/renames and checks both rename endpoints for cleanliness."""
+        from drift.core.exceptions import DirtySourceFileError
+
+        pkg = "pkg_block_and_rename"
+        src_pkg = self.src_dir / pkg
+        install_pkg = self.install_dir / pkg
+        (src_pkg / "dir_blocks_file").mkdir(parents=True)
+        (src_pkg / "dir_blocks_file" / "child.txt").write_text("child\n", encoding="utf-8")
+        (src_pkg / "tmpl_blocks_dir.envst").write_text("template blocking dir\n", encoding="utf-8")
+        (src_pkg / "ren_old.txt").write_text("old\n", encoding="utf-8")
+        (src_pkg / "ren_target_collision.txt").write_text("target\n", encoding="utf-8")
+
+        (install_pkg).mkdir(parents=True)
+        (install_pkg / "ren_old.txt").write_text("old\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "-A"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src block test"], cwd=self.workspace_path, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install block test"], cwd=self.install_dir, check=True, capture_output=True)
+
+        engines = self.workspace_config.render_engine_configs
+
+        # 1. File addition in install/ where src/ has a directory at that path (status="block") -> CONFLICT in non-interactive mode
+        (install_pkg / "dir_blocks_file").write_text("file_in_install\n", encoding="utf-8")
+        out_add_file_blocked = handle_single_addition(
+            render_engines=engines,
+            src_pkg_dir=src_pkg,
+            src_dir_to_render=src_pkg,
+            install_pkg_dir=install_pkg,
+            rel_path=Path("dir_blocks_file"),
+            interactive=False,
+        )
+        self.assertEqual(out_add_file_blocked, ItemAdoptOutcome.CONFLICT)
+        self.assertTrue((src_pkg / "dir_blocks_file").is_dir())
+        (install_pkg / "dir_blocks_file").unlink()
+
+        # 2. Directory addition (.drift_keep) in install/ where src/ has a template blocking ancestor (status="block") -> CONFLICT
+        (install_pkg / "tmpl_blocks_dir").mkdir(parents=True)
+        (install_pkg / "tmpl_blocks_dir" / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
+        out_add_dir_blocked = handle_single_addition(
+            render_engines=engines,
+            src_pkg_dir=src_pkg,
+            src_dir_to_render=src_pkg,
+            install_pkg_dir=install_pkg,
+            rel_path=Path("tmpl_blocks_dir"),
+            interactive=False,
+        )
+        self.assertEqual(out_add_dir_blocked, ItemAdoptOutcome.CONFLICT)
+        self.assertTrue((src_pkg / "tmpl_blocks_dir.envst").is_file())
+        shutil.rmtree(install_pkg / "tmpl_blocks_dir")
+
+        # 3. Rename where new_rel_path is blocked by a directory in src/ (status="block") -> CONFLICT in non-interactive mode
+        (install_pkg / "ren_old.txt").rename(install_pkg / "dir_blocks_file")
+        plan_blocked_ren = plan_package_adopt(self.workspace_config, pkg, force=False)
+        ren_key = get_rename_patch_key(Path("ren_old.txt"), Path("dir_blocks_file"))
+        out_ren_blocked = handle_single_rename(
+            render_engines=engines,
+            src_dir_to_render=src_pkg,
+            old_rel_path=Path("ren_old.txt"),
+            new_rel_path=Path("dir_blocks_file"),
+            patch_content=plan_blocked_ren.mod_patches[ren_key],
+            interactive=False,
+            accept_conflicts=False,
+        )
+        self.assertEqual(out_ren_blocked, ItemAdoptOutcome.CONFLICT)
+        (install_pkg / "dir_blocks_file").rename(install_pkg / "ren_old.txt")
+
+        # 4. Rename where new_rel_path collides with ren_target_collision.txt in src/ AND ren_target_collision.txt is dirty -> raises DirtySourceFileError
+        (install_pkg / "ren_old.txt").rename(install_pkg / "ren_target_collision.txt")
+        (src_pkg / "ren_target_collision.txt").write_text("dirty_target\n", encoding="utf-8")
+        with self.assertRaises(DirtySourceFileError) as ctx_dirty_target:
+            plan_package_adopt(self.workspace_config, pkg, force=False)
+        self.assertIn("ren_target_collision.txt", str(ctx_dirty_target.exception))
+
+        # Also if ren_old.txt is dirty while ren_target_collision.txt is clean -> raises DirtySourceFileError
+        (src_pkg / "ren_target_collision.txt").write_text("target\n", encoding="utf-8")
+        (src_pkg / "ren_old.txt").write_text("dirty_old\n", encoding="utf-8")
+        with self.assertRaises(DirtySourceFileError) as ctx_dirty_old:
+            plan_package_adopt(self.workspace_config, pkg, force=False)
+        self.assertIn("ren_old.txt", str(ctx_dirty_old.exception))
+        (src_pkg / "ren_old.txt").write_text("old\n", encoding="utf-8")
+
+        # 5. Unexpected target states in handle_single_rename & handle_single_modification (missing source file):
+        #    non-interactive returns CONFLICT; interactive prompts [1] Discard / [2] Skip without guessing
+        self.assertEqual(
+            handle_single_rename(
+                render_engines=engines,
+                src_dir_to_render=src_pkg,
+                old_rel_path=Path("missing_old.txt"),
+                new_rel_path=Path("missing_new.txt"),
+                patch_content=AdoptPatch(),
+                interactive=False,
+                accept_conflicts=False,
+            ),
+            ItemAdoptOutcome.CONFLICT,
+        )
+        with patch("builtins.input", return_value="1"):
+            self.assertEqual(
+                handle_single_rename(
+                    render_engines=engines,
+                    src_dir_to_render=src_pkg,
+                    old_rel_path=Path("missing_old.txt"),
+                    new_rel_path=Path("missing_new.txt"),
+                    patch_content=AdoptPatch(),
+                    interactive=True,
+                    accept_conflicts=False,
+                ),
+                ItemAdoptOutcome.ADOPTED,
+            )
+        with patch("builtins.input", return_value="2"):
+            self.assertEqual(
+                handle_single_modification(
+                    render_engines=engines,
+                    src_dir_to_render=src_pkg,
+                    install_pkg_dir=install_pkg,
+                    rel_path=Path("missing_mod.txt"),
+                    patch_content=AdoptPatch(),
+                    interactive=True,
+                    accept_conflicts=False,
+                ),
+                ItemAdoptOutcome.SKIPPED,
+            )
 
 
 if __name__ == "__main__":

@@ -30,9 +30,10 @@ from typing import Optional
 
 from ..config.render_engine_config import RenderEngineRegistry
 from ..core.constants import DRIFT_IGNORE_FILE_NAME, DRIFT_KEEP_FILE_NAME
+from ..models.adopt_models import AdoptPatch
 from ..utils.editor_utils import launch_side_by_side_editor, launch_single_file_editor
 from ..utils.file_ops import copy_file, ensure_dir, remove_file_or_empty_dir, remove_tree
-from ..utils.func_utils import branch, choose, when_none, when_not_none
+from ..utils.func_utils import choose, when_none, when_not_none
 from .adopt_patch import apply_source_patch
 from .adopt_plan import resolve_source_file_path
 
@@ -121,7 +122,6 @@ def adopt_deletion(
     render_engines: RenderEngineRegistry,
     src_dir_to_render: Path,
     rel_path: Path,
-    pkg: str,
 ) -> None:
     """Symmetrically deletes the corresponding file or directory from declarative source folder."""
     src_dir = src_dir_to_render / rel_path
@@ -135,25 +135,24 @@ def adopt_deletion(
 
 def patch_and_edit(
     target_file: Path,
-    patch_content: str,
-    patch_from: Path,
+    patch_content: AdoptPatch,
     accept_conflicts: bool = False,
     open_editor: bool = False,
 ) -> bool:
-    """Applies a patch (clean or with merge markers) to target_file, synchronizes file permissions from patch_from, and optionally opens $EDITOR.
+    """Applies an AdoptPatch (clean or with merge markers) to target_file, synchronizes file permissions from patch_content.patch_from, and optionally opens $EDITOR.
 
-    Note: The external patch tool is executed via apply_source_patch only when '@@' diff hunks exist.
-    File mode/permissions are synchronized separately via _sync_file_mode when patch_from exists.
+    Note: apply_source_patch is executed only when '@@' diff hunks or conflict clusters exist.
+    File mode/permissions are synchronized separately via _sync_file_mode when patch_content.patch_from exists.
     """
-    if patch_content.strip():
+    if patch_content.has_changes:
         success = apply_source_patch(target_file, patch_content, accept_conflicts=accept_conflicts)
         if not success:
             logger.error(
                 f"Failed to apply patch to template file {target_file.name}. Please check manually."
             )
             return False
-    if patch_from.exists():
-        _sync_file_mode(target_file, patch_from)
+    if patch_content.patch_from != Path() and patch_content.patch_from.exists():
+        _sync_file_mode(target_file, patch_content.patch_from)
     if open_editor:
         try:
             launch_single_file_editor(target_file)
@@ -168,70 +167,53 @@ def adopt_rename(
     src_dir_to_render: Path,
     old_rel_path: Path,
     new_rel_path: Path,
-    patch_content: str,
-    patch_from: Path,
-    has_patch_conflict: bool = False,
+    patch_content: AdoptPatch,
     accept_conflicts: bool = False,
 ) -> Optional[Path]:
-    """Symmetrically renames the source template file and applies any content patch."""
-    old_src_match = resolve_source_file_path(render_engines, src_dir_to_render, old_rel_path)
-    new_src_match = resolve_source_file_path(render_engines, src_dir_to_render, new_rel_path)
-    old_src_file: Optional[Path] = when_not_none(old_src_match, lambda m: m.path)
-    existing_new_src_file: Optional[Path] = when_not_none(new_src_match, lambda m: m.path)
-    file_name: str = when_none(
-        when_not_none(old_src_file, lambda f: f.name),
-        when_none(
-            when_not_none(existing_new_src_file, lambda f: f.name),
-            new_rel_path.name,
-        ),
+    """Symmetrically renames the source file/template and applies any content patch."""
+    old_src_match = when_none(
+        patch_content.src_match,
+        lambda: resolve_source_file_path(render_engines, src_dir_to_render, old_rel_path),
     )
+    if old_src_match is None or not old_src_match.path.exists():
+        logger.error(
+            f"❌ [CONFLICT] Source file for '{old_rel_path}' not found in source directory. Skipping rename."
+        )
+        return None
 
-    if has_patch_conflict:
+    old_src_file = old_src_match.path
+    file_kind = choose(patch_content.is_templated, "template file", "file")
+
+    if patch_content.has_conflict:
         if accept_conflicts:
-            logger.warning(f"⚠️  Applying conflicting patch into renamed template file: '{file_name}'")
+            logger.warning(
+                f"⚠️  Applying conflicting patch into renamed {file_kind}: '{old_src_file.name}'"
+            )
         else:
             logger.error(
-                f"❌ [CONFLICT] Cannot apply system diff cleanly onto renamed template file '{file_name}'. Skipping."
+                f"❌ [CONFLICT] Cannot apply system diff cleanly onto renamed {file_kind} '{old_src_file.name}'. Skipping."
             )
-            logger.error("   Run 'drift adopt --interactive' or pass '--accept-conflicts' to resolve.")
+            logger.error(
+                "   Run 'drift adopt --interactive' or pass '--accept-conflicts' to resolve."
+            )
             return None
 
-    created_target = False
-    if old_src_file and old_src_file.exists():
-        new_src_name = render_engines.make_new_template_name(old_src_file.name, new_rel_path.name)
-        new_src_file = src_dir_to_render / new_rel_path.parent / new_src_name
-        new_src_file.parent.mkdir(parents=True, exist_ok=True)
-        copy_file(old_src_file, new_src_file)
-        created_target = True
-    elif existing_new_src_file and existing_new_src_file.exists():
-        logger.info(
-            f"Old source file for '{old_rel_path}' not found in source directory; "
-            f"applying rename patch to existing target file '{existing_new_src_file.name}'."
-        )
-        new_src_file = existing_new_src_file
-    else:
-        logger.info(
-            f"Old source file for '{old_rel_path}' not found in source directory. "
-            f"Creating a new source file for '{new_rel_path}'."
-        )
-        new_src_file = src_dir_to_render / new_rel_path
-        new_src_file.parent.mkdir(parents=True, exist_ok=True)
-        new_src_file.touch()
-        created_target = True
+    new_src_name = render_engines.make_new_template_name(old_src_file.name, new_rel_path.name)
+    new_src_file = src_dir_to_render / new_rel_path.parent / new_src_name
+    new_src_file.parent.mkdir(parents=True, exist_ok=True)
+    copy_file(old_src_file, new_src_file)
 
     success = patch_and_edit(
         new_src_file,
         patch_content,
-        patch_from=patch_from,
         accept_conflicts=accept_conflicts,
         open_editor=False,
     )
     if not success:
-        if created_target:
-            new_src_file.unlink(missing_ok=True)
+        new_src_file.unlink(missing_ok=True)
         return None
 
-    if old_src_file and old_src_file.exists() and old_src_file != new_src_file:
+    if old_src_file != new_src_file:
         old_src_file.unlink(missing_ok=True)
 
     return new_src_file

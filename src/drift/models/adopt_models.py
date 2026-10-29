@@ -1,9 +1,10 @@
 """Data models, plans, options, and result containers for drift adoption (Primitive 8).
 
-Co-locates all adopt-related domain structures (AdoptStatus, ItemAdoptOutcome,
-get_rename_patch_key, AdoptOptions, PackageDriftFiles, PackageAdoptPlan,
-AdoptPlan, PackageAdoptResult, AdoptResult) without circular imports across
-drift.core, drift.config, and drift.primitives.
+Co-locates all adopt-related domain structures (TokenKind, TokenizedLine, SkeletonMatch,
+DiffRelation, DiffUnitType, DiffUnit, CleanPatchHunk, ConflictCluster,
+TwoStepDerenderPlan, AdoptPatch, AdoptStatus, ItemAdoptOutcome, get_rename_patch_key,
+AdoptOptions, PackageDriftFiles, PackageAdoptPlan, AdoptPlan, PackageAdoptResult,
+AdoptResult) without circular imports across drift.core, drift.config, and drift.primitives.
 """
 
 from __future__ import annotations
@@ -11,12 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar, Dict, FrozenSet, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple, TYPE_CHECKING
 
 from ..core.constants import DRIFT_KEEP_FILE_NAME
 from ..core.mixins import AlwaysTruthy
 from ..core.serialization import SerializableModel
-from ..utils.func_utils import choose
+from ..utils.func_utils import choose, when_not_none
 
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderEngineRegistry, RenderSourceMatch
@@ -24,47 +25,167 @@ if TYPE_CHECKING:
     from ..hooks.lifecycle_hooks import HookExecFlags
 
 
+class TokenKind(str, Enum):
+    """Neovim-style three-way character class partition for lossless line tokenization."""
+    WORD = "word"
+    PUNCT = "punct"
+    SPACE = "space"
+
+    def __str__(self) -> str:
+        return self.value
+
+
 @dataclass(frozen=True)
-class TemplateHunk:
-    """Represents a single non-equal opcode span between Template (T) and Rendered (R) lines."""
-    t_start: int
-    t_end: int
-    r_start: int
-    r_end: int
-
-    def to_dict(self) -> Dict[str, int]:
-        return {
-            "t_start": self.t_start,
-            "t_end": self.t_end,
-            "r_start": self.r_start,
-            "r_end": self.r_end,
-        }
+class TokenizedLine:
+    """Losslessly tokenized line with pre-extracted word set for O(1) disjointness pruning."""
+    raw_line: str
+    stripped_line: str
+    line_ending: str
+    tokens: Tuple[str, ...]
+    token_kinds: Tuple[TokenKind, ...]
+    word_set: FrozenSet[str]
 
 
-class TemplateHunkClassification(str, Enum):
-    """Classification of a TemplateHunk against R <-> H host diff opcodes."""
+@dataclass(frozen=True)
+class SkeletonMatch:
+    """Result of comparing two TokenizedLines for shared static skeleton."""
+    is_valid: bool
+    score: float
+    signature: Tuple[str, ...]
+
+
+class DiffRelation(str, Enum):
+    """Identifies whether an alignment unit maps Template -> Rendered (TR) or Rendered -> Host (RH)."""
+    TR = "tr"
+    RH = "rh"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class DiffUnitType(str, Enum):
+    """Six mutually exclusive atomic alignment/edit unit types shared across TR and RH."""
     EQUAL = "equal"
-    EDIT = "edit"
-    CONFLICT = "conflict"
+    SINGLE_EDIT = "single_edit"
+    SINGLE_SKEL_EDIT = "single_skel_edit"
+    BLOCK_EDIT = "block_edit"
+    INSERT = "insert"
+    DELETE = "delete"
 
     def __str__(self) -> str:
         return self.value
 
 
 @dataclass
-class DerenderedPair(SerializableModel):
-    """Holds the de-rendered Rendered baseline (R_derendered), Host lines (H_derendered),
-    and 0-based line index sets belonging to Case 3 conflict hunks so unified diff generation
-    anchors strictly on outer template lines rather than matching rendered lines inside conflicts.
-    """
-    _SERIALIZE_EXCLUDE: ClassVar[FrozenSet[str]] = frozenset(
-        {"r_conflict_indices", "h_conflict_indices"}
-    )
+class DiffUnit(SerializableModel):
+    """Unified atomic alignment unit for both T -> R (TR) and R -> H (RH)."""
+    relation: DiffRelation
+    unit_type: DiffUnitType
+    src_start: int
+    src_end: int
+    dst_start: int
+    dst_end: int
+    is_conflict: bool = False
+    derendered_lines: Tuple[str, ...] = ()
 
-    r_derendered: List[str] = field(default_factory=list)
-    h_derendered: List[str] = field(default_factory=list)
-    r_conflict_indices: FrozenSet[int] = field(default_factory=frozenset)
-    h_conflict_indices: FrozenSet[int] = field(default_factory=frozenset)
+    @property
+    def r_start(self) -> int:
+        """Start coordinate on the shared Rendered (R) axis."""
+        return choose(self.relation == DiffRelation.TR, self.dst_start, self.src_start)
+
+    @property
+    def r_end(self) -> int:
+        """End coordinate on the shared Rendered (R) axis."""
+        return choose(self.relation == DiffRelation.TR, self.dst_end, self.src_end)
+
+    @property
+    def src_len(self) -> int:
+        return self.src_end - self.src_start
+
+    @property
+    def dst_len(self) -> int:
+        return self.dst_end - self.dst_start
+
+    @property
+    def is_positive_length(self) -> bool:
+        """True when both source and destination spans have at least 1 line."""
+        return self.src_len >= 1 and self.dst_len >= 1
+
+
+@dataclass
+class CleanPatchHunk(SerializableModel):
+    """A single 0-based Step 1 slice replacement on source file `T[t_start:t_end]`.
+
+    `old_lines` and `new_lines` store newline-stripped strings (`keepends=False`).
+    `old_eof_newline` and `new_eof_newline` record whether the old or new side ends
+    with a trailing newline when the hunk touches the end of the file.
+    """
+    t_start: int
+    t_end: int
+    old_lines: Tuple[str, ...] = ()
+    new_lines: Tuple[str, ...] = ()
+    old_eof_newline: bool = True
+    new_eof_newline: bool = True
+
+    @property
+    def is_old_eof_nl_valid(self) -> bool:
+        """True when `old_eof_newline` is meaningful (the hunk spans at least one old line)."""
+        return bool(self.old_lines)
+
+    @property
+    def is_new_eof_nl_valid(self) -> bool:
+        """True when `new_eof_newline` is meaningful (the hunk produces at least one new line)."""
+        return bool(self.new_lines)
+
+
+@dataclass
+class ConflictCluster(SerializableModel):
+    """A converged Step 2 conflict cluster over (T, R, H) with shifted coordinates in T_clean."""
+    t_start: int
+    t_end: int
+    t_clean_start: int
+    t_clean_end: int
+    t_lines: Tuple[str, ...]
+    r_lines: Tuple[str, ...]
+    h_lines: Tuple[str, ...]
+
+
+@dataclass
+class TwoStepDerenderPlan(SerializableModel):
+    """Complete pure-computation output of the 3-way template de-rendering engine."""
+    t_lines: Tuple[str, ...] = ()
+    t_clean_lines: Tuple[str, ...] = ()
+    clean_hunks: Tuple[CleanPatchHunk, ...] = ()
+    conflict_clusters: Tuple[ConflictCluster, ...] = ()
+
+    @property
+    def has_conflicts(self) -> bool:
+        return bool(self.conflict_clusters)
+
+
+@dataclass
+class AdoptPatch(SerializableModel):
+    """Unified patch & target container for both modifications and renames (static or templated).
+
+    Stored in `PackageAdoptPlan.mod_patches` keyed by `rel_mod.as_posix()` for modifications
+    and `get_rename_patch_key(old_rel, new_rel)` for renames.
+    """
+    src_match: Optional[RenderSourceMatch] = None
+    patch_from: Path = field(default_factory=Path)
+    has_conflict: bool = False
+    clean_hunks: Tuple[CleanPatchHunk, ...] = ()
+    conflict_clusters: Tuple[ConflictCluster, ...] = ()
+    display_diff: str = ""
+
+    @property
+    def is_templated(self) -> bool:
+        """True if the target source file is a template."""
+        return bool(self.src_match is not None and self.src_match.is_templated)
+
+    @property
+    def has_changes(self) -> bool:
+        """True if there are Step 1 clean hunks or Step 2 conflict clusters."""
+        return bool(self.clean_hunks) or bool(self.conflict_clusters)
 
 
 class AdoptStatus(str, Enum):
@@ -96,7 +217,8 @@ def get_rename_patch_key(old_rel: Path, new_rel: Path) -> str:
     """Generates a collision-free dictionary key for a rename pair (old_rel, new_rel).
 
     Because normalized Path.as_posix() strings never contain '//', joining with '//->//'
-    guarantees that no two distinct (old_rel, new_rel) pairs can ever produce the same key.
+    guarantees that no two distinct (old_rel, new_rel) pairs or modification paths can
+    ever produce the same key.
     """
     return f"{old_rel.as_posix()}//->//{new_rel.as_posix()}"
 
@@ -168,10 +290,7 @@ class PackageAdoptPlan(SerializableModel):
     render_pkg_dir: Path = field(default_factory=Path)
     render_engines: RenderEngineRegistry = field(default_factory=_default_render_engines)
     drifts: PackageDriftFiles = field(default_factory=PackageDriftFiles)
-    mod_patches: Dict[str, str] = field(default_factory=dict)
-    rename_patches: Dict[str, str] = field(default_factory=dict)
-    mod_targets: Dict[str, Optional[RenderSourceMatch]] = field(default_factory=dict)
-    mod_conflicts: Dict[str, bool] = field(default_factory=dict)
+    mod_patches: Dict[str, AdoptPatch] = field(default_factory=dict)
     pre_source_already_triggered: bool = False
     error: Optional[str] = None
 
@@ -212,13 +331,13 @@ class PackageAdoptPlan(SerializableModel):
         if file.name == DRIFT_KEEP_FILE_NAME:
             return f"       ~ {file} [Discard corrupt keep file modification]"
 
-        key = file.as_posix()
-        src_match = self.mod_targets.get(key)
+        patch_plan = self.mod_patches.get(file.as_posix())
+        src_match = when_not_none(patch_plan, lambda p: p.src_match)
         if src_match is None:
             return f"       ~ {file} [Static Overwrite]"
 
         src_name = src_match.path.name
-        has_conflict = self.mod_conflicts.get(key, False)
+        has_conflict = bool(patch_plan is not None and patch_plan.has_conflict)
         if src_match.is_templated:
             return choose(
                 has_conflict,
@@ -262,7 +381,8 @@ class PackageAdoptPlan(SerializableModel):
             for old_file, new_file in self.renames:
                 lines.append(f"       R {old_file} -> {new_file}")
                 if verbose:
-                    patch_str = self.rename_patches.get(get_rename_patch_key(old_file, new_file), "").strip()
+                    rename_patch = self.mod_patches.get(get_rename_patch_key(old_file, new_file))
+                    patch_str = when_not_none(rename_patch, lambda p: p.display_diff.strip()) or ""
                     if patch_str:
                         lines.extend(f"         {line}" for line in patch_str.splitlines())
 
@@ -271,7 +391,8 @@ class PackageAdoptPlan(SerializableModel):
             for file in self.modifications:
                 lines.append(self._format_modification_line(file))
                 if verbose:
-                    patch_str = self.mod_patches.get(file.as_posix(), "").strip()
+                    mod_patch = self.mod_patches.get(file.as_posix())
+                    patch_str = when_not_none(mod_patch, lambda p: p.display_diff.strip()) or ""
                     if patch_str:
                         lines.extend(f"         {line}" for line in patch_str.splitlines())
 
@@ -407,7 +528,7 @@ class PackageAdoptResult(SerializableModel):
 class AdoptResult(SerializableModel):
     """Aggregate result for workspace-wide or multi-package drift adoption."""
     command: str = "adopt"
-    status: AdoptStatus = AdoptStatus.SUCCESS  # "UP_TO_DATE", "SUCCESS", "PARTIAL", "SKIPPED", "FAILED"
+    status: AdoptStatus = AdoptStatus.SUCCESS
     packages: List[PackageAdoptResult] = field(default_factory=list)
     error_message: Optional[str] = None
     dry_run: bool = False

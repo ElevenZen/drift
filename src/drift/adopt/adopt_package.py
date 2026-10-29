@@ -28,6 +28,7 @@ import subprocess
 from typing import List, Optional, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
+from ..core.exceptions import SafeguardError
 from ..hooks.lifecycle_hooks import trigger_pre_source_hook
 from ..models.adopt_models import (
     AdoptOptions,
@@ -181,7 +182,6 @@ def execute_package_adopt(
             plan.install_pkg_dir,
             rel_path,
             opts.interactive,
-            force=opts.force,
         )
         if outcome == ItemAdoptOutcome.ADOPTED:
             adopted_additions.append(rel_path.as_posix())
@@ -194,11 +194,9 @@ def execute_package_adopt(
     for rel_path in plan.deletions:
         outcome = handle_single_deletion(
             plan.render_engines,
-            plan.package,
             plan.src_dir_to_render,
             rel_path,
             opts.interactive,
-            force=opts.force,
         )
         if outcome == ItemAdoptOutcome.ADOPTED:
             adopted_deletions.append(rel_path.as_posix())
@@ -209,21 +207,21 @@ def execute_package_adopt(
             skipped_files.append(rel_path.as_posix())
 
     for old_rel_path, new_rel_path in plan.renames:
-        patch_content = plan.rename_patches.get(get_rename_patch_key(old_rel_path, new_rel_path))
+        rename_key = get_rename_patch_key(old_rel_path, new_rel_path)
+        rename_patch = plan.mod_patches.get(rename_key)
+        if rename_patch is None:
+            raise SafeguardError(
+                f"Missing precomputed AdoptPatch for rename '{old_rel_path} -> {new_rel_path}' "
+                f"in package '{plan.package}'."
+            )
         outcome = handle_single_rename(
             plan.render_engines,
-            plan.package,
-            plan.src_pkg_dir,
             plan.src_dir_to_render,
-            plan.install_pkg_dir,
-            workspace_config.install_path,
-            plan.render_pkg_dir,
             old_rel_path,
             new_rel_path,
+            rename_patch,
             opts.interactive,
             opts.accept_conflicts,
-            force=opts.force,
-            precomputed_patch=patch_content,
         )
         if outcome == ItemAdoptOutcome.ADOPTED:
             adopted_renames.append(f"{old_rel_path.as_posix()} -> {new_rel_path.as_posix()}")
@@ -238,22 +236,20 @@ def execute_package_adopt(
 
     for rel_path in plan.modifications:
         key = rel_path.as_posix()
-        patch_content = plan.mod_patches.get(key)
+        mod_patch = plan.mod_patches.get(key)
+        if mod_patch is None:
+            raise SafeguardError(
+                f"Missing precomputed AdoptPatch for modification '{rel_path}' "
+                f"in package '{plan.package}'."
+            )
         outcome = handle_single_modification(
             plan.render_engines,
-            plan.package,
-            plan.src_pkg_dir,
             plan.src_dir_to_render,
             plan.install_pkg_dir,
-            workspace_config.install_path,
-            plan.render_pkg_dir,
             rel_path,
+            mod_patch,
             opts.interactive,
             opts.accept_conflicts,
-            force=opts.force,
-            precomputed_patch=patch_content,
-            src_match=plan.mod_targets.get(key),
-            precomputed_conflict=plan.mod_conflicts.get(key),
         )
         if outcome == ItemAdoptOutcome.ADOPTED:
             adopted_modifications.append(rel_path.as_posix())
@@ -311,7 +307,12 @@ def adopt_one_package_drifts(
         or explicit commit helpers (commit_staged_repo_changes).
     """
     opts = options or AdoptOptions()
-    plan = plan_package_adopt(workspace_config, pkg, skip_patches=opts.skip_patches)
+    plan = plan_package_adopt(
+        workspace_config,
+        pkg,
+        skip_patches=opts.skip_patches,
+        force=opts.force,
+    )
     return branch(
         opts.dry_run,
         lambda: _dry_run_package_adopt(plan),
