@@ -20,8 +20,8 @@ Pipeline Architecture:
     1. Lossless Word-Level Line Tokenization:
         tokenize_line(line) [Layer 1]
             - Strips trailing line ending (`\r\n` / `\n`) while preserving `raw_line` and `line_ending`
-            - Splits line into contiguous `TokenKind.WORD` (`\w+`), `TokenKind.PUNCT` (`[^\w\s]`),
-              and `TokenKind.SPACE` (`\s+`) tokens via `_classify_token`
+            - Splits line into contiguous `TokenKind.WORD` (`\\w+`), `TokenKind.PUNCT` (`[^\\w\\s]`),
+              and `TokenKind.SPACE` (`\\s+`) tokens via `_classify_token`
             - Caches `word_set` (`frozenset` of `WORD` tokens) for O(1) disjoint-line pruning
             -> Returns TokenizedLine
 
@@ -150,7 +150,7 @@ def _classify_token(token: str) -> TokenKind:
 def tokenize_line(line: str) -> TokenizedLine:
     """Losslessly partitions a single line into word, whitespace, and punctuation tokens.
 
-    Separates the trailing line ending (`\\r\\n` or `\\n`) from the line body, splits the body
+    Separates the trailing line ending (`\r\n` or `\n`) from the line body, splits the body
     into contiguous `WORD`, `SPACE`, and `PUNCT` tokens so `"".join(tokens) + line_ending == line`,
     and precomputes `word_set` for fast O(1) word-overlap pruning during skeleton matching.
 

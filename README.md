@@ -28,21 +28,22 @@ Drift treats configuration as **packages** compiled from templates. It previews 
 
 ## ⚡ The Three Pillars
 
-### 1. Compile safely
-* Templates, layered variables, and secrets compile into an isolated `render/` Git sandbox. A failed render never touches your system.
-* 6-tier environment model with in-TOML `${VAR}` stitching and Python workspace/package hooks.
-* `[secrets]` are decrypted in memory only (`age`, `gpg`, `sops`, `op`, `bw`, `pass`).
-* Incremental Merkle-DAG caching skips unchanged templates instantly.
+### 1. Compile safely (Custom Render Engines & 6-Tier Variables)
+* **Isolated `render/` Git sandbox**: Templates, layered user variables, and secrets compile into a sandboxed repo first—a broken template never touches your live system.
+* **Pluggable custom render engines & DAG piping**: Built-in variable engine plus arbitrary CLI engines (`envsubst`, `jinja2`, `mustache`, `gomplate`, or custom scripts) declared at the workspace or package level, with automatic DAG piping when an engine's `input_file` is itself a template.
+* **Editor/LSP-friendly infix naming**: Write `auth.envst.json` or `config.j2.yaml`—because `.envst` / `.j2` sits *before* the file extension, your IDE keeps full JSON/YAML syntax highlighting and schema validation.
+* **6-tier user variable & secret model**: Topological `${VAR}` stitching across `[env.override]`, `[env.default]`, `[env.fallback]`, in-memory `[secrets]` decryption (`age`, `gpg`, `sops`, `op`, `bw`, `pass`), and dynamic Python preprocessor hooks (`drift_workspace.py`, `drift_package.py`).
+* **Incremental Merkle-DAG caching**: Cryptographic SHA-256 lockfile proofs (`render_lock.json`) skip unchanged templates in $\mathcal{O}(1)$ time.
 
 ### 2. Deploy transactionally
-* `drift plan` simulates the full render → stage → deliver cycle in an ephemeral sandbox.
-* `drift deploy` delivers symlinks or copies with collision guards, automatic backups, dependency ordering, and lifecycle hooks.
-* A write-ahead log powers automatic or manual `drift rollback` after a mid-deploy failure.
+* **Full-cycle sandbox preview**: `drift plan` simulates the entire `render → stage → deliver` pipeline in an ephemeral sandbox before mutating a single file.
+* **Safe delivery & lifecycle hooks**: `drift deploy` delivers symlinks or physical copies with collision guards, automatic backups (`backup/<pkg>/`), `[requirements]` platform filtering, topological dependency ordering, and pre/post lifecycle hooks.
+* **Write-ahead log & rollback**: Every file mutation is journaled so a mid-deploy failure rolls back automatically (or manually via `drift rollback`).
 
-### 3. Reconcile drift, both ways
-* Live edits are reverse-synced into a local state repo (`install/`); a sentinel halts deploys before they would overwrite them.
-* Inspect with `drift status` and `drift diff -s` (side-by-side in your editor with `-y`).
-* Keep changes with `drift adopt` (patched back into `src/`), or discard them with `drift deploy --force` (a snapshot stays in history).
+### 3. Reconcile drift, both ways (3-Way Template De-Rendering)
+* **Reverse-sync & Sentinel guard**: Live host edits are pulled into the local `install/` tracking repo; the Sentinel guard halts `drift deploy` before it can overwrite uncommitted host changes.
+* **3-Way Template De-Rendering (`T <-> R <-> H`)**: Unlike one-way template managers that overwrite `${VAR}` / `{{ expr }}` placeholders with literal values when syncing back, `drift adopt` uses word-level token calculus and 2D dynamic programming to backport live host edits directly into source templates (`src/`) while preserving untouched variable slots—even on the **same line**.
+* **Two-step `diff3` conflict resolution & FCD auditing**: Clean edits apply in Step 1 while genuine variable-slot collisions or interior loop edits are isolated into 3-way `diff3` conflict blocks (`<<<<<<< T` / `||||||| R` / `======= H` / `>>>>>>>`) in Step 2, alongside interactive adoption (`drift adopt -i`) for newly created files in `fully_controlled_dirs`.
 
 👉 Full details: **[Feature Guide](docs/features.md)**
 
@@ -235,6 +236,53 @@ Once deployed (`drift enable --local pi && drift deploy pi`), you use `pi` norma
                                         #   [3] Discard (prunes from host on next deploy)
    ```
    If an adopted extension file contains a secret token, simply rename it to `*.envst.json` in `src/pi/agent/extension-settings/` and replace the raw token with `${VAR}`.
+
+---
+
+## ✨ Deep Dive: What Makes Drift Different
+
+### 1. Enhanced 3-Way Template De-Rendering (`drift adopt`)
+
+Traditional template managers are one-way streets: once `auth.envst.json` is rendered into `auth.json`, adopting a runtime host edit via a naive 2-way diff (`H - R`) either fails on context lines or overwrites `${NEWAPI_API_KEY}` with the plaintext secret.
+
+Drift's pure-Python **3-Way Template De-Rendering Engine (`T <-> R <-> H`)** reconciles host edits (`H`) against both the rendered baseline (`R`) and the source template (`T`):
+
+* **Hunk Fission & Anti-Loop Uniqueness Guard**: Splits coarse edit blocks into atomic 1-to-1 and multi-line units using Neovim-style Unicode tokenization (`\w+`, `\s+`, `[^\w\s]`), slot-normalized skeleton similarity, bidirectional uniqueness filtering (keeping `{% for %}` loops intact), and 2D dynamic programming.
+* **Sub-Line Token Calculus (`1 <-> 1 <-> 1`)**: When an app edits a line that also contains a template variable (for example, adding a trailing comma or comment to `"key": "sk-live-12345"` $\to$ `"key": "sk-live-12345",`), Drift verifies that the edit's closed token interval does not touch the variable slot and synthesizes `"key": "${NEWAPI_API_KEY}",` automatically.
+* **Two-Step Patching (`T -> T_clean -> T_merged`)**:
+  1. **Step 1 (`T -> T_clean`)**: Applies all clean static edits, sub-line skeleton edits, outer-boundary insertions, and full block deletions directly to `T`.
+  2. **Step 2 (`T_clean -> T_merged`)**: Anchors any genuine conflicts (such as modifying a rendered variable's value or inserting inside an unrolled `{% for %}` loop) to their shifted coordinates in `T_clean` and injects exact 3-way `diff3` markers (`<<<<<<<` Template `T` / `|||||||` Rendered `R` / `=======` Host `H` / `>>>>>>>`).
+
+### 2. Custom Render Engines, DAG Piping & 6-Tier User Variables
+
+Drift does not lock you into a single template syntax. You can combine built-in variable substitution with any external CLI engine and feed them from a 6-tier variable hierarchy:
+
+```toml
+# config/drift_workspace.toml
+[secrets]
+secrets_file = "secrets.env.age"
+key_file = "~/.ssh/id_ed25519"
+decrypt_command = "age -d -i %i %s"                      # Decrypted strictly in memory
+
+[env.default]
+API_HOST = "127.0.0.1"
+API_PORT = "8080"
+API_ENDPOINT = "http://${API_HOST}:${API_PORT}/v1"       # Topological ${VAR} stitching
+
+[render.envsubst]
+suffix = "envst"
+input_file = "envsubst.bash"
+render_command = "bash -c 'source %i && envsubst < %s'"  # %i = input_file, %s = template
+
+[render.mustache]
+suffix = "mustache"
+input_file = "mustache.envst.json"                       # DAG piping: compiled by envsubst first!
+render_command = "mustache %i %s"
+```
+
+* **DAG Engine Piping**: When `mustache.envst.json` is itself a template, Drift resolves the dependency graph, compiles `mustache.envst.json` $\to$ `mustache.json` via `envsubst` first, and passes the compiled file as `%i` to `mustache`.
+* **Package-Scoped Engines & Portable Packages**: Packages can also define or override `[render.<name>]` and `[env.*]` locally in `src/<pkg>/drift_package.toml`, making individual packages self-contained and shareable across repos.
+* **Dynamic Python Preprocessor Hooks**: Need logic beyond static TOML? Author `config/drift_workspace.py` or `src/<pkg>/drift_package.py` to inspect host facts (`drift_os`, `drift_distro`, `drift_arch`, `drift_hostname`), toggle packages, or inject computed variables before `${VAR}` stitching runs.
 
 ---
 
