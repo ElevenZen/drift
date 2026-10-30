@@ -29,59 +29,72 @@ Pipeline Architecture:
     2. Orthogonal Matrix Classification Along the Shared `R` Axis:
         _classify_orthogonal_units(tr_units, rh_units) [Layer 2]
             - Evaluates every non-`EQUAL` `RH` unit against `tr_units` via _eval_rh_unit_conflicts:
-                * Positive-R-Span RH Edit (`d_2 > d_1`: `SINGLE_SKEL_EDIT`, `SINGLE_EDIT`,
+                * Positive-R-Span RH Edit or Delete (`d_2 > d_1`: `SINGLE_SKEL_EDIT`, `SINGLE_EDIT`,
                   `BLOCK_EDIT`, `DELETE`):
-                    - Collects `overlapping_pos_tr` (`max(d_1, u.r_start) < min(d_2, u.r_end)`)
-                      and strictly enclosed `TR` `DELETE`s (`d_1 < u.r_start < d_2`)
-                    - _is_clean_positive_rh_edit checks if the interaction is clean:
-                        * Case 0.2: all overlapped `TR` units are `TR_EQUAL` (static lines) -> Clean
+                    - Slices `overlap_idx_range` (`u.r_end > d_1` and `u.r_start < d_2`) and
+                      `interior_idx_range` (`u.r_start > d_1` and `u.r_end < d_2`) via `bisect`,
+                      then maps to `tr_units` and filters into `overlapping_pos_tr` and
+                      `enclosed_tr_dels`
+                    - _is_clean_rh_edit_or_delete checks if the interaction is clean:
+                        * Cases 1.1, 2.1 (on `TR_EQUAL`), & 4.1: all overlapped `TR` units are
+                          `TR_EQUAL` (static lines) with no enclosed `TR_DELETE` -> Clean
                         * Case 1.2: 1-to-1 exact match between `TR_SINGLE_EDIT` and
                           `RH_SINGLE_SKEL_EDIT` -> Clean
-                        * Case 1.4 & Case 2.4: complete deletion (`RH_DELETE` with exact `[r_start, r_end)`
-                          match) of a single `TR_SINGLE_EDIT` or `TR_BLOCK_EDIT` -> Clean
-                        * All other overlaps (Case 1.3 token collision, Case 2.2 partial block
-                          deletion, Case 2.3 block modification, Case 2.5b enclosed `TR_DELETE`,
-                          or multi-unit span mismatch) -> Conflict
-                * Zero-R-Span RH Pure Insertion (`d_1 == d_2 = d`: `RH_INSERT`):
-                    - Clean (Case 3.1) unless `d` falls strictly inside a multi-line `TR` unit
-                      (`u.r_start < d < u.r_end`, Case 3.2) or touches a degenerate 0-R-length
-                      `TR_DELETE` / `TR_INSERT` at `d` (Case 3.3)
+                        * Case 2.1 (on `TR_SINGLE_EDIT`) & Case 2.2: complete deletion (`RH_DELETE`
+                          with exact `[r_start, r_end)` match) of a single `TR_SINGLE_EDIT` or
+                          `TR_BLOCK_EDIT` -> Clean
+                        * All other overlaps (Case 1.3 token collision, Case 1.4 single-line edit
+                          inside block/insert, Case 2.3 partial block deletion, Case 2.4 deletion of
+                          `TR_INSERT`, Case 4.2 `RH_BLOCK_EDIT` touching non-`TR_EQUAL` or enclosing
+                          `TR_DELETE`) -> Conflict
+                 * Zero-R-Span RH Pure Insertion (`d_1 == d_2 = d`: `RH_INSERT`):
+                    - Delegates to _eval_rh_insert_conflicts:
+                        * Cases 3.2 & 3.4: `inside_tr_idx` (`u.r_start < d < u.r_end`) is non-empty -> Conflict
+                        * Case 3.3: `tr_del_idx` (`u.r_start == d == u.r_end`, i.e. `TR_DELETE` at `d`)
+                          is non-empty -> Conflict
+                        * Cases 3.1 & 3.5: exterior boundary of `TR_EQUAL` / `TR_SINGLE_EDIT` /
+                          `TR_BLOCK_EDIT` (Case 3.1) or `TR_INSERT` (Case 3.5) with no `TR_DELETE`
+                          at `d` -> Clean
             - Propagates `is_conflict=True` onto all participating `TR` and `RH` units
             -> Returns Tuple[Tuple[DiffUnit, ...], Tuple[DiffUnit, ...]]
 
-    3. Synchronized Block Decomposition & Conflict Envelope Closure:
-        _build_sync_blocks(tr_units, rh_units) -> _coalesce_sync_blocks(blocks) [Layer 3]
-            - Lockstep Stream Partitioning (_build_sync_blocks):
-                * Walks `tr_units` and `rh_units` simultaneously along `R`
-                * Emits 0-R-length `TR` units (`TR_DELETE`) or 0-R-length `RH` units (`RH_INSERT`)
-                  as standalone point `_SyncBlock`s
-                * Advances across positive-R-length units via _advance_positive_span until both
-                  streams reach a common `R` endpoint (`tr_r_end == rh_r_end`) with no interior
-                  point units, grouping them into a minimal synchronized `_SyncBlock`
-            - Conflict Envelope Closure (_coalesce_sync_blocks):
-                * Merges any adjacent `_SyncBlock`s that both have `is_conflict=True` into a
-                  single contiguous conflict envelope
-            -> Returns List[_SyncBlock]
+    3. Partitioned `R`-Range Conflict Envelope Closure & Span Resolution:
+        _resolve_derender_spans(classified_tr, classified_rh, t_tokens, h_tokens) [Layer 3]
+            - Positive/Zero `R`-Span Partitioning:
+                * Splits `classified_tr` into `(tr_pos, tr_zero)` (`u.unit_type != DELETE`) and
+                  `classified_rh` into `(rh_pos, rh_zero)` (`e.unit_type != INSERT`) via `partition`
+            - Positive-Length Conflict Envelopes (_merge_positive_conflict_r_ranges -> _build_positive_conflict_spans):
+                * Merges strictly overlapping positive conflict `R`-intervals (`cur_s < prev_e`), keeping
+                  merely touching intervals (`cur_s == prev_e`) split as independent smaller envelopes
+                * Selects `tr_pos` and `rh_pos` sub-slices via `bisect` for each merged `[r_start, r_end)`
+                  range, automatically enclosing any strictly interior (`r_start < pt < r_end`)
+                  zero-length units
+            - Zero-Length Conflict Envelopes (_build_zero_conflict_spans):
+                * Collects conflicting `pt` coordinates (`conflict_zero_r_points`) from `tr_zero` and
+                  `rh_zero` not strictly inside any positive conflict range
+                  (`bisect_right(pos_conf_ends, pt) == bisect_left(pos_conf_starts, pt)`)
+                * Selects all `tr_zero` and `rh_zero` units at `pt` via `bisect` and groups them into
+                  a single zero-length conflict `_DerenderSpan` at `R[pt:pt]`
+            - Clean Edit Span Resolution (_build_clean_edit_spans):
+                * Maps non-conflicting positive `rh_pos` edits and clean `rh_zero` insertions to
+                  their `[t_start, t_end)` bounds via `bisect` on `tr_pos`, storing newline-stripped
+                  `replacement` lines and explicit `old_eof_newline` / `new_eof_newline` flags
+            - Returns all active `_DerenderSpan`s sorted canonically by `(r_start, r_end)`
 
     4. Two-Step De-Render Plan Construction (`T -> T_clean -> T_merged`):
         build_two_step_derender_plan(t_lines, r_lines, h_lines) [Layer 4]
             - Tokenizes `T, R, H` (`tokenize_line`), runs hunk fission (`fission_diff_units`),
               refines `1 <-> 1 <-> 1` lines (`refine_single_line_units`), splits `RH` deletes
               (`split_rh_deletes_at_tr_boundaries`), classifies conflicts (`_classify_orthogonal_units`),
-              and builds coalesced `_SyncBlock`s (`_build_sync_blocks` -> `_coalesce_sync_blocks`)
-            - Single-Pass Plan Accumulation (_accumulate_plan):
-                * Conflicting `_SyncBlock`:
-                    - Preserves `t_lines[t_start:t_end]` unchanged inside `t_clean_lines` so Step 1
-                      never mutates conflicting template regions
-                    - Records shifted `[t_clean_start, t_clean_end)` coordinates and `(T, R, H)`
-                      line slices into a Step 2 `ConflictCluster`
-                * Clean `_SyncBlock`:
-                    - Resolves replacement lines via _extract_clean_block_replacement (handling
-                      EOF-newline-only changes on `RH_EQUAL`, `derendered_lines` on
-                      `SINGLE_SKEL_EDIT`, or raw `h_lines[h_start:h_end]`)
-                    - Emits a Step 1 `CleanPatchHunk` (with newline-stripped `old_lines`/`new_lines`
-                      and `old_eof_newline`/`new_eof_newline` flags) and appends `replacement` to
-                      `t_clean_lines`
+              and resolves sorted `_DerenderSpan`s (`_resolve_derender_spans`)
+            - Step 1 Clean Patch & `T_clean` Synthesis:
+                * Maps non-conflicting spans to `CleanPatchHunk`s via `span.to_clean_hunk(t_tokens)`
+                * Applies clean spans onto `t_lines` via `_apply_clean_spans_to_template` to produce
+                  `t_clean_lines` while leaving conflicting template regions untouched
+            - Step 2 Conflict Cluster Anchoring (_anchor_conflict_clusters_to_t_clean):
+                * Computes cumulative Step 1 line-offset shifts via `itertools.accumulate`
+                * Anchors each conflicting `_DerenderSpan` to its shifted `[t_clean_start, t_clean_end)`
+                  coordinates in `t_clean_lines`
             -> Returns TwoStepDerenderPlan(t_lines, t_clean_lines, clean_hunks, conflict_clusters)
 
     5. Display Unified Diff Synthesis & Patch Entry Point:
@@ -90,12 +103,10 @@ Pipeline Architecture:
               read_rendered_baseline_lines (raising `SafeguardError` if `R` is missing)
             - Builds `TwoStepDerenderPlan` via `build_two_step_derender_plan`
             - Synthesizes human-readable preview diff via build_display_unified_diff:
-                * Conflict-free fast path: standard `difflib.unified_diff(t_lines, t_clean_lines)`
-                * Conflict path: substitutes each `ConflictCluster` with unique old/new sentinels
-                  (`"\\x00__DRIFT_CONF_OLD_k__\\n"` / `"\\x00__DRIFT_CONF_NEW_k__\\n"`) carrying
-                  `(-R, +H)` display lines so `SequenceMatcher.get_grouped_opcodes` anchors context
-                  strictly on outer `T` lines and renders hunks via `_format_range_unified` and
-                  `_format_display_opcode`
+                * Splices Step 2 `ConflictCluster` `diff3` marker blocks onto `t_clean_lines` via
+                  `splice_conflict_clusters_diff3` (`adopt_patch.py`) to form `t_merged_lines`
+                * Runs standard `difflib.unified_diff(t_lines, t_merged_lines)` anchored directly
+                  on the raw template `T`
             -> Returns AdoptPatch
 
 -------------------------------------------------------------------------------
@@ -105,20 +116,26 @@ Layers (ordered bottom-up by dependency):
         _split_single_rh_delete
         split_rh_deletes_at_tr_boundaries
     Layer 2: Orthogonal Matrix Classification Along the Shared `R` Axis
-        _is_clean_positive_rh_edit
+        _is_clean_rh_edit_or_delete
+        _eval_rh_edit_or_delete_conflicts
+        _eval_rh_insert_conflicts
         _eval_rh_unit_conflicts
         _classify_orthogonal_units
-    Layer 3: Synchronized Block Decomposition & Conflict Envelope Closure
-        _SyncBlock
-        _advance_positive_span
-        _build_sync_blocks
-        _coalesce_sync_blocks
+    Layer 3: Partitioned `R`-Range Conflict Envelope Closure & Span Resolution
+        _DerenderSpan
+        _resolve_t_point_at_r
+        _resolve_h_point_at_r
+        _merge_positive_conflict_r_ranges
+        _build_positive_conflict_spans
+        _build_zero_conflict_spans
+        _extract_clean_pos_replacement
+        _build_clean_edit_spans
+        _resolve_derender_spans
     Layer 4: Two-Step De-Render Plan Construction (`T -> T_clean -> T_merged`)
-        _extract_clean_block_replacement
+        _apply_clean_spans_to_template
+        _anchor_conflict_clusters_to_t_clean
         build_two_step_derender_plan
     Layer 5: Display Unified Diff Synthesis & Patch Entry Point
-        _format_range_unified
-        _format_display_opcode
         build_display_unified_diff
         read_rendered_baseline_lines
         generate_derendered_patch
@@ -131,6 +148,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, replace
 import difflib
 from functools import reduce
+from itertools import accumulate, chain, starmap
 from pathlib import Path
 from typing import List, Optional, Sequence, Set, Tuple, TYPE_CHECKING
 
@@ -142,14 +160,16 @@ from ..models.adopt_models import (
     DiffRelation,
     DiffUnit,
     DiffUnitType,
+    TokenizedLine,
     TwoStepDerenderPlan,
 )
-from ..utils.func_utils import branch, choose
+from ..utils.func_utils import branch, choose, partition
 from .adopt_fission import (
     fission_diff_units,
     refine_single_line_units,
     tokenize_line,
 )
+from .adopt_patch import splice_conflict_clusters_diff3
 
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderSourceMatch
@@ -187,19 +207,18 @@ def _split_single_rh_delete(
     if not interior:
         return [rh_unit]
     endpoints = [d1, *interior, d2]
-    # TODO: can we use map here?
-    return [
-        DiffUnit(
-            relation=DiffRelation.RH,
-            unit_type=DiffUnitType.DELETE,
-            src_start=endpoints[k],
-            src_end=endpoints[k + 1],
-            dst_start=rh_unit.dst_start,
-            dst_end=rh_unit.dst_end,
-            is_conflict=rh_unit.is_conflict,
-        )
-        for k in range(len(endpoints) - 1)
-    ]
+    return list(map(
+            lambda span: DiffUnit(
+                relation=DiffRelation.RH,
+                unit_type=DiffUnitType.DELETE,
+                src_start=span[0],
+                src_end=span[1],
+                dst_start=rh_unit.dst_start,
+                dst_end=rh_unit.dst_end,
+                is_conflict=rh_unit.is_conflict,
+            ),
+            zip(endpoints[:-1], endpoints[1:]),
+    ))
 
 
 def split_rh_deletes_at_tr_boundaries(
@@ -219,30 +238,25 @@ def split_rh_deletes_at_tr_boundaries(
           one side of the inactive block), the inactive template block remains untouched and
           `is_conflict` stays `False`.
     """
-    tr_starts = tuple(dict.fromkeys(u.r_start for u in tr_units))
-    # TODO: can we use filter->map->join here instead of the nested comprehension? I think it will be more readable
-    enclosed_cut_points = {
-        pt
-        for e in rh_units
-        if e.unit_type == DiffUnitType.DELETE
-        for pt in _get_interior_cut_points(e.r_start, e.r_end, tr_starts)
-    }
-    # case 2.5b has to be tagged before the split of the RH_DELETE
-    # TODO: can we use map here?
-    updated_tr = tuple(
-        choose(
-            u.unit_type == DiffUnitType.DELETE and u.r_start in enclosed_cut_points,
-            replace(u, is_conflict=True),
-            u,
-        )
-        for u in tr_units
-    )
-    # TODO: can we use map and join here instead of the nested comprehension? I think it will be more readable
-    split_rh = tuple(
-        sub_e
-        for e in rh_units
-        for sub_e in _split_single_rh_delete(e, tr_starts)
-    )
+    tr_uniq_starts = tuple(dict.fromkeys(u.r_start for u in tr_units))
+    rh_deletes = filter(lambda e: e.unit_type == DiffUnitType.DELETE, rh_units)
+    enclosed_cut_points = set(chain.from_iterable(map(
+            lambda e: _get_interior_cut_points(e.r_start, e.r_end, tr_uniq_starts),
+            rh_deletes,
+    )))
+    # Case 2.5b has to be tagged before splitting RH_DELETE units
+    updated_tr = tuple(map(
+            lambda u: choose(
+                u.unit_type == DiffUnitType.DELETE and u.r_start in enclosed_cut_points,
+                replace(u, is_conflict=True),
+                u,
+            ),
+            tr_units,
+    ))
+    split_rh = tuple(chain.from_iterable(map(
+            lambda e: _split_single_rh_delete(e, tr_uniq_starts),
+            rh_units
+    )))
     return updated_tr, split_rh
 
 
@@ -251,50 +265,54 @@ def split_rh_deletes_at_tr_boundaries(
 # ==============================================================================
 
 
-def _is_clean_positive_rh_edit(
+def _is_clean_rh_edit_or_delete(
     rh_unit: DiffUnit,
     overlapping_pos_tr: Sequence[DiffUnit],
     enclosed_tr_deletes: Sequence[DiffUnit],
 ) -> bool:
-    """Returns True if a positive-`R`-span `RH` edit (`d_2 > d_1`) is clean under the Orthogonal Matrix.
+    """Returns True if a positive-`R`-span `RH` edit or delete (`d_2 > d_1`) is clean under the Orthogonal Matrix.
 
-    Clean Positive-Span Cases:
-        # TODO: it's not 0.2, it's 1.1 and 2.1 and 4.1
-        # please reference the doc template_adopt_derendering_draft.md for the case numbers
-
-        - **Case 0.2**: All overlapped positive-length `TR` units are `TR_EQUAL` (static lines in `T`),
-          and no `TR_DELETE` is strictly enclosed inside `[d_1, d_2)`.
+    Clean Positive-Span Cases (reference: `docs/features/template_adopt_derendering_draft.md` §3.4):
+        - **Cases 1.1, 2.1 (on `TR_EQUAL`), & 4.1**: All overlapped positive-length `TR` units are
+          `TR_EQUAL` (static lines in `T`), and no `TR_DELETE` is strictly enclosed inside `[d_1, d_2)`.
         - **Case 1.2**: `rh_unit` is a `SINGLE_SKEL_EDIT` whose `R`-span matches a single
           `TR_SINGLE_EDIT` unit `1 <-> 1`.
-        - **Case 1.4 & Case 2.4**: `rh_unit` is an `RH_DELETE` whose `R`-span exactly equals the
-          entire `[r_start, r_end)` span of a single `TR_SINGLE_EDIT` (Case 1.4) or `TR_BLOCK_EDIT`
-          (Case 2.4), meaning the entire templated line or block can be cleanly deleted from `T`.
+        - **Case 2.1 (on `TR_SINGLE_EDIT`) & Case 2.2**: `rh_unit` is an `RH_DELETE` whose `R`-span
+          exactly equals the entire `[r_start, r_end)` span of a single `TR_SINGLE_EDIT` (Case 2.1)
+          or `TR_BLOCK_EDIT` (Case 2.2), meaning the entire templated line or block can be cleanly
+          deleted from `T`.
 
-    All other positive-span interactions (e.g., Case 1.3 token collision, Case 2.2 partial deletion
-    of a `TR_BLOCK_EDIT`, Case 2.3 modification inside a `TR_BLOCK_EDIT`, or Case 2.5b enclosed
-    `TR_DELETE`) return `False` (conflict).
+    Conflict Positive-Span Cases (returns `False`):
+        - **Case 1.3**: `rh_unit.is_conflict` is already `True` (token collision on `1 <-> 1 <-> 1`
+          flagged by `refine_single_line_units`).
+        - **Case 1.4**: `RH_SINGLE_EDIT` / `RH_SINGLE_SKEL_EDIT` overlapping a `TR_BLOCK_EDIT` or `TR_INSERT`.
+        - **Case 2.3**: `RH_DELETE` partially covering a multi-line `TR_BLOCK_EDIT` (`not exact_r_match`).
+        - **Case 2.4**: `RH_DELETE` (complete or partial) over a `TR_INSERT` ($0 \to N$).
+        - **Case 4.2**: `RH_BLOCK_EDIT` touching any non-`TR_EQUAL` unit (`TR_SINGLE_EDIT`,
+          `TR_BLOCK_EDIT`, `TR_INSERT`) or enclosing a `TR_DELETE` (`enclosed_tr_deletes`).
     """
-
-    # is_conflict is for 2.5b, enclosed_tr_deletes is for TR_DELETE in RH_SINGLE/BLOCK_EDIT
-    # TODO: the doc template_adopt_derendering_draft.md doesn't cover TR_DELETE in RH_EDIT.
+    # rh_unit.is_conflict catches Case 1.3 (1 <-> 1 <-> 1 token collision from Layer 1a-1);
+    # enclosed_tr_deletes catches Case 4.2 when an RH_BLOCK_EDIT encloses a 0-R-length TR_DELETE.
     if rh_unit.is_conflict or enclosed_tr_deletes:
         return False
     if not overlapping_pos_tr:
         return True
 
-    # Case 0.2: All overlapped positive TR units are TR_EQUAL
+    # Cases 1.1 (RH_SINGLE_EDIT), 2.1 (RH_DELETE on TR_EQUAL), & 4.1 (RH_BLOCK_EDIT):
+    # All overlapped positive TR units are TR_EQUAL
     if all(u.unit_type == DiffUnitType.EQUAL for u in overlapping_pos_tr):
         return True
 
-    # there will always be at least one overlapping TR unit for any given range in R.
-    # more than one means the edit/delete hunk is crossing the border of indivisible TR units
-    # which is a conflict.
+    # Case 4.2 (multi-unit): RH_BLOCK_EDIT crosses the boundary of multiple TR units
+    # where at least one unit is non-TR_EQUAL.
     if len(overlapping_pos_tr) != 1:
         return False
 
     tr_u = overlapping_pos_tr[0]
-    exact_r_match = (rh_unit.r_start == tr_u.r_start and rh_unit.r_end == tr_u.r_end)
-    # not exact_r_match means the RH hunk is inside one larger indivisible TR unit.
+    exact_r_match = rh_unit.r_start == tr_u.r_start and rh_unit.r_end == tr_u.r_end
+    # Partial overlap inside a larger indivisible TR_BLOCK_EDIT or TR_INSERT:
+    # catches Case 1.4 (multi-line), Case 2.3 (partial RH_DELETE on TR_BLOCK_EDIT),
+    # Case 2.4 (partial RH_DELETE on TR_INSERT), and Case 4.2 (partial RH_BLOCK_EDIT).
     if not exact_r_match:
         return False
 
@@ -305,99 +323,123 @@ def _is_clean_positive_rh_edit(
     ):
         return True
 
-    # Case 1.4 & Case 2.4: Complete deletion of TR_SINGLE_EDIT or TR_BLOCK_EDIT
+    # Case 2.1 (on TR_SINGLE_EDIT) & Case 2.2 (complete deletion of TR_BLOCK_EDIT)
     if rh_unit.unit_type == DiffUnitType.DELETE and tr_u.unit_type in (
         DiffUnitType.SINGLE_EDIT,
         DiffUnitType.BLOCK_EDIT,
     ):
         return True
-    
-    # TODO: please list all the possible cases here, like RH_DELETE over TR_INSERT and so on
+
+    # Remaining exact-R-match conflict cases:
+    # - Case 1.3: RH_SINGLE_EDIT on TR_SINGLE_EDIT (also caught above by rh_unit.is_conflict)
+    # - Case 1.4 (1-line): RH_SINGLE_EDIT / RH_SINGLE_SKEL_EDIT on 1-line TR_BLOCK_EDIT or TR_INSERT
+    # - Case 2.4 (complete): RH_DELETE over TR_INSERT (0 -> N block has 0 lines in T)
+    # - Case 4.2 (single-unit): RH_BLOCK_EDIT over TR_SINGLE_EDIT, TR_BLOCK_EDIT, or TR_INSERT
     return False
 
 
-def _eval_rh_unit_conflicts(
-    j: int,
-    e: DiffUnit,
+def _eval_rh_edit_or_delete_conflicts(
+    rh_idx: int,
+    rh_unit: DiffUnit,
     tr_units: Sequence[DiffUnit],
     tr_r_starts: Sequence[int],
     tr_r_ends: Sequence[int],
 ) -> Tuple[Set[int], Set[int]]:
-    """Computes `(conflicting_tr_indices, conflicting_rh_indices)` induced by `rh_units[j]`.
+    """Evaluates positive-R-span `RH` edits and deletes (`d_2 > d_1`) against `tr_units`.
+
+    - `overlap_idx_range = range(bisect_right(tr_r_ends, d_1), bisect_left(tr_r_starts, d_2))`
+      bounds all `TR` units with `u.r_end > d_1` and `u.r_start < d_2`, including any `TR`
+      units strictly enclosed inside `(d_1, d_2)`.
+    - `interior_idx_range = range(bisect_right(tr_r_starts, d_1), bisect_left(tr_r_ends, d_2))`
+      bounds all `TR` units strictly inside `(d_1, d_2)` (`d_1 < u.r_start <= u.r_end < d_2`).
+    """
+    d1, d2 = rh_unit.r_start, rh_unit.r_end
+    overlap_idx_range = range(bisect_right(tr_r_ends, d1), bisect_left(tr_r_starts, d2))
+    interior_idx_range = range(bisect_right(tr_r_starts, d1), bisect_left(tr_r_ends, d2))
+    overlapping_pos_tr = tuple(filter(
+        lambda u: u.unit_type != DiffUnitType.DELETE,
+        map(lambda i: tr_units[i], overlap_idx_range),
+    ))
+    enclosed_tr_dels = tuple(filter(
+        lambda u: u.unit_type == DiffUnitType.DELETE,
+        map(lambda i: tr_units[i], interior_idx_range),
+    ))
+    return branch(
+        _is_clean_rh_edit_or_delete(rh_unit, overlapping_pos_tr, enclosed_tr_dels),
+        lambda: (set(), set()),
+        lambda: (set(overlap_idx_range), {rh_idx}),
+    )
+
+
+def _eval_rh_insert_conflicts(
+    rh_idx: int,
+    r_insert_point: int,
+    tr_r_starts: Sequence[int],
+    tr_r_ends: Sequence[int],
+) -> Tuple[Set[int], Set[int]]:
+    """Evaluates Cases 3.1–3.5 for a pure `RH_INSERT` at `r_insert_point` on the `R` axis.
+    Returns empty sets if `rh_unit` is clean, otherwise returns the index sets of all conflicting
+    `tr_units` and `rh_units` (the latter always has length 0 or 1).
+
+    - **Cases 3.2 & 3.4 (Conflict)**: `inside_tr_idx` (`u.r_start < r_insert_point < u.r_end`)
+      contains 1 item when `r_insert_point` falls strictly inside a multi-line `TR_BLOCK_EDIT`
+      (Case 3.2) or `TR_INSERT` (Case 3.4). Because `r_insert_point` is strictly interior, no
+      `TR` unit can have `r_start == r_insert_point == r_end`, so we return immediately.
+    - **Case 3.3 (Conflict)**: `tr_del_idx`
+      (`range(bisect_left(tr_r_starts, r_insert_point), bisect_right(tr_r_ends, r_insert_point))`)
+      bounds all `TR` units satisfying `u.r_start == r_insert_point == u.r_end` (i.e. 0-R-length
+      `TR_DELETE` units at `r_insert_point`). Touching a `TR_DELETE` induces a 1-to-many
+      loss-of-anchor conflict.
+    - **Cases 3.1 & 3.5 (Clean)**: Otherwise `r_insert_point` lies on an exterior boundary of
+      `TR_EQUAL` / `TR_SINGLE_EDIT` / `TR_BLOCK_EDIT` (Case 3.1) or `TR_INSERT` (Case 3.5) with
+      no `TR_DELETE` at `r_insert_point`.
+    """
+    inside_tr_idx = range(
+        bisect_right(tr_r_ends, r_insert_point),
+        bisect_left(tr_r_starts, r_insert_point),
+    )
+    if inside_tr_idx:
+        return (set(inside_tr_idx), {rh_idx})
+
+    tr_del_idx = range(
+        bisect_left(tr_r_starts, r_insert_point),
+        bisect_right(tr_r_ends, r_insert_point),
+    )
+    return choose(
+        bool(tr_del_idx),
+        (set(tr_del_idx), {rh_idx}),
+        (set(), set()),
+    )
+
+
+def _eval_rh_unit_conflicts(
+    rh_idx: int,
+    rh_unit: DiffUnit,
+    tr_units: Sequence[DiffUnit],
+    tr_r_starts: Sequence[int],
+    tr_r_ends: Sequence[int],
+) -> Tuple[Set[int], Set[int]]:
+    """Computes `(conflicting_tr_indices, conflicting_rh_indices)` induced by `rh_units[rh_idx]`.
+    Returns empty sets if `rh_unit` is clean, otherwise returns the index sets of all conflicting
+    `tr_units` and `rh_units` (the latter always has length 0 or 1).
 
     Uses `bisect` over the monotonically non-decreasing `tr_r_starts` and `tr_r_ends` sequences
     to locate overlapping and enclosed `TR` units in O(log M) time across two geometric regimes:
-        1. **Positive-R-Span Edit (`d_2 > d_1`)**:
-           - `overlap_range = range(bisect_right(tr_r_ends, d_1), bisect_left(tr_r_starts, d_2))`
-             bounds all `TR` units with `u.r_end > d_1` and `u.r_start < d_2`.
-           - `interior_range = range(bisect_right(tr_r_starts, d_1), bisect_left(tr_r_starts, d_2))`
-             bounds all `TR` units with `d_1 < u.r_start < d_2`.
-        2. **Zero-R-Span Pure Insertion (`d_1 == d_2 = d`, `RH_INSERT`)**:
-           - **Case 3.2 (Conflict)**: `range(bisect_right(tr_r_ends, d), bisect_left(tr_r_starts, d))`
-             identifies all `TR` units strictly containing `d` (`u.r_start < d < u.r_end`).
-           - **Case 3.3 (Conflict)**: `range(bisect_left(tr_r_ends, d), bisect_right(tr_r_starts, d))`
-             bounds all `TR` units touching `d` (`u.r_start == d` or `u.r_end == d`).
+        1. **Positive-R-Span Edit or Delete (`d_2 > d_1`)**: Delegates to `_eval_rh_edit_or_delete_conflicts`.
+        2. **Zero-R-Span Pure Insertion (`d_1 == d_2 = d`, `RH_INSERT`)**: Delegates to
+           `_eval_rh_insert_conflicts` for Cases 3.1–3.5.
     """
-    if e.unit_type == DiffUnitType.EQUAL:
+    if rh_unit.unit_type == DiffUnitType.EQUAL:
         return (set(), set())
 
-    d1, d2 = e.r_start, e.r_end
-    if d2 > d1:
-        # Positive-R-Span Hunk Except Equal (Edit, Delete)
-        overlap_range = range(bisect_right(tr_r_ends, d1), bisect_left(tr_r_starts, d2))
-        # TODO: I think we should use tr_r_ends in the right index to find real interior
-        # although it's the same to Delete units since they are 0-length
-        interior_range = range(bisect_right(tr_r_starts, d1), bisect_left(tr_r_starts, d2))
-        overlapping_pos_idx = [
-            i
-            for i in overlap_range
-            if tr_units[i].r_end > tr_units[i].r_start
-            # TODO: can we just use tr_units[i].unit_type != DiffUnitType.DELETE here instead of checking length?
-            # and we can call filter()
-        ]
-        enclosed_del_idx = [
-            i
-            for i in interior_range
-            if tr_units[i].unit_type == DiffUnitType.DELETE
-            # TODO: we can call filter()
-        ]
-        # TODO: we can just move the filter call into following two expressions.
-        # filter the tr_units with (i in overlap_range and type != DELETE) and (i in interior_range and type == DELETE)
-        # and i think rename overlap_range -> overlap_idx_range, interior_range -> interior_idx_range
-        overlapping_pos_tr = [tr_units[i] for i in overlapping_pos_idx]
-        enclosed_tr_dels = [tr_units[i] for i in enclosed_del_idx]
-        return branch(
-            # TODO: don't call it positive edit , call it (edit or delete) may be better
-            # _is_clean_rh_edit_or_delete
-            _is_clean_positive_rh_edit(e, overlapping_pos_tr, enclosed_tr_dels),
-            lambda: (set(), set()),
-            lambda: ({*overlapping_pos_idx, *enclosed_del_idx}, {j}),
-        )
-
-    # TODO: please extract the following code into a separate function, like _eval_rh_insert_conflicts
-    # Pure insertion (DiffUnitType.INSERT) at point d = d1 = d2 (Cases 3.1, 3.2, 3.3)
-    d = d1
-    # TODO: maybe rename to inside_tr_idx, there could only be 0 or 1 item. if this is not empty, then it's a
-    # conflict. we can skip the touching_range checks and just set it to empty set
-    interior_tr_idx = list(
-        range(bisect_right(tr_r_ends, d), bisect_left(tr_r_starts, d))
-    )
-    # TODO: this can be many hunks, but only when inside_tr_idx is empty.
-    # actually, the condition should be tr_r_ends == d or tr_r_starts == d, it's an accurate binary search?
-    touching_range = range(
-        bisect_left(tr_r_ends, d),
-        bisect_right(tr_r_starts, d),
-    )
-    touching_degenerate_tr_idx = [
-        i
-        for i in touching_range
-        if tr_units[i].unit_type in (DiffUnitType.DELETE, DiffUnitType.INSERT)
-        and (tr_units[i].r_start == d or tr_units[i].r_end == d)
-    ]
-    return choose(
-        bool(interior_tr_idx or touching_degenerate_tr_idx),
-        ({*interior_tr_idx, *touching_degenerate_tr_idx}, {j}),
-        (set(), set()),
+    return branch(
+        rh_unit.r_end > rh_unit.r_start,
+        lambda: _eval_rh_edit_or_delete_conflicts(
+            rh_idx, rh_unit, tr_units, tr_r_starts, tr_r_ends
+        ),
+        lambda: _eval_rh_insert_conflicts(
+            rh_idx, rh_unit.r_start, tr_r_starts, tr_r_ends
+        ),
     )
 
 
@@ -406,56 +448,52 @@ def _classify_orthogonal_units(
     rh_units: Sequence[DiffUnit],
 ) -> Tuple[Tuple[DiffUnit, ...], Tuple[DiffUnit, ...]]:
     """Classifies all `TR` and `RH` units along the `R` axis according to Orthogonal Matrix Cases `0.1–4.2`.
+    Returning updated `(tr_units, rh_units)` tuples with `is_conflict=True` on all conflicting units.
 
     Unions pre-existing conflict flags (from Layer 1a-1 Case 1.3 token collisions and Stage 1
     Case 2.5b enclosed `TR_DELETE`s) with the conflict index sets computed by `_eval_rh_unit_conflicts`,
-    returning updated `(tr_units, rh_units)` tuples with `is_conflict=True` on all conflicting units.
     """
-    init_tr = {idx for idx, u in enumerate(tr_units) if u.is_conflict}
-    init_rh = {idx for idx, e in enumerate(rh_units) if e.is_conflict}
     tr_r_starts = [u.r_start for u in tr_units]
     tr_r_ends = [u.r_end for u in tr_units]
+    # per_rh_sets: list of tuples of sets (conflicting_tr_indices, rh_indices(with len 0 or 1)) for each rh_unit
+    # the item can be empty sets.
     per_rh_sets = [
-        _eval_rh_unit_conflicts(j, e, tr_units, tr_r_starts, tr_r_ends)
-        for j, e in enumerate(rh_units)
+        _eval_rh_unit_conflicts(rh_idx, rh_unit, tr_units, tr_r_starts, tr_r_ends)
+        for rh_idx, rh_unit in enumerate(rh_units)
     ]
-    conflict_tr_indices = reduce(
-        lambda acc, pair: acc | pair[0], per_rh_sets, init_tr
-    )
-    conflict_rh_indices = reduce(
-        lambda acc, pair: acc | pair[1], per_rh_sets, init_rh
-    )
+    init_tr = {idx for idx, u in enumerate(tr_units) if u.is_conflict}
+    init_rh = {idx for idx, e in enumerate(rh_units) if e.is_conflict}
+    conflict_tuples = [*per_rh_sets, (init_tr, init_rh)]
+    conflict_tr_indices = set(chain.from_iterable(map(lambda pair: pair[0], conflict_tuples)))
+    conflict_rh_indices = set(chain.from_iterable(map(lambda pair: pair[1], conflict_tuples)))
     return (
-        tuple(
-            choose(i in conflict_tr_indices, replace(u, is_conflict=True), u)
-            for i, u in enumerate(tr_units)
-        ),
-        tuple(
-            choose(j in conflict_rh_indices, replace(e, is_conflict=True), e)
-            for j, e in enumerate(rh_units)
-        ),
+        tuple(starmap(
+            lambda tr_idx, u: choose(tr_idx in conflict_tr_indices, replace(u, is_conflict=True), u),
+            enumerate(tr_units)
+        )),
+        tuple(starmap(
+            lambda rh_idx, e: choose(rh_idx in conflict_rh_indices, replace(e, is_conflict=True), e),
+            enumerate(rh_units)
+        )),
     )
 
 
 # ==============================================================================
-# Layer 3: Synchronized Block Decomposition & Conflict Envelope Closure
+# Layer 3: Partitioned `R`-Range Conflict Envelope Closure & Span Resolution
 # ==============================================================================
 
 
 @dataclass(frozen=True)
-class _SyncBlock:
-    """Minimal synchronized span across `(T, R, H)` bounded by aligned `R`-axis unit endpoints.
+class _DerenderSpan:
+    """Resolved `(T, R, H)` span representing either a Step 1 clean edit or a Step 2 conflict envelope.
 
-    Attributes:
-        t_start: 0-based start line index in `T`.
-        t_end: 0-based end line index (exclusive) in `T`.
-        r_start: 0-based start line index in `R`.
-        r_end: 0-based end line index (exclusive) in `R`.
-        h_start: 0-based start line index in `H`.
-        h_end: 0-based end line index (exclusive) in `H`.
-        tr_slice: Contiguous slice of `TR` `DiffUnit`s covering `[t_start, t_end) <-> [r_start, r_end)`.
-        rh_slice: Contiguous slice of `RH` `DiffUnit`s covering `[r_start, r_end) <-> [h_start, h_end)`.
-        is_conflict: True if any unit in `tr_slice` or `rh_slice` is marked `is_conflict=True`.
+    Ordered canonically by `(r_start, r_end)` along the shared `R` coordinate axis:
+        - Point spans `(d, d)` at boundary `d` naturally sort before `[d, r_2)` (`(d, d) < (d, r_2)`)
+          and after `[r_1, d)` (`(r_1, d) < (d, d)`).
+        - Across any sorted sequence of disjoint `_DerenderSpan`s, `span_k.t_end <= span_{k+1}.t_start`
+          holds monotonically on `T`.
+        - For clean spans (`is_conflict == False`), `replacement` stores newline-stripped lines
+          alongside explicit `old_eof_newline` and `new_eof_newline` flags.
     """
     t_start: int
     t_end: int
@@ -463,214 +501,398 @@ class _SyncBlock:
     r_end: int
     h_start: int
     h_end: int
-    tr_slice: Tuple[DiffUnit, ...]
-    rh_slice: Tuple[DiffUnit, ...]
     is_conflict: bool
+    replacement: Tuple[str, ...] = ()
+    old_eof_newline: bool = True
+    new_eof_newline: bool = True
+
+    def to_clean_hunk(self, t_tokens: Sequence[TokenizedLine]) -> CleanPatchHunk:
+        """Converts a non-conflicting span directly into a Step 1 `CleanPatchHunk`."""
+        return CleanPatchHunk(
+            t_start=self.t_start,
+            t_end=self.t_end,
+            old_lines=tuple(t.stripped_line for t in t_tokens[self.t_start : self.t_end]),
+            new_lines=self.replacement,
+            old_eof_newline=self.old_eof_newline,
+            new_eof_newline=self.new_eof_newline,
+        )
 
 
-def _advance_positive_span(
-    tr_units: Sequence[DiffUnit],
-    rh_units: Sequence[DiffUnit],
-    i_start: int,
-    j_start: int,
-) -> Tuple[int, int]:
-    """Advances `(i_end, j_end)` from `(i_start, j_start)` until `TR` and `RH` reach a shared `R` endpoint.
-
-    Whenever a multi-line `TR` unit (e.g. a 1-to-3 loop expansion `R[0:3]`) overlaps multiple `RH`
-    units (or vice versa), this helper advances whichever stream lags behind on the `R` axis—and
-    absorbs any 0-R-length point units (`r_start == r_end`) strictly inside the span—until
-    `tr_r_end == rh_r_end`.
+def _resolve_t_point_at_r(
+    r_point: int,
+    tr_pos: Sequence[DiffUnit],
+    tr_pos_starts: Sequence[int],
+) -> int:
+    """Resolves an exterior `R`-boundary coordinate `r_point` (with no `TR_DELETE` at `r_point`)
+    to its corresponding 0-based line coordinate in `T` in O(log M) time.
     """
-    i_end = i_start + 1
-    j_end = j_start + 1
-    tr_r_end = tr_units[i_start].r_end
-    rh_r_end = rh_units[j_start].r_end
+    idx = bisect_left(tr_pos_starts, r_point)
+    return branch(idx > 0, lambda: tr_pos[idx - 1].src_end, lambda: 0)
 
-    while tr_r_end != rh_r_end or (
-        i_end < len(tr_units)
-        and tr_units[i_end].r_start == tr_units[i_end].r_end
-        and tr_units[i_end].r_start < max(tr_r_end, rh_r_end)
-    ) or (
-        j_end < len(rh_units)
-        and rh_units[j_end].r_start == rh_units[j_end].r_end
-        and rh_units[j_end].r_start < max(tr_r_end, rh_r_end)
+
+def _resolve_h_point_at_r(
+    r_point: int,
+    rh_pos: Sequence[DiffUnit],
+    rh_pos_starts: Sequence[int],
+) -> int:
+    """Resolves an exterior `R`-boundary coordinate `r_point` (with no `RH_INSERT` at `r_point`)
+    to its corresponding 0-based line coordinate in `H` in O(log N) time.
+    """
+    idx = bisect_left(rh_pos_starts, r_point)
+    return branch(idx > 0, lambda: rh_pos[idx - 1].dst_end, lambda: 0)
+
+
+def _merge_positive_conflict_r_ranges(
+    tr_pos: Sequence[DiffUnit],
+    rh_pos: Sequence[DiffUnit],
+) -> Tuple[Tuple[int, int], ...]:
+    """Computes merged positive-length conflict `[r_start, r_end)` intervals on the `R` axis.
+
+    Two sorted positive conflict intervals `(prev_s, prev_e)` and `(cur_s, cur_e)` merge only when
+    they strictly overlap (`cur_s < prev_e`). Intervals that merely touch (`cur_s == prev_e`) have
+    a synchronized `(T, R, H)` boundary at `prev_e` and remain split as independent, finer-grained
+    conflict blocks.
+    """
+    raw_ranges = sorted(map(
+        lambda u: (u.r_start, u.r_end),
+        filter(lambda u: u.is_conflict, chain(tr_pos, rh_pos)),
+    ))
+
+    def _step(
+        acc: List[Tuple[int, int]],
+        span: Tuple[int, int],
+    ) -> List[Tuple[int, int]]:
+        if acc and span[0] < acc[-1][1]:
+            return [*acc[:-1], (acc[-1][0], max(acc[-1][1], span[1]))]
+        return [*acc, span]
+
+    return tuple(reduce(_step, raw_ranges, []))
+
+
+def _build_positive_conflict_spans(
+    positive_conflict_ranges: Sequence[Tuple[int, int]],
+    tr_pos: Sequence[DiffUnit],
+    tr_pos_starts: Sequence[int],
+    tr_pos_ends: Sequence[int],
+    rh_pos: Sequence[DiffUnit],
+    rh_pos_starts: Sequence[int],
+    rh_pos_ends: Sequence[int],
+) -> Tuple[_DerenderSpan, ...]:
+    """Selects `tr_pos` and `rh_pos` slices via `bisect` for each merged positive conflict `R`-range.
+
+    Because `tr_sub[0].src_start .. tr_sub[-1].src_end` and `rh_sub[0].dst_start .. rh_sub[-1].dst_end`
+    span the entire `(T, R, H)` interval between the first and last positive units in `[r_start, r_end)`,
+    any zero-length units strictly inside `(r_start, r_end)` (`r_start < pt < r_end`) are enclosed
+    automatically.
+    """
+    tr_subs = map(
+        lambda r: tr_pos[bisect_right(tr_pos_ends, r[0]) : bisect_left(tr_pos_starts, r[1])],
+        positive_conflict_ranges,
+    )
+    rh_subs = map(
+        lambda r: rh_pos[bisect_right(rh_pos_ends, r[0]) : bisect_left(rh_pos_starts, r[1])],
+        positive_conflict_ranges,
+    )
+    return tuple(starmap(
+        lambda r_span, tr_sub, rh_sub: _DerenderSpan(
+            t_start=tr_sub[0].src_start,
+            t_end=tr_sub[-1].src_end,
+            r_start=r_span[0],
+            r_end=r_span[1],
+            h_start=rh_sub[0].dst_start,
+            h_end=rh_sub[-1].dst_end,
+            is_conflict=True,
+        ),
+        zip(positive_conflict_ranges, tr_subs, rh_subs),
+    ))
+
+
+def _build_zero_conflict_spans(
+    tr_zero: Sequence[DiffUnit],
+    rh_zero: Sequence[DiffUnit],
+    pos_conf_starts: Sequence[int],
+    pos_conf_ends: Sequence[int],
+    tr_pos: Sequence[DiffUnit],
+    tr_pos_starts: Sequence[int],
+    rh_pos: Sequence[DiffUnit],
+    rh_pos_starts: Sequence[int],
+) -> Tuple[_DerenderSpan, ...]:
+    """Groups conflicting zero-length units outside `(r_start, r_end)` by their `R`-coordinate `pt`.
+
+    At any boundary point `pt` not strictly inside a positive conflict envelope
+    (`bisect_right(pos_conf_ends, pt) == bisect_left(pos_conf_starts, pt)`), if any zero-length
+    unit at `pt` is conflicting, all zero-length units at `R[pt]` are conflicting (Case 3.3 / 2.5b)
+    and are grouped into a single zero-length conflict envelope at `R[pt:pt]`.
+    """
+    def _is_uncovered_zero_conflict(z: DiffUnit) -> bool:
+        return (
+            z.is_conflict
+            and bisect_right(pos_conf_ends, z.r_start) == bisect_left(pos_conf_starts, z.r_start)
+        )
+
+    conflict_zero_r_points = sorted(set(map(
+        lambda z: z.r_start,
+        filter(_is_uncovered_zero_conflict, chain(tr_zero, rh_zero)),
+    )))
+
+    tr_zero_pts = [u.r_start for u in tr_zero]
+    rh_zero_pts = [e.r_start for e in rh_zero]
+
+    def build_span_at_r_point(pt: int) -> _DerenderSpan:
+        tr_z_sub = tr_zero[bisect_left(tr_zero_pts, pt) : bisect_right(tr_zero_pts, pt)]
+        rh_z_sub = rh_zero[bisect_left(rh_zero_pts, pt) : bisect_right(rh_zero_pts, pt)]
+        t_start, t_end = branch(
+            bool(tr_z_sub),
+            lambda: (tr_z_sub[0].src_start, tr_z_sub[-1].src_end),
+            lambda: (_resolve_t_point_at_r(pt, tr_pos, tr_pos_starts),) * 2,
+        )
+        h_start, h_end = branch(
+            bool(rh_z_sub),
+            lambda: (rh_z_sub[0].dst_start, rh_z_sub[-1].dst_end),
+            lambda: (_resolve_h_point_at_r(pt, rh_pos, rh_pos_starts),) * 2,
+        )
+        return _DerenderSpan(
+            t_start=t_start,
+            t_end=t_end,
+            r_start=pt,
+            r_end=pt,
+            h_start=h_start,
+            h_end=h_end,
+            is_conflict=True,
+        )
+
+    return tuple(map(build_span_at_r_point, conflict_zero_r_points))
+
+
+def _extract_clean_pos_replacement(
+    rh_unit: DiffUnit,
+    t_start: int,
+    t_end: int,
+    t_tokens: Sequence[TokenizedLine],
+    h_tokens: Sequence[TokenizedLine],
+) -> Optional[Tuple[str, ...]]:
+    """Computes the newline-stripped replacement lines for a clean positive-R-span `rh_unit`, or `None` if unchanged.
+
+    Handles three clean replacement modes:
+        1. **EOF-Newline-Only Drift on `RH_EQUAL`**: When `rh_unit` is at EOF and `H`'s final line
+           gained/lost a trailing newline relative to `T`, returns newline-stripped `t_tokens[t_start:t_end]`
+           (the EOF newline change itself is carried by `_DerenderSpan.new_eof_newline`); otherwise `None`.
+        2. **De-Rendered Skeleton Edit (`SINGLE_SKEL_EDIT`, Case 1.2)**: Returns newline-stripped
+           `derendered_lines` (`H'`) computed by Layer 1a-1 token calculus.
+        3. **Static Edit / Full Block Deletion (Cases 1.1, 2.1, 2.2, 4.1)**: Returns
+           `tuple(h.stripped_line for h in h_tokens[rh_unit.dst_start : rh_unit.dst_end])` (`()` for deletions).
+    """
+    if rh_unit.unit_type == DiffUnitType.EQUAL:
+        is_eof_nl_diff = (
+            # touches file ends
+            t_end == len(t_tokens) and rh_unit.dst_end == len(h_tokens)
+            # non-empty T span (guards against Case 4.1 TR_INSERT + RH_EQUAL at EOF where t_start == t_end)
+            and t_end > t_start
+            # eof nl difference
+            and t_tokens[t_end - 1].has_newline != h_tokens[rh_unit.dst_end - 1].has_newline
+        )
+        if not is_eof_nl_diff:
+            return None
+        return tuple(t.stripped_line for t in t_tokens[t_start:t_end])
+
+    if (
+        rh_unit.unit_type == DiffUnitType.SINGLE_SKEL_EDIT
+        and rh_unit.derendered_lines
     ):
-        if (
-            i_end < len(tr_units)
-            and tr_units[i_end].r_start == tr_units[i_end].r_end
-            and tr_units[i_end].r_start < max(tr_r_end, rh_r_end)
-        ):
-            i_end += 1
-        elif (
-            j_end < len(rh_units)
-            and rh_units[j_end].r_start == rh_units[j_end].r_end
-            and rh_units[j_end].r_start < max(tr_r_end, rh_r_end)
-        ):
-            j_end += 1
-        elif tr_r_end < rh_r_end and i_end < len(tr_units):
-            tr_r_end = max(tr_r_end, tr_units[i_end].r_end)
-            i_end += 1
-        elif rh_r_end < tr_r_end and j_end < len(rh_units):
-            rh_r_end = max(rh_r_end, rh_units[j_end].r_end)
-            j_end += 1
-        else:
-            break
+        return rh_unit.derendered_lines
 
-    return i_end, j_end
+    return tuple(h.stripped_line for h in h_tokens[rh_unit.dst_start : rh_unit.dst_end])
 
 
-def _build_sync_blocks(
-    tr_units: Sequence[DiffUnit],
-    rh_units: Sequence[DiffUnit],
-) -> List[_SyncBlock]:
-    """Partitions `(tr_units, rh_units)` into a sequence of minimal `R`-synchronized `_SyncBlock`s.
+def _build_clean_edit_spans(
+    rh_pos: Sequence[DiffUnit],
+    rh_zero: Sequence[DiffUnit],
+    pos_conf_starts: Sequence[int],
+    pos_conf_ends: Sequence[int],
+    tr_pos: Sequence[DiffUnit],
+    tr_pos_starts: Sequence[int],
+    tr_pos_ends: Sequence[int],
+    t_tokens: Sequence[TokenizedLine],
+    h_tokens: Sequence[TokenizedLine],
+) -> Tuple[_DerenderSpan, ...]:
+    """Resolves all non-conflicting `rh_pos` and `rh_zero` edits into clean `_DerenderSpan`s via `bisect`.
 
-    Walks `tr_units` (index `i`) and `rh_units` (index `j`) in lockstep:
-    1. Leading 0-R-length `TR` units (`TR_DELETE` where `r_start == r_end`) emit a `[t_start, t_end)`
-       block with an empty `H` slice `[h_cur, h_cur)`.
-    2. Leading 0-R-length `RH` units (`RH_INSERT` where `r_start == r_end`) emit an `[h_start, h_end)`
-       block anchored at `[t_cur, t_cur)` in `T`.
-    3. Positive-R-length units on both sides advance together via `_advance_positive_span` until
-       their `R` endpoints coincide, forming a synchronized `(T, R, H)` block.
+    Pipeline Stages:
+        1. **Positive-`R`-Length Clean Edits (`pos_clean_spans` — Cases 1.1, 1.2, 2.1, 2.3, 2.4, and EOF-newline drift)**:
+           - **Candidate Filtering (`candidate_pos_rh`)**: Keeps `rh_pos` units `e` that are either
+             non-`EQUAL` or touch the end of `H` (`e.dst_end == len(h_tokens)`, to detect EOF-newline-only
+             drift), AND are strictly disjoint from every merged positive conflict interval in
+             `[pos_conf_starts, pos_conf_ends)` (`bisect_right(pos_conf_ends, e.r_start) == bisect_left(pos_conf_starts, e.r_end)`).
+           - **`R -> T` Range Projection (`pos_t_ranges`)**: Slices the overlapping `tr_pos` units via
+             `bisect` to project `[e.r_start, e.r_end)` onto `[t_start, t_end) = (tr_sub[0].src_start, tr_sub[-1].src_end)`.
+             Any boundary `TR_DELETE` (`tr_zero`) outside `tr_sub` is naturally excluded and preserved in `T`.
+           - **Replacement Extraction (`pos_replacements` / `valid_pos_clean`)**: Calls
+             `_extract_clean_pos_replacement` to obtain the newline-stripped replacement lines (`H'` for
+             `SINGLE_SKEL_EDIT`, `H` slice for static edits/deletions, or `T` slice for EOF-newline-only
+             drift), dropping `None` (unchanged `RH_EQUAL` at EOF).
+        2. **Zero-`R`-Length Clean Insertions (`zero_clean_spans` — Cases 3.1 and 3.5)**:
+           - Non-conflicting `tr_zero` (`TR_DELETE`) units require no span because unrendered template
+             blocks remain untouched in `T`. If a `TR_DELETE` and `RH_INSERT` ever share the same `R`
+             point `pt` (Case 3.3), Layer 2 marks both as conflicts.
+           - Thus, every non-conflicting unit in `rh_zero` is a pure `RH_INSERT` at an `R`-boundary `pt`
+             with no `TR_DELETE`. Each unique `pt` is projected to a single insertion point
+             `t_pt = _resolve_t_point_at_r(pt, tr_pos, tr_pos_starts)` in `T` and paired with the
+             inserted host lines `h_tokens[rh_z_sub[0].dst_start : rh_z_sub[-1].dst_end]`.
     """
-    blocks: List[_SyncBlock] = []
-    i = 0
-    j = 0
-    t_cur = 0
-    r_cur = 0
-    h_cur = 0
-    n_tr = len(tr_units)
-    n_rh = len(rh_units)
+    def is_disjoint_from_all_conflicts(e: DiffUnit) -> bool:
+        return bisect_right(pos_conf_ends, e.r_start) == bisect_left(pos_conf_starts, e.r_end)
 
-    while i < n_tr or j < n_rh:
-        if i < n_tr and tr_units[i].r_start == tr_units[i].r_end:
-            u = tr_units[i]
-            blocks.append(
-                _SyncBlock(
-                    t_start=u.src_start,
-                    t_end=u.src_end,
-                    r_start=u.r_start,
-                    r_end=u.r_end,
-                    h_start=h_cur,
-                    h_end=h_cur,
-                    tr_slice=(u,),
-                    rh_slice=(),
-                    is_conflict=u.is_conflict,
-                )
-            )
-            t_cur = u.src_end
-            r_cur = u.r_end
-            i += 1
-        elif j < n_rh and rh_units[j].r_start == rh_units[j].r_end:
-            e = rh_units[j]
-            blocks.append(
-                _SyncBlock(
-                    t_start=t_cur,
-                    t_end=t_cur,
-                    r_start=e.r_start,
-                    r_end=e.r_end,
-                    h_start=e.dst_start,
-                    h_end=e.dst_end,
-                    tr_slice=(),
-                    rh_slice=(e,),
-                    is_conflict=e.is_conflict,
-                )
-            )
-            r_cur = e.r_end
-            h_cur = e.dst_end
-            j += 1
-        elif i < n_tr and j < n_rh:
-            i_end, j_end = _advance_positive_span(tr_units, rh_units, i, j)
-            tr_sub = tuple(tr_units[i:i_end])
-            rh_sub = tuple(rh_units[j:j_end])
-            t_s = tr_sub[0].src_start
-            t_e = tr_sub[-1].src_end
-            r_s = tr_sub[0].r_start
-            r_e = tr_sub[-1].r_end
-            h_s = rh_sub[0].dst_start
-            h_e = rh_sub[-1].dst_end
-            is_conf = any(u.is_conflict for u in tr_sub) or any(
-                e.is_conflict for e in rh_sub
-            )
-            blocks.append(
-                _SyncBlock(
-                    t_start=t_s,
-                    t_end=t_e,
-                    r_start=r_s,
-                    r_end=r_e,
-                    h_start=h_s,
-                    h_end=h_e,
-                    tr_slice=tr_sub,
-                    rh_slice=rh_sub,
-                    is_conflict=is_conf,
-                )
-            )
-            t_cur, r_cur, h_cur = t_e, r_e, h_e
-            i, j = i_end, j_end
-        elif i < n_tr:
-            u = tr_units[i]
-            blocks.append(
-                _SyncBlock(
-                    t_start=u.src_start,
-                    t_end=u.src_end,
-                    r_start=u.r_start,
-                    r_end=u.r_end,
-                    h_start=h_cur,
-                    h_end=h_cur,
-                    tr_slice=(u,),
-                    rh_slice=(),
-                    is_conflict=u.is_conflict,
-                )
-            )
-            t_cur, r_cur = u.src_end, u.r_end
-            i += 1
-        else:
-            e = rh_units[j]
-            blocks.append(
-                _SyncBlock(
-                    t_start=t_cur,
-                    t_end=t_cur,
-                    r_start=e.r_start,
-                    r_end=e.r_end,
-                    h_start=e.dst_start,
-                    h_end=e.dst_end,
-                    tr_slice=(),
-                    rh_slice=(e,),
-                    is_conflict=e.is_conflict,
-                )
-            )
-            r_cur, h_cur = e.r_end, e.dst_end
-            j += 1
+    candidate_pos_rh = tuple(filter(
+        lambda e: (
+            (e.unit_type != DiffUnitType.EQUAL or e.dst_end == len(h_tokens))
+            and is_disjoint_from_all_conflicts(e)
+        ),
+        rh_pos,
+    ))
+    pos_t_ranges = tuple(map(
+        lambda tr_sub: (tr_sub[0].src_start, tr_sub[-1].src_end),
+        map(
+            lambda e: tr_pos[bisect_right(tr_pos_ends, e.r_start) : bisect_left(tr_pos_starts, e.r_end)],
+            candidate_pos_rh,
+        ),
+    ))
+    pos_replacements = starmap(
+        lambda pos_rh, t_range: _extract_clean_pos_replacement(
+            pos_rh, t_range[0], t_range[1], t_tokens, h_tokens
+        ),
+        zip(candidate_pos_rh, pos_t_ranges),
+    )
+    valid_pos_clean = filter(
+        # None indicates unchanged RH_EQUAL at EOF, which is not a changed span
+        lambda item: item[2] is not None,
+        zip(candidate_pos_rh, pos_t_ranges, pos_replacements),
+    )
+    pos_clean_spans = tuple(starmap(
+        lambda e, t_rng, repl: _DerenderSpan(
+            t_start=t_rng[0],
+            t_end=t_rng[1],
+            r_start=e.r_start,
+            r_end=e.r_end,
+            h_start=e.dst_start,
+            h_end=e.dst_end,
+            is_conflict=False,
+            replacement=repl,
+            old_eof_newline=(
+                t_rng[1] < len(t_tokens)
+                or t_rng[0] == t_rng[1]
+                or t_tokens[t_rng[1] - 1].has_newline
+            ),
+            new_eof_newline=(
+                e.dst_end < len(h_tokens)
+                or e.dst_start == e.dst_end
+                or h_tokens[e.dst_end - 1].has_newline
+            ),
+        ),
+        valid_pos_clean,
+    ))
 
-    return blocks
+    # here we assume rh_zero won't meet tr_zero,
+    # otherwise it's a conflict because RH_INSERT and TR_DELETE are touching at the same R point
+    # so all non-conflicting tr_zeros are handled above.
+    # rh_zero are only RH_INSERT, so we can just find the corresponding T point for each R point.
+    rh_zero_pts = [e.r_start for e in rh_zero]
+    clean_zero_r_points = sorted(set(map(
+        lambda e: e.r_start,
+        filter(lambda e: not e.is_conflict, rh_zero),
+    )))
+    rh_zero_subs = map(
+        lambda pt: rh_zero[bisect_left(rh_zero_pts, pt) : bisect_right(rh_zero_pts, pt)],
+        clean_zero_r_points,
+    )
+    zero_t_points = map(
+        lambda pt: _resolve_t_point_at_r(pt, tr_pos, tr_pos_starts),
+        clean_zero_r_points,
+    )
+    zero_clean_spans = tuple(starmap(
+        lambda pt, rh_z_sub, t_pt: _DerenderSpan(
+            t_start=t_pt,
+            t_end=t_pt,
+            r_start=pt,
+            r_end=pt,
+            h_start=rh_z_sub[0].dst_start,
+            h_end=rh_z_sub[-1].dst_end,
+            is_conflict=False,
+            replacement=tuple(
+                # slice the host tokens from the first to the last RH_INSERT at this R point
+                h.stripped_line for h in h_tokens[rh_z_sub[0].dst_start : rh_z_sub[-1].dst_end]
+            ),
+            old_eof_newline=True,
+            new_eof_newline=(
+                rh_z_sub[-1].dst_end < len(h_tokens)
+                or rh_z_sub[0].dst_start == rh_z_sub[-1].dst_end
+                or h_tokens[rh_z_sub[-1].dst_end - 1].has_newline
+            ),
+        ),
+        zip(clean_zero_r_points, rh_zero_subs, zero_t_points),
+    ))
+    return (*pos_clean_spans, *zero_clean_spans)
 
 
-def _coalesce_sync_blocks(blocks: Sequence[_SyncBlock]) -> List[_SyncBlock]:
-    """Merges adjacent conflicting `_SyncBlock`s into minimal contiguous conflict envelopes.
-
-    For example, when an `RH_DELETE` splits across a `TR_DELETE` boundary (Case 2.5b), the left
-    half of the deletion, the enclosed 0-R-length `TR_DELETE`, and the right half of the deletion
-    initially form three adjacent conflicting `_SyncBlock`s; coalescing merges them into one
-    unified `ConflictCluster` covering the full `(T, R, H)` span.
+def _resolve_derender_spans(
+    classified_tr: Sequence[DiffUnit],
+    classified_rh: Sequence[DiffUnit],
+    t_tokens: Sequence[TokenizedLine],
+    h_tokens: Sequence[TokenizedLine],
+) -> List[_DerenderSpan]:
+    """Partitions `classified_tr` and `classified_rh` into positive/zero `R`-length streams and
+    computes all conflict envelopes and clean edit spans in canonical `(r_start, r_end)` order.
     """
-    def _step(acc: List[_SyncBlock], blk: _SyncBlock) -> List[_SyncBlock]:
-        if acc and acc[-1].is_conflict and blk.is_conflict:
-            prev = acc[-1]
-            merged = _SyncBlock(
-                t_start=prev.t_start,
-                t_end=blk.t_end,
-                r_start=prev.r_start,
-                r_end=blk.r_end,
-                h_start=prev.h_start,
-                h_end=blk.h_end,
-                tr_slice=(*prev.tr_slice, *blk.tr_slice),
-                rh_slice=(*prev.rh_slice, *blk.rh_slice),
-                is_conflict=True,
-            )
-            return [*acc[:-1], merged]
-        return [*acc, blk]
+    tr_pos, tr_zero = partition(
+        lambda u: u.unit_type != DiffUnitType.DELETE,
+        classified_tr,
+    )
+    rh_pos, rh_zero = partition(
+        lambda e: e.unit_type != DiffUnitType.INSERT,
+        classified_rh,
+    )
 
-    return reduce(_step, blocks, [])
+    tr_pos_starts = [u.r_start for u in tr_pos]
+    tr_pos_ends = [u.r_end for u in tr_pos]
+    rh_pos_starts = [e.r_start for e in rh_pos]
+    rh_pos_ends = [e.r_end for e in rh_pos]
+    positive_conflict_ranges = _merge_positive_conflict_r_ranges(tr_pos, rh_pos)
+    pos_conf_starts = [r_s for r_s, _ in positive_conflict_ranges]
+    pos_conf_ends = [r_e for _, r_e in positive_conflict_ranges]
+
+    pos_conflict_spans = _build_positive_conflict_spans(
+        positive_conflict_ranges,
+        tr_pos,
+        tr_pos_starts,
+        tr_pos_ends,
+        rh_pos,
+        rh_pos_starts,
+        rh_pos_ends,
+    )
+    zero_conflict_spans = _build_zero_conflict_spans(
+        tr_zero,
+        rh_zero,
+        pos_conf_starts,
+        pos_conf_ends,
+        tr_pos,
+        tr_pos_starts,
+        rh_pos,
+        rh_pos_starts,
+    )
+    clean_edit_spans = _build_clean_edit_spans(
+        rh_pos,
+        rh_zero,
+        pos_conf_starts,
+        pos_conf_ends,
+        tr_pos,
+        tr_pos_starts,
+        tr_pos_ends,
+        t_tokens,
+        h_tokens,
+    )
+    return sorted(
+        chain(pos_conflict_spans, zero_conflict_spans, clean_edit_spans),
+        key=lambda s: (s.r_start, s.r_end),
+    )
 
 
 # ==============================================================================
@@ -678,51 +900,69 @@ def _coalesce_sync_blocks(blocks: Sequence[_SyncBlock]) -> List[_SyncBlock]:
 # ==============================================================================
 
 
-def _extract_clean_block_replacement(
-    blk: _SyncBlock,
-    t_lines: Sequence[str],
-    h_lines: Sequence[str],
-) -> Optional[Tuple[str, ...]]:
-    """Computes the replacement template lines for a clean `_SyncBlock` if it modifies `T`, else `None`.
+def _apply_clean_spans_to_template(
+    t_stripped_lines: Sequence[str],
+    clean_spans: Sequence[_DerenderSpan],
+) -> Tuple[str, ...]:
+    """Synthesizes newline-stripped `T_clean` by splicing `span.replacement` at each clean `[t_start, t_end)`.
 
-    Handles three clean replacement modes:
-        1. **EOF-Newline-Only Drift on `RH_EQUAL`**: All `RH` units are `EQUAL` in body text, or
-           the final line at EOF gained/lost a trailing newline in `H` relative to `T` -> returns
-           `t_lines[t_start:t_end]` with `H`'s trailing line ending on the last line.
-        2. **De-Rendered Skeleton Edit (`SINGLE_SKEL_EDIT`, Case 1.2)**: Returns the synthesized
-           `derendered_lines` (`H'`) computed by Layer 1a-1 token calculus.
-        3. **Static Edit / Insertion / Full Block Deletion (Cases 0.2, 1.4, 2.4, 3.1)**: Returns
-           `tuple(h_lines[blk.h_start : blk.h_end])` (which is `()` for deletions).
+    Conflicting regions in `T` are absent from `clean_spans`, so they fall naturally into the
+    unchanged template gaps between consecutive clean spans and remain preserved in `T_clean`.
     """
-    if not blk.rh_slice:
-        return None
-    if all(e.unit_type == DiffUnitType.EQUAL for e in blk.rh_slice):
-        is_eof_nl_diff = (
-            blk.t_end == len(t_lines)
-            and blk.h_end == len(h_lines)
-            and blk.t_end > blk.t_start
-            and blk.h_end > blk.h_start
-            and t_lines[blk.t_end - 1].endswith(("\n", "\r"))
-            != h_lines[blk.h_end - 1].endswith(("\n", "\r"))
+    if not clean_spans:
+        return tuple(t_stripped_lines)
+    prev_ends = (0, *(s.t_end for s in clean_spans))
+    next_starts = (*(s.t_start for s in clean_spans), len(t_stripped_lines))
+    gaps = tuple(
+        starmap(lambda start, end: t_stripped_lines[start:end], zip(prev_ends, next_starts))
+    )
+    interleaved = chain.from_iterable(
+        starmap(
+            lambda gap, span: (*gap, *span.replacement),
+            zip(gaps[:-1], clean_spans),
         )
-        if not is_eof_nl_diff:
-            return None
-        last_t_stripped = t_lines[blk.t_end - 1].rstrip("\r\n")
-        h_last = h_lines[blk.h_end - 1]
-        h_ending = h_last[len(h_last.rstrip("\r\n")) :]
-        return (
-            *t_lines[blk.t_start : blk.t_end - 1],
-            f"{last_t_stripped}{h_ending}",
-        )
+    )
+    return (*interleaved, *gaps[-1])
 
-    if (
-        len(blk.rh_slice) == 1
-        and blk.rh_slice[0].unit_type == DiffUnitType.SINGLE_SKEL_EDIT
-        and blk.rh_slice[0].derendered_lines
-    ):
-        return blk.rh_slice[0].derendered_lines
 
-    return tuple(h_lines[blk.h_start : blk.h_end])
+def _anchor_conflict_clusters_to_t_clean(
+    active_spans: Sequence[_DerenderSpan],
+    t_stripped_lines: Sequence[str],
+    r_stripped_lines: Sequence[str],
+    h_stripped_lines: Sequence[str],
+) -> Tuple[ConflictCluster, ...]:
+    """Anchors each conflicting `_DerenderSpan` to its shifted `[t_clean_start, t_clean_end)` in `T_clean`.
+
+    Each preceding clean span `s` shifts subsequent line indices in `T_clean` by
+    `len(s.replacement) - (s.t_end - s.t_start)`, whereas conflict spans remain untouched in
+    Step 1 (`delta = 0`). Using `itertools.accumulate` computes the exact cumulative shift
+    `shift` for every conflict span in a single declarative pass.
+    """
+    span_deltas = map(
+        lambda s: choose(
+            s.is_conflict,
+            0,
+            len(s.replacement) - (s.t_end - s.t_start),
+        ),
+        active_spans,
+    )
+    cumulative_shifts = accumulate(span_deltas, initial=0)
+    conflict_spans_with_shifts = filter(
+        lambda pair: pair[0].is_conflict,
+        zip(active_spans, cumulative_shifts),
+    )
+    return tuple(starmap(
+        lambda span, shift: ConflictCluster(
+            t_start=span.t_start,
+            t_end=span.t_end,
+            t_clean_start=span.t_start + shift,
+            t_clean_end=span.t_end + shift,
+            t_lines=tuple(t_stripped_lines[span.t_start : span.t_end]),
+            r_lines=tuple(r_stripped_lines[span.r_start : span.r_end]),
+            h_lines=tuple(h_stripped_lines[span.h_start : span.h_end]),
+        ),
+        conflict_spans_with_shifts,
+    ))
 
 
 def build_two_step_derender_plan(
@@ -735,11 +975,10 @@ def build_two_step_derender_plan(
     Why De-Rendering Uses a Two-Step Plan (`T -> T_clean -> T_merged`):
         1. **Step 1 (`T -> T_clean`)**: Applies all non-conflicting `CleanPatchHunk`s (static edits,
            clean `1 <-> 1 <-> 1` de-rendered lines `H'`, and complete block deletions) while leaving
-           conflicting regions in `T` untouched.
-        2. **Step 2 (`T_clean -> T_merged`)**: Because Step 1 insertions/deletions shift line numbers
-           in `T_clean`, `_accumulate_plan` tracks the exact shifted slice `[t_clean_start, t_clean_end)`
-           for every `ConflictCluster` so Step 2 can splice `diff3` conflict markers (`T` vs `R` vs `H`)
-           at exact 0-based coordinates in `T_clean`.
+           conflicting regions in `T` untouched (`_apply_clean_spans_to_template`).
+        2. **Step 2 (`T_clean -> T_merged`)**: Anchors every `ConflictCluster` to its shifted
+           `[t_clean_start, t_clean_end)` slice in `T_clean` (`_anchor_conflict_clusters_to_t_clean`)
+           so Step 2 can splice `diff3` conflict markers (`T` vs `R` vs `H`) at exact 0-based coordinates.
 
     Args:
         t_lines: Line sequence of the source template `T` (`splitlines(keepends=True)`).
@@ -747,7 +986,8 @@ def build_two_step_derender_plan(
         h_lines: Line sequence of the host-modified file `H` (`splitlines(keepends=True)`).
 
     Returns:
-        `TwoStepDerenderPlan(t_lines, t_clean_lines, clean_hunks, conflict_clusters)`.
+        `TwoStepDerenderPlan(t_lines, t_clean_lines, clean_hunks, conflict_clusters)` with
+        newline-stripped line tuples.
     """
     t_tokens = tuple(map(tokenize_line, t_lines))
     r_tokens = tuple(map(tokenize_line, r_lines))
@@ -761,70 +1001,25 @@ def build_two_step_derender_plan(
     )
     split_tr, split_rh = split_rh_deletes_at_tr_boundaries(refined_tr, refined_rh)
     classified_tr, classified_rh = _classify_orthogonal_units(split_tr, split_rh)
+    active_spans = _resolve_derender_spans(
+        classified_tr, classified_rh, t_tokens, h_tokens
+    )
 
-    sync_blocks = _build_sync_blocks(classified_tr, classified_rh)
-    coalesced_blocks = _coalesce_sync_blocks(sync_blocks)
+    t_stripped = tuple(t.stripped_line for t in t_tokens)
+    r_stripped = tuple(r.stripped_line for r in r_tokens)
+    h_stripped = tuple(h.stripped_line for h in h_tokens)
 
-    def _accumulate_plan(
-        state: Tuple[List[str], List[CleanPatchHunk], List[ConflictCluster]],
-        blk: _SyncBlock,
-    ) -> Tuple[List[str], List[CleanPatchHunk], List[ConflictCluster]]:
-        t_clean_acc, hunks_acc, clusters_acc = state
-        if blk.is_conflict:
-            t_clean_start = len(t_clean_acc)
-            t_slice = tuple(t_lines[blk.t_start : blk.t_end])
-            next_t_clean = [*t_clean_acc, *t_slice]
-            t_clean_end = len(next_t_clean)
-            cluster = ConflictCluster(
-                t_start=blk.t_start,
-                t_end=blk.t_end,
-                t_clean_start=t_clean_start,
-                t_clean_end=t_clean_end,
-                t_lines=t_slice,
-                r_lines=tuple(r_lines[blk.r_start : blk.r_end]),
-                h_lines=tuple(h_lines[blk.h_start : blk.h_end]),
-            )
-            return (next_t_clean, hunks_acc, [*clusters_acc, cluster])
-
-        replacement = _extract_clean_block_replacement(blk, t_lines, h_lines)
-        if replacement is not None:
-            t_slice = t_lines[blk.t_start : blk.t_end]
-            old_eof_nl = branch(
-                blk.t_end == len(t_lines) and bool(t_slice),
-                lambda: t_slice[-1].endswith(("\n", "\r")),
-                lambda: True,
-            )
-            new_eof_nl = branch(
-                blk.h_end == len(h_lines) and bool(replacement),
-                lambda: replacement[-1].endswith(("\n", "\r")),
-                lambda: True,
-            )
-            hunk = CleanPatchHunk(
-                t_start=blk.t_start,
-                t_end=blk.t_end,
-                old_lines=tuple(ln.rstrip("\r\n") for ln in t_slice),
-                new_lines=tuple(ln.rstrip("\r\n") for ln in replacement),
-                old_eof_newline=old_eof_nl,
-                new_eof_newline=new_eof_nl,
-            )
-            return ([*t_clean_acc, *replacement], [*hunks_acc, hunk], clusters_acc)
-
-        return (
-            [*t_clean_acc, *t_lines[blk.t_start : blk.t_end]],
-            hunks_acc,
-            clusters_acc,
-        )
-
-    t_clean_list, clean_hunks_list, clusters_list = reduce(
-        _accumulate_plan,
-        coalesced_blocks,
-        ([], [], []),
+    clean_spans = tuple(filter(lambda s: not s.is_conflict, active_spans))
+    clean_hunks = tuple(map(lambda s: s.to_clean_hunk(t_tokens), clean_spans))
+    t_clean_lines = _apply_clean_spans_to_template(t_stripped, clean_spans)
+    conflict_clusters = _anchor_conflict_clusters_to_t_clean(
+        active_spans, t_stripped, r_stripped, h_stripped
     )
     return TwoStepDerenderPlan(
-        t_lines=tuple(t_lines),
-        t_clean_lines=tuple(t_clean_list),
-        clean_hunks=tuple(clean_hunks_list),
-        conflict_clusters=tuple(clusters_list),
+        t_lines=t_stripped,
+        t_clean_lines=t_clean_lines,
+        clean_hunks=clean_hunks,
+        conflict_clusters=conflict_clusters,
     )
 
 
@@ -833,157 +1028,39 @@ def build_two_step_derender_plan(
 # ==============================================================================
 
 
-def _format_range_unified(start: int, stop: int) -> str:
-    """Formats a 0-based `[start, stop)` line interval as a 1-based unified diff header range."""
-    length = stop - start
-    if length == 1:
-        return f"{start + 1}"
-    if length == 0:
-        return f"{start},0"
-    return f"{start + 1},{length}"
-
-
-def _format_display_opcode(
-    tag: str,
-    i1: int,
-    i2: int,
-    j1: int,
-    j2: int,
-    old_items: Sequence[Tuple[str, Tuple[str, ...], int]],
-    new_items: Sequence[Tuple[str, Tuple[str, ...], int]],
-) -> List[str]:
-    """Formats a single `SequenceMatcher` opcode of display items into `' '`, `'-'`, and `'+'` diff lines."""
-    if tag == "equal":
-        return [
-            f" {ln}"
-            for k in range(i1, i2)
-            for ln in old_items[k][1]
-        ]
-    removed = choose(
-        tag in ("replace", "delete"),
-        [f"-{ln}" for k in range(i1, i2) for ln in old_items[k][1]],
-        [],
-    )
-    added = choose(
-        tag in ("replace", "insert"),
-        [f"+{ln}" for k in range(j1, j2) for ln in new_items[k][1]],
-        [],
-    )
-    return [*removed, *added]
-
-
 def build_display_unified_diff(
     plan: TwoStepDerenderPlan,
     fromfile: str,
     tofile: str,
     n: int = 3,
 ) -> str:
-    """Synthesizes a human-readable unified diff preview from a `TwoStepDerenderPlan`.
+    """Synthesizes a standard unified diff preview from raw template `T` to `T_merged`.
 
     Display Semantics:
-        - **Clean hunks**: Displayed as `-T / +H'` (template lines vs de-rendered replacement lines).
-        - **Conflict clusters**: Displayed as `-R / +H` (rendered baseline lines vs host drift lines)
-          while keeping `@@` line numbers anchored on `T` and `T_clean`.
-        - **Why Sentinel Grouping is Used**: Each conflict cluster is represented as a single item
-          with distinct old/new keys (`"\\x00__DRIFT_CONF_OLD_k__\\n"` vs `"\\x00__DRIFT_CONF_NEW_k__\\n"`)
-          so `SequenceMatcher.get_grouped_opcodes(n)` treats the entire conflict cluster as an atomic
-          `"replace"` opcode and only emits `' '` context lines from the outer non-conflicting
-          template lines of `T`.
+        - Splices Step 2 `ConflictCluster` `diff3` blocks (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`)
+          onto `plan.t_clean_lines` via `splice_conflict_clusters_diff3` to form `t_merged_lines`
+          (when conflict-free, `t_merged_lines` equals `plan.t_clean_lines`).
+        - Runs standard `difflib.unified_diff(plan.t_lines, t_merged_lines, lineterm="")` so the
+          preview is 100% anchored on the raw template `T` and displays both Step 1 clean
+          de-rendered edits and Step 2 3-way conflict blocks in context.
     """
-    if not plan.has_conflicts:
-        if plan.t_lines == plan.t_clean_lines:
-            return ""
-        return "".join(
-            difflib.unified_diff(
-                list(plan.t_lines),
-                list(plan.t_clean_lines),
-                fromfile=fromfile,
-                tofile=tofile,
-                n=n,
-            )
-        )
-
-    def _acc_items(
-        state: Tuple[
-            int,
-            int,
-            List[Tuple[str, Tuple[str, ...], int]],
-            List[Tuple[str, Tuple[str, ...], int]],
-        ],
-        indexed_cluster: Tuple[int, ConflictCluster],
-    ) -> Tuple[
-        int,
-        int,
-        List[Tuple[str, Tuple[str, ...], int]],
-        List[Tuple[str, Tuple[str, ...], int]],
-    ]:
-        t_cur, tc_cur, old_acc, new_acc = state
-        idx, c = indexed_cluster
-        sub_old = [(ln, (ln,), 1) for ln in plan.t_lines[t_cur : c.t_start]]
-        sub_new = [
-            (ln, (ln,), 1) for ln in plan.t_clean_lines[tc_cur : c.t_clean_start]
-        ]
-        return (
-            c.t_end,
-            c.t_clean_end,
-            [
-                *old_acc,
-                *sub_old,
-                (f"\x00__DRIFT_CONF_OLD_{idx}__\n", c.r_lines, len(c.t_lines)),
-            ],
-            [
-                *new_acc,
-                *sub_new,
-                (f"\x00__DRIFT_CONF_NEW_{idx}__\n", c.h_lines, len(c.h_lines)),
-            ],
-        )
-
-    t_end_cur, tc_end_cur, head_old, head_new = reduce(
-        _acc_items,
-        enumerate(plan.conflict_clusters),
-        (0, 0, [], []),
+    t_merged_lines = splice_conflict_clusters_diff3(
+        plan.t_clean_lines,
+        plan.conflict_clusters,
     )
-    old_items = [
-        *head_old,
-        *((ln, (ln,), 1) for ln in plan.t_lines[t_end_cur:]),
-    ]
-    new_items = [
-        *head_new,
-        *((ln, (ln,), 1) for ln in plan.t_clean_lines[tc_end_cur:]),
-    ]
-
-    old_keys = [item[0] for item in old_items]
-    new_keys = [item[0] for item in new_items]
-    groups = list(
-        difflib.SequenceMatcher(None, old_keys, new_keys, autojunk=False).get_grouped_opcodes(n)
-    )
-    if not groups:
+    if plan.t_lines == t_merged_lines:
         return ""
-
-    old_prefix = reduce(
-        lambda acc, item: [*acc, acc[-1] + item[2]], old_items, [0]
+    diff_lines = tuple(
+        difflib.unified_diff(
+            list(plan.t_lines),
+            list(t_merged_lines),
+            fromfile=fromfile,
+            tofile=tofile,
+            n=n,
+            lineterm="",
+        )
     )
-    new_prefix = reduce(
-        lambda acc, item: [*acc, acc[-1] + item[2]], new_items, [0]
-    )
-
-    header_lines = [f"--- {fromfile}\n", f"+++ {tofile}\n"]
-    body_lines = [
-        line
-        for group in groups
-        for line in [
-            f"@@ -{_format_range_unified(old_prefix[group[0][1]], old_prefix[group[-1][2]])} "
-            f"+{_format_range_unified(new_prefix[group[0][3]], new_prefix[group[-1][4]])} @@\n",
-            *(
-                op_line
-                for tag, i1, i2, j1, j2 in group
-                for op_line in _format_display_opcode(
-                    tag, i1, i2, j1, j2, old_items, new_items
-                )
-            ),
-        ]
-    ]
-    return "".join([*header_lines, *body_lines])
+    return choose(bool(diff_lines), "\n".join(diff_lines) + "\n", "")
 
 
 def read_rendered_baseline_lines(

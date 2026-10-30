@@ -3579,8 +3579,8 @@ render_command = "bash -c 'cat %i %s'"
         plan_c1 = build_two_step_derender_plan(t_case1, r_case1, h_case1)
         self.assertIsInstance(plan_c1, TwoStepDerenderPlan)
         self.assertFalse(plan_c1.has_conflicts)
-        self.assertIn('    "key": "${NEW_API_KEY}"\n', plan_c1.t_clean_lines)
-        self.assertNotIn("sk-live-12345", "".join(plan_c1.t_clean_lines))
+        self.assertIn('    "key": "${NEW_API_KEY}"', plan_c1.t_clean_lines)
+        self.assertNotIn("sk-live-12345", "\n".join(plan_c1.t_clean_lines))
 
         # --- Case 2.1 with 0-line rendered template directive (TR_DELETE, r_start == r_end) ---
         t_zero = ["# template-only comment\n", "keep = 1\n", "mod = 2\n"]
@@ -3590,7 +3590,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertFalse(plan_zero_eq.has_conflicts)
         self.assertEqual(
             list(plan_zero_eq.t_clean_lines),
-            ["# template-only comment\n", "keep = 1\n", "mod = 99\n"],
+            ["# template-only comment", "keep = 1", "mod = 99"],
         )
         # When host edits the very first line at r_start == 0 == r_end:
         h_zero_ed = ["keep = 100\n", "mod = 2\n"]
@@ -3598,7 +3598,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertFalse(plan_zero_ed.has_conflicts)
         self.assertEqual(
             list(plan_zero_ed.t_clean_lines),
-            ["# template-only comment\n", "keep = 100\n", "mod = 2\n"],
+            ["# template-only comment", "keep = 100", "mod = 2"],
         )
 
         # --- Case 1.2: Single-line skeleton edit (host adds trailing comma / comment to template line) ---
@@ -3609,7 +3609,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertFalse(plan_c2a.has_conflicts)
         self.assertEqual(
             list(plan_c2a.t_clean_lines),
-            ['{\n', '  "key": "${NEW_API_KEY}",\n', '  "extra": true\n', '}\n'],
+            ['{', '  "key": "${NEW_API_KEY}",', '  "extra": true', '}'],
         )
 
         # Bidirectional uniqueness guard: if rendered line signature appears twice in host edit block,
@@ -3623,14 +3623,14 @@ render_command = "bash -c 'cat %i %s'"
         plan_c1_3 = build_two_step_derender_plan(t_c2a, r_c2a, h_c1_3_var_edit)
         self.assertTrue(plan_c1_3.has_conflicts)
         self.assertEqual(len(plan_c1_3.conflict_clusters), 1)
-        self.assertEqual(plan_c1_3.conflict_clusters[0].t_lines, ('  "key": "${NEW_API_KEY}"\n',))
-        self.assertEqual(plan_c1_3.conflict_clusters[0].r_lines, ('  "key": "sk-live-12345"\n',))
-        self.assertEqual(plan_c1_3.conflict_clusters[0].h_lines, ('  "key": "completely_new_key"\n',))
+        self.assertEqual(plan_c1_3.conflict_clusters[0].t_lines, ('  "key": "${NEW_API_KEY}"',))
+        self.assertEqual(plan_c1_3.conflict_clusters[0].r_lines, ('  "key": "sk-live-12345"',))
+        self.assertEqual(plan_c1_3.conflict_clusters[0].h_lines, ('  "key": "completely_new_key"',))
 
         h_c2_3_delete = ['{\n', '}\n']
         plan_c2_3_del = build_two_step_derender_plan(t_c2a, r_c2a, h_c2_3_delete)
         self.assertFalse(plan_c2_3_del.has_conflicts)
-        self.assertEqual(list(plan_c2_3_del.t_clean_lines), ['{\n', '}\n'])
+        self.assertEqual(list(plan_c2_3_del.t_clean_lines), ['{', '}'])
 
         # --- Case 1.1 + 1.3 Fission Isolation vs Case 2.2 Multi-Line Block Conflict ---
         t_c3 = ["header\n", "A=$VAR_A\n", "B=$VAR_B\n", "footer\n"]
@@ -3641,7 +3641,7 @@ render_command = "bash -c 'cat %i %s'"
         plan_c3 = build_two_step_derender_plan(t_c3, r_c3, h_c3_partial)
         self.assertTrue(plan_c3.has_conflicts)
         self.assertEqual(len(plan_c3.conflict_clusters), 1)
-        self.assertEqual(plan_c3.conflict_clusters[0].t_lines, ("A=$VAR_A\n",))
+        self.assertEqual(plan_c3.conflict_clusters[0].t_lines, ("A=$VAR_A",))
 
         # Interior insertion between two fissioned TR_SINGLE_EDITs (Case 3.1 clean insertion!)
         h_c3_insert = ["header\n", "A=val_a\n", "INSERTED=mid\n", "B=val_b\n", "footer\n"]
@@ -3649,7 +3649,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertFalse(plan_c3_ins.has_conflicts)
         self.assertEqual(
             list(plan_c3_ins.t_clean_lines),
-            ["header\n", "A=$VAR_A\n", "INSERTED=mid\n", "B=$VAR_B\n", "footer\n"],
+            ["header", "A=$VAR_A", "INSERTED=mid", "B=$VAR_B", "footer"],
         )
 
         # True multi-line TR_BLOCK_EDIT (e.g., {% for %} loop expanding into 2 lines with no 1-to-1 fission)
@@ -3660,7 +3660,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertTrue(plan_loop_ins.has_conflicts)
         self.assertEqual(
             plan_loop_ins.conflict_clusters[0].t_lines,
-            ("{% for x in items %}\n", "item={{ x }}\n", "{% endfor %}\n"),
+            ("{% for x in items %}", "item={{ x }}", "{% endfor %}"),
         )
         self.assertIn("@@", build_display_unified_diff(plan_loop_ins, "a/t", "b/t"))
         self.assertEqual(plan_loop_ins.clean_hunks, ())
@@ -4539,8 +4539,10 @@ render_command = "bash -c 'cat %i %s'"
             rel_rendered_path=Path("exp.conf"),
             src_rel_path=Path("exp.envst.conf"),
         )
-        # Must anchor at @@ -1,11 +1,26 @@ (3 ctx_before + 5 template lines + 3 ctx_after)
-        self.assertIn("@@ -1,11 +1,26 @@", patch_exp.display_diff)
+        # Must anchor at @@ -1,11 +1,55 @@ (11 raw template lines -> 55 merged lines with diff3 block)
+        # and be a 100% valid unified diff parseable by parse_unified_patch_hunks!
+        self.assertIn("@@ -1,11 +1,55 @@", patch_exp.display_diff)
+        self.assertEqual(len(parse_unified_patch_hunks(patch_exp.display_diff)), 1)
         self.assertTrue(check_patch_conflicts(src_exp, patch_exp))
         self.assertTrue(apply_source_patch(src_exp, patch_exp, accept_conflicts=True))
         merged_exp = src_exp.read_text(encoding="utf-8")
@@ -4692,7 +4694,7 @@ render_command = "bash -c 'cat %i %s'"
                 tokenize_line('host = "my_server_01"\n'),
                 tokenize_line('primary_host = "my_server_01" # active\n'),
             ),
-            'primary_host = "${HOST}" # active\n',
+            'primary_host = "${HOST}" # active',
         )
 
     def test_adopt_orthogonal_classification_all_matrix_cases_unit(self) -> None:
@@ -4726,7 +4728,7 @@ render_command = "bash -c 'cat %i %s'"
         h_blk_full_del = ["tail = 2\n"]
         plan_2_4_clean = build_two_step_derender_plan(t_blk, r_blk, h_blk_full_del)
         self.assertFalse(plan_2_4_clean.has_conflicts)
-        self.assertEqual(list(plan_2_4_clean.t_clean_lines), ["tail = 2\n"])
+        self.assertEqual(list(plan_2_4_clean.t_clean_lines), ["tail = 2"])
 
         # Partial deletion of only 1 of the 2 rendered loop lines -> CONFLICT
         h_blk_part_del = ["head = 1\n", "item = b\n", "tail = 2\n"]
@@ -4734,7 +4736,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertTrue(plan_2_4_conflict.has_conflicts)
         self.assertEqual(
             plan_2_4_conflict.conflict_clusters[0].t_lines,
-            ("{% for x in list %}\n", "item = {{ x }}\n", "{% endfor %}\n"),
+            ("{% for x in list %}", "item = {{ x }}", "{% endfor %}"),
         )
 
         # --- Case 2.5a vs Case 2.5b: TR_DELETE (0 rendered lines) + RH_DELETE ---
@@ -4759,11 +4761,11 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(
             list(plan_2_5a.t_clean_lines),
             [
-                "before = 1\n",
-                "{% if false %}\n",
-                "hidden = 2\n",
-                "{% endif %}\n",
-                "end = 4\n",
+                "before = 1",
+                "{% if false %}",
+                "hidden = 2",
+                "{% endif %}",
+                "end = 4",
             ],
         )
 
@@ -4776,16 +4778,16 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(
             list(plan_2_5b.t_clean_lines),
             [
-                "{% if false %}\n",
-                "hidden = 2\n",
-                "{% endif %}\n",
-                "end = 4\n",
+                "{% if false %}",
+                "hidden = 2",
+                "{% endif %}",
+                "end = 4",
             ],
         )
         self.assertEqual(len(plan_2_5b.conflict_clusters), 1)
         self.assertEqual(
             plan_2_5b.conflict_clusters[0].t_lines,
-            ("{% if false %}\n", "hidden = 2\n", "{% endif %}\n"),
+            ("{% if false %}", "hidden = 2", "{% endif %}"),
         )
         self.assertEqual(plan_2_5b.conflict_clusters[0].r_lines, ())
         self.assertEqual(plan_2_5b.conflict_clusters[0].h_lines, ())
@@ -4797,11 +4799,11 @@ render_command = "bash -c 'cat %i %s'"
         self.assertTrue(plan_3_3.has_conflicts)
         self.assertEqual(
             plan_3_3.conflict_clusters[0].t_lines,
-            ("{% if false %}\n", "hidden = 2\n", "{% endif %}\n"),
+            ("{% if false %}", "hidden = 2", "{% endif %}"),
         )
         self.assertEqual(
             plan_3_3.conflict_clusters[0].h_lines,
-            ("inserted_at_zero_anchor = 99\n",),
+            ("inserted_at_zero_anchor = 99",),
         )
 
         # --- Case 4.1 vs Case 4.2: TR_INSERT (lines injected by render engine with no source line in T) ---
@@ -4812,7 +4814,15 @@ render_command = "bash -c 'cat %i %s'"
             t_tr_ins, r_tr_ins, ["# GENERATED HEADER\n", "keep = 2\n"]
         )
         self.assertFalse(plan_4_1.has_conflicts)
-        self.assertEqual(list(plan_4_1.t_clean_lines), ["keep = 2\n"])
+        self.assertEqual(list(plan_4_1.t_clean_lines), ["keep = 2"])
+
+        # Case 4.1 at EOF on empty T (t_start == t_end == len(t_tokens) == 0):
+        # verifies the `t_end > t_start` guard in `_extract_clean_pos_replacement`
+        plan_4_1_empty_t = build_two_step_derender_plan(
+            [], ["# GENERATED FOOTER\n"], ["# GENERATED FOOTER\n"]
+        )
+        self.assertFalse(plan_4_1_empty_t.has_conflicts)
+        self.assertEqual(plan_4_1_empty_t.clean_hunks, ())
 
         # Case 4.2: Host edits '# GENERATED HEADER\n' -> CONFLICT
         plan_4_2 = build_two_step_derender_plan(
@@ -4820,8 +4830,104 @@ render_command = "bash -c 'cat %i %s'"
         )
         self.assertTrue(plan_4_2.has_conflicts)
         self.assertEqual(plan_4_2.conflict_clusters[0].t_lines, ())
-        self.assertEqual(plan_4_2.conflict_clusters[0].r_lines, ("# GENERATED HEADER\n",))
-        self.assertEqual(plan_4_2.conflict_clusters[0].h_lines, ("# MODIFIED HEADER\n",))
+        self.assertEqual(plan_4_2.conflict_clusters[0].r_lines, ("# GENERATED HEADER",))
+        self.assertEqual(plan_4_2.conflict_clusters[0].h_lines, ("# MODIFIED HEADER",))
+
+        # --- Case 3.4 vs Case 3.5: RH_INSERT inside vs at outer boundary of multi-line TR_INSERT ---
+        t_multi_ins = ["keep = 1\n"]
+        r_multi_ins = ["# GEN_LINE_1\n", "# GEN_LINE_2\n", "keep = 1\n"]
+        # Case 3.4: RH_INSERT strictly inside TR_INSERT (at d=1, where r_1=0 < 1 < r_2=2) -> CONFLICT
+        plan_3_4 = build_two_step_derender_plan(
+            t_multi_ins,
+            r_multi_ins,
+            ["# GEN_LINE_1\n", "inserted_inside_gen = 1\n", "# GEN_LINE_2\n", "keep = 1\n"],
+        )
+        self.assertTrue(plan_3_4.has_conflicts)
+        self.assertEqual(len(plan_3_4.conflict_clusters), 1)
+        self.assertEqual(plan_3_4.conflict_clusters[0].t_lines, ())
+        self.assertEqual(
+            plan_3_4.conflict_clusters[0].r_lines,
+            ("# GEN_LINE_1", "# GEN_LINE_2"),
+        )
+        self.assertEqual(
+            plan_3_4.conflict_clusters[0].h_lines,
+            ("# GEN_LINE_1", "inserted_inside_gen = 1", "# GEN_LINE_2"),
+        )
+
+        # Case 3.5: RH_INSERT at outer boundary of TR_INSERT (at d=0 or d=2, no TR_DELETE) -> CLEAN
+        plan_3_5_left = build_two_step_derender_plan(
+            t_multi_ins,
+            r_multi_ins,
+            ["prepended_before_gen = 0\n", "# GEN_LINE_1\n", "# GEN_LINE_2\n", "keep = 1\n"],
+        )
+        self.assertFalse(plan_3_5_left.has_conflicts)
+        self.assertEqual(
+            list(plan_3_5_left.t_clean_lines),
+            ["prepended_before_gen = 0", "keep = 1"],
+        )
+        plan_3_5_right = build_two_step_derender_plan(
+            t_multi_ins,
+            r_multi_ins,
+            ["# GEN_LINE_1\n", "# GEN_LINE_2\n", "inserted_after_gen = 2\n", "keep = 1\n"],
+        )
+        self.assertFalse(plan_3_5_right.has_conflicts)
+        self.assertEqual(
+            list(plan_3_5_right.t_clean_lines),
+            ["inserted_after_gen = 2", "keep = 1"],
+        )
+
+        # --- Zero-length conflict (TR_DELETE + RH_INSERT at d) right before a conflicting positive edit ---
+        # Sentinel fission splits T[1:4] -> R[1:1] as TR_DELETE and T[4:5] -> R[1:2] as TR_SINGLE_EDIT;
+        # on R -> H, sentinel fission splits R[1:1] -> H[1:2] as RH_INSERT and R[1:2] -> H[2:3] as RH_SINGLE_EDIT.
+        # Verifies that the zero-length conflict at d=1 is grouped as one ConflictCluster at R[1:1]
+        # and kept split from the adjacent positive-length ConflictCluster at R[1:2]!
+        t_zero_before_pos = [
+            "head = 1\n",
+            "{% if false %}\n",
+            "hidden = 0\n",
+            "{% endif %}\n",
+            "port = {{ port_num }}\n",
+            "tail = 2\n",
+        ]
+        r_zero_before_pos = [
+            "head = 1\n",
+            "port = 8080\n",
+            "tail = 2\n",
+        ]
+        h_zero_before_pos = [
+            "head = 1\n",
+            "new_line = 9\n",
+            "port = 9090\n",
+            "tail = 2\n",
+        ]
+        plan_split_conf = build_two_step_derender_plan(
+            t_zero_before_pos, r_zero_before_pos, h_zero_before_pos
+        )
+        self.assertTrue(plan_split_conf.has_conflicts)
+        self.assertEqual(len(plan_split_conf.conflict_clusters), 2)
+        # Cluster 0: Zero-length conflict envelope at R[1:1] (TR_DELETE + RH_INSERT)
+        self.assertEqual(
+            plan_split_conf.conflict_clusters[0].t_lines,
+            ("{% if false %}", "hidden = 0", "{% endif %}"),
+        )
+        self.assertEqual(plan_split_conf.conflict_clusters[0].r_lines, ())
+        self.assertEqual(
+            plan_split_conf.conflict_clusters[0].h_lines,
+            ("new_line = 9",),
+        )
+        # Cluster 1: Positive-length conflict envelope at R[1:2] (Case 1.3 TR_SINGLE_EDIT + RH_SINGLE_EDIT)
+        self.assertEqual(
+            plan_split_conf.conflict_clusters[1].t_lines,
+            ("port = {{ port_num }}",),
+        )
+        self.assertEqual(
+            plan_split_conf.conflict_clusters[1].r_lines,
+            ("port = 8080",),
+        )
+        self.assertEqual(
+            plan_split_conf.conflict_clusters[1].h_lines,
+            ("port = 9090",),
+        )
 
     def test_adopt_two_step_patching_adjacent_clean_and_conflict_end_to_end(self) -> None:
         """Verifies the Two-Step Patching pipeline (`T -> T_clean -> T_merged`) end-to-end when
@@ -4887,7 +4993,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertFalse(apply_source_patch(src_five, patch_five, accept_conflicts=False))
         self.assertEqual(src_five.read_text(encoding="utf-8"), t_five)
 
-        # Applies Step 1 (T -> T_clean: variable1 comment + variable6 = v6b) + Step 2 (diff3 on variable4..5 only)!
+        # Applies Step 1 (T -> T_clean: variable1 comment + variable6 = v6b) + Step 2 (diff3 on variable4 and variable5)!
         self.assertTrue(apply_source_patch(src_five, patch_five, accept_conflicts=True))
         expected_merged_five = (
             "variable1 = ${VALUE1}; # comment\n"
@@ -4895,12 +5001,16 @@ render_command = "bash -c 'cat %i %s'"
             "variable3 = ${VALUE3}\n"
             "<<<<<<< \n"
             "variable4 = ${VALUE4}\n"
-            "variable5 = ${VALUE5}\n"
             "||||||| \n"
             "variable4 = v4\n"
-            "variable5 = v5\n"
             "=======\n"
             "variable4 = v4b\n"
+            ">>>>>>> \n"
+            "<<<<<<< \n"
+            "variable5 = ${VALUE5}\n"
+            "||||||| \n"
+            "variable5 = v5\n"
+            "=======\n"
             "variable5 = v5b\n"
             ">>>>>>> \n"
             "variable6 = v6b\n"

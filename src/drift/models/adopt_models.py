@@ -45,6 +45,11 @@ class TokenizedLine:
     token_kinds: Tuple[TokenKind, ...]
     word_set: FrozenSet[str]
 
+    @property
+    def has_newline(self) -> bool:
+        """True if the original line ended with a trailing newline ('\\n' or '\\r\\n')."""
+        return bool(self.line_ending)
+
 
 @dataclass(frozen=True)
 class SkeletonMatch:
@@ -140,7 +145,10 @@ class CleanPatchHunk(SerializableModel):
 
 @dataclass
 class ConflictCluster(SerializableModel):
-    """A converged Step 2 conflict cluster over (T, R, H) with shifted coordinates in T_clean."""
+    """A converged Step 2 conflict cluster over (T, R, H) with shifted coordinates in T_clean.
+
+    `t_lines`, `r_lines`, and `h_lines` store newline-stripped strings (`keepends=False`).
+    """
     t_start: int
     t_end: int
     t_clean_start: int
@@ -152,7 +160,10 @@ class ConflictCluster(SerializableModel):
 
 @dataclass
 class TwoStepDerenderPlan(SerializableModel):
-    """Complete pure-computation output of the 3-way template de-rendering engine."""
+    """Complete pure-computation output of the 3-way template de-rendering engine.
+
+    `t_lines` and `t_clean_lines` store newline-stripped strings (`keepends=False`).
+    """
     t_lines: Tuple[str, ...] = ()
     t_clean_lines: Tuple[str, ...] = ()
     clean_hunks: Tuple[CleanPatchHunk, ...] = ()

@@ -52,8 +52,8 @@ Pipeline Architecture:
                 * Returns False if not accept_conflicts
                 * Step 1 (T -> T_clean): _apply_step1_clean_hunks(src_file, clean_hunks, accept_conflicts=False)
                 * Step 2 (T_clean -> T_merged): _apply_step2_conflict_clusters(src_file, conflict_clusters)
-                    - Splices diff3 blocks ('<<<<<<< ', '||||||| ', '=======', '>>>>>>> ') in reverse
-                      cluster order via _apply_single_conflict_cluster -> _format_conflict_cluster_diff3
+                    - Splices diff3 blocks ('<<<<<<< ', '||||||| ', '=======', '>>>>>>> ') via
+                      splice_conflict_clusters_diff3 -> _format_conflict_cluster_diff3
                     - Writes joined text via _join_lines_with_eof_newline
             - Static Single-Step Path (when patch_content.conflict_clusters is empty):
                 * Step 1: _apply_step1_clean_hunks(src_file, clean_hunks, accept_conflicts=accept_conflicts)
@@ -73,6 +73,7 @@ Layers (ordered bottom-up by dependency):
         generate_install_git_patch
         generate_source_to_install_patch
     Layer 2: Pure Unified Diff Hunk Parser
+        _RawHunk
         _has_hunk_headers
         _step_parse_hunk_line
         _resolve_hunk_target_bounds
@@ -90,7 +91,7 @@ Layers (ordered bottom-up by dependency):
         _resolve_step1_eof_newline
         _apply_step1_clean_hunks
         _format_conflict_cluster_diff3
-        _apply_single_conflict_cluster
+        splice_conflict_clusters_diff3
         _apply_step2_conflict_clusters
         apply_source_patch
 ===============================================================================
@@ -98,7 +99,9 @@ Layers (ordered bottom-up by dependency):
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from functools import reduce
+from itertools import chain, starmap
 import logging
 from pathlib import Path
 import re
@@ -112,8 +115,24 @@ from ..utils.func_utils import choose
 logger = logging.getLogger(__name__)
 
 _UNIFIED_HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-# _RawHunk: (old_start, old_count, new_count, hunk_old_lines, hunk_new_lines, old_eof_nl, new_eof_nl, last_op)
-_RawHunk = Tuple[int, int, int, List[str], List[str], bool, bool, str]
+
+
+@dataclass(frozen=True)
+class _RawHunk:
+    """Intermediate accumulator for a single unified diff hunk during line-by-line parsing."""
+    old_start: int
+    old_count: int
+    new_count: int
+    old_lines: Tuple[str, ...] = ()
+    new_lines: Tuple[str, ...] = ()
+    old_eof_newline: bool = True
+    new_eof_newline: bool = True
+    last_op: str = ""
+
+    @property
+    def is_count_valid(self) -> bool:
+        """True when collected old/new line counts match the '@@ -old_s,old_c +new_s,new_c @@' header."""
+        return len(self.old_lines) == self.old_count and len(self.new_lines) == self.new_count
 
 
 def _has_hunk_headers(patch_text: str) -> bool:
@@ -205,41 +224,41 @@ def _step_parse_hunk_line(
         new_count = choose(m.group(4) is not None, int(m.group(4) or "0"), 1)
         return (
             [*hunks, *(choose(cur is not None, [cur], []))],
-            (old_start, old_count, new_count, [], [], True, True, ""),
+            _RawHunk(old_start=old_start, old_count=old_count, new_count=new_count),
         )
     if cur is None:
         return state
-    old_s, old_c, new_c, h_old, h_new, old_eof_nl, new_eof_nl, last_op = cur
     if line.startswith(" "):
         return (
             hunks,
-            (
-                old_s,
-                old_c,
-                new_c,
-                [*h_old, line[1:]],
-                [*h_new, line[1:]],
-                old_eof_nl,
-                new_eof_nl,
-                " ",
+            replace(
+                cur,
+                old_lines=(*cur.old_lines, line[1:]),
+                new_lines=(*cur.new_lines, line[1:]),
+                last_op=" ",
             ),
         )
     if line.startswith("-"):
         return (
             hunks,
-            (old_s, old_c, new_c, [*h_old, line[1:]], h_new, old_eof_nl, new_eof_nl, "-"),
+            replace(cur, old_lines=(*cur.old_lines, line[1:]), last_op="-"),
         )
     if line.startswith("+"):
         return (
             hunks,
-            (old_s, old_c, new_c, h_old, [*h_new, line[1:]], old_eof_nl, new_eof_nl, "+"),
+            replace(cur, new_lines=(*cur.new_lines, line[1:]), last_op="+"),
         )
     if line.startswith("\\"):
-        next_old_eof = choose(last_op in ("-", " "), False, old_eof_nl)
-        next_new_eof = choose(last_op in ("+", " "), False, new_eof_nl)
+        next_old_eof = choose(cur.last_op in ("-", " "), False, cur.old_eof_newline)
+        next_new_eof = choose(cur.last_op in ("+", " "), False, cur.new_eof_newline)
         return (
             hunks,
-            (old_s, old_c, new_c, h_old, h_new, next_old_eof, next_new_eof, "\\"),
+            replace(
+                cur,
+                old_eof_newline=next_old_eof,
+                new_eof_newline=next_new_eof,
+                last_op="\\",
+            ),
         )
     raise ValueError(f"Malformed unified diff line inside hunk: {line!r}")
 
@@ -276,25 +295,25 @@ def parse_unified_patch_hunks(
         _step_parse_hunk_line, patch_content.splitlines(), initial_state
     )
     all_hunks = [*raw_hunks, *(choose(last_hunk is not None, [last_hunk], []))]
-    # Validate that collected '-'/' ' and '+'/' ' line counts match the '@@ -old_s,old_c +new_s,new_c @@' header
-    if not all_hunks or any(
-        len(h_old) != old_c or len(h_new) != new_c
-        for _, old_c, new_c, h_old, h_new, _, _, _ in all_hunks
-    ):
+    if not all_hunks or any(not h.is_count_valid for h in all_hunks):
         raise ValueError("Malformed unified diff: hunk line counts do not match '@@' header.")
+
     # Convert each raw hunk into a CleanPatchHunk with 0-based [t_start, t_end) slice bounds
-    return tuple(
-        CleanPatchHunk(
-            t_start=start_idx,
-            t_end=end_idx,
-            old_lines=tuple(h_old),
-            new_lines=tuple(h_new),
-            old_eof_newline=old_eof_nl,
-            new_eof_newline=new_eof_nl,
-        )
-        for old_s, old_c, _, h_old, h_new, old_eof_nl, new_eof_nl, _ in all_hunks
-        for start_idx, end_idx in (_resolve_hunk_target_bounds(old_s, old_c),)
+    t_ranges = map(
+        lambda raw_hunk: _resolve_hunk_target_bounds(raw_hunk.old_start, raw_hunk.old_count),
+        all_hunks,
     )
+    return tuple(starmap(
+        lambda raw_hunk, t_rng: CleanPatchHunk(
+            t_start=t_rng[0],
+            t_end=t_rng[1],
+            old_lines=raw_hunk.old_lines,
+            new_lines=raw_hunk.new_lines,
+            old_eof_newline=raw_hunk.old_eof_newline,
+            new_eof_newline=raw_hunk.new_eof_newline,
+        ),
+        zip(all_hunks, t_ranges),
+    ))
 
 
 def _check_hunk_valid(hunk: CleanPatchHunk) -> bool:
@@ -520,36 +539,48 @@ def _apply_step1_clean_hunks(
         return False
 
 
-def _format_conflict_cluster_diff3(cluster: ConflictCluster) -> List[str]:
-    """Formats a single 3-way ConflictCluster into newline-stripped diff3 conflict marker lines."""
-    return [
-        "<<<<<<< ",
-        *(ln.rstrip("\r\n") for ln in cluster.t_lines),
-        "||||||| ",
-        *(ln.rstrip("\r\n") for ln in cluster.r_lines),
-        "=======",
-        *(ln.rstrip("\r\n") for ln in cluster.h_lines),
-        ">>>>>>> ",
-    ]
-
-
-def _apply_single_conflict_cluster(
-    lines: List[str],
+def _format_conflict_cluster_diff3(
     cluster: ConflictCluster,
-) -> List[str]:
-    """Replaces newline-stripped `lines[cluster.t_clean_start : cluster.t_clean_end]` with its diff3 block."""
-    return [
-        *lines[: cluster.t_clean_start],
-        *_format_conflict_cluster_diff3(cluster),
-        *lines[cluster.t_clean_end :],
-    ]
+) -> Tuple[str, ...]:
+    """Formats a single 3-way `ConflictCluster` into newline-stripped `diff3` marker lines."""
+    return (
+        "<<<<<<< ",
+        *cluster.t_lines,
+        "||||||| ",
+        *cluster.r_lines,
+        "=======",
+        *cluster.h_lines,
+        ">>>>>>> ",
+    )
+
+
+def splice_conflict_clusters_diff3(
+    t_clean_lines: Sequence[str],
+    conflict_clusters: Sequence[ConflictCluster],
+) -> Tuple[str, ...]:
+    """Purely splices Step 2 `diff3` conflict marker blocks onto `t_clean_lines` at `[t_clean_start, t_clean_end)`."""
+    if not conflict_clusters:
+        return tuple(t_clean_lines)
+    prev_ends = (0, *(c.t_clean_end for c in conflict_clusters))
+    next_starts = (*(c.t_clean_start for c in conflict_clusters), len(t_clean_lines))
+    gaps = tuple(starmap(lambda start, end: t_clean_lines[start:end], zip(prev_ends, next_starts)))
+    interleaved = chain.from_iterable(
+        starmap(
+            lambda gap, cluster: (
+                *gap,
+                *_format_conflict_cluster_diff3(cluster),
+            ),
+            zip(gaps[:-1], conflict_clusters),
+        )
+    )
+    return (*interleaved, *gaps[-1])
 
 
 def _apply_step2_conflict_clusters(
     src_file: Path,
     conflict_clusters: Sequence[ConflictCluster],
 ) -> bool:
-    """Injects Step 2 3-way conflict clusters onto `T_clean` (`src_file` after Step 1) in reverse order."""
+    """Injects Step 2 3-way conflict clusters onto `T_clean` (`src_file` after Step 1)."""
     if not conflict_clusters:
         return True
     if not src_file.is_file():
@@ -558,12 +589,7 @@ def _apply_step2_conflict_clusters(
     t_clean_text = src_file.read_text(encoding="utf-8", errors="replace")
     has_eof_nl = t_clean_text.endswith(("\n", "\r"))
     t_clean_lines = t_clean_text.splitlines()
-    rev_clusters = list(reversed(conflict_clusters))
-    merged_lines = reduce(
-        _apply_single_conflict_cluster,
-        rev_clusters,
-        t_clean_lines,
-    )
+    merged_lines = splice_conflict_clusters_diff3(t_clean_lines, conflict_clusters)
     # step 2 always conflicts,
     # so always add a trailing newline if the last cluster touches EOF,
     # otherwise preserve the original EOF state

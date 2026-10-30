@@ -64,6 +64,7 @@ from .adopt_patch import (
     generate_install_git_patch,
     generate_source_to_install_patch,
     parse_unified_patch_hunks,
+    splice_conflict_clusters_diff3,
 )
 from .adopt_plan import (
     assert_source_file_clean,
@@ -93,6 +94,7 @@ __all__ = [
     "generate_source_to_install_patch",
     "parse_unified_patch_hunks",
     "check_patch_conflicts",
+    "splice_conflict_clusters_diff3",
     "apply_source_patch",
     # Layer 1c: Drift Discovery & Planning
     "get_drifted_packages",

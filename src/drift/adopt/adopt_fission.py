@@ -29,27 +29,28 @@ Pipeline Architecture:
         find_monotonic_line_matches(a_lines, b_lines) [Layer 2]
             - Evaluates pairwise line similarity via compute_skeleton_match(line_a, line_b):
                 * O(1) Word-Set Pruning: rejects pairs with disjoint `word_set` (unless both lack words)
-                * Space-Bridge Coalescing (_coalesce_space_bridged_opcodes): merges non-equal token
-                  opcodes separated only by `SPACE` tokens (_is_space_only_equal_opcode) so internal
-                  spaces inside template tags (`{{ var }}` -> `hello world`) form a single slot
+                * Space-Bridge Coalescing (_coalesce_space_bridged_opcodes): merges non-equal
+                  `_TokenOpcode`s separated only by `SPACE` tokens (`_TokenOpcode.is_space_only_equal`)
+                  so internal spaces inside template tags (`{{ var }}` -> `hello world`) form a single slot
                 * Skeleton Gate: requires >= 1 shared `WORD` token (or >= 2 `PUNCT` tokens if wordless)
                 * Slot-Normalized Score: computes `S = E_skel / (E_skel + N_slots)` where
                   `E_skel = 1.0 * n_word + 0.25 * n_punct` and `N_slots` counts non-space replacement
-                  spans (_has_non_space_tokens); rejects pairs with `S < 0.5`
-                * Skeleton Signature: builds a tuple of static tokens with `"\x00"` placeholders for
-                  each variable slot
+                  spans (`_TokenOpcode.has_non_space_tokens`); rejects pairs with `S < 0.5`
+                * Skeleton Signature (_opcode_signature_tokens): builds a tuple of static tokens with
+                  `"\x00"` placeholders for each variable slot
                 -> Returns SkeletonMatch(is_valid, score, signature)
             - Bidirectional Uniqueness Filtering (_filter_unique_skeleton_matrix):
                 * Invalidates any candidate `(i, j)` whose `signature` appears more than once in row `i`
                   or column `j`, preventing false 1-to-1 pairings across loop-unrolled lines (`{% for %}`)
-            - 2D Dynamic Programming (_dp_row / _dp_cell):
+            - 2D Dynamic Programming (_DpCell / _dp_row / _dp_cell):
                 * Selects the highest-scoring strictly monotonic (`i_1 < i_2` and `j_1 < j_2`) set of
                   valid 1-to-1 line pairs within a `"replace"` block
             -> Returns List[Tuple[int, int]] of matched relative `(rel_i, rel_j)` line indices
 
     3. Second-Pass Sentinel Hunk Fission (`T -> R` and `R -> H`):
         fission_diff_units(src_tokens, dst_tokens, relation) [Layer 3]
-            - Runs first-pass line-level `SequenceMatcher` on `raw_line` sequences:
+            - Runs first-pass line-level `SequenceMatcher` on `raw_line` sequences and expands each
+              opcode via _expand_raw_opcode_to_units:
                 * `"equal"` spans -> expands into 1-to-1 `DiffUnitType.EQUAL` units (1 line each)
                 * `"insert"` / `"delete"` spans -> wraps directly as `INSERT` / `DELETE` `DiffUnit`s
                 * `"replace"` spans -> delegates to _fission_replace_block:
@@ -57,8 +58,9 @@ Pipeline Architecture:
                       valid, else `BLOCK_EDIT`
                     - Multi-line `M <-> N`: finds 1-to-1 anchors via `find_monotonic_line_matches`,
                       replaces matched line pairs with unique `"\x00__DRIFT_MATCH_k__\n"` sentinels,
-                      and runs a second-pass `SequenceMatcher` so unmatched gaps between anchors split
-                      cleanly into minimal `SINGLE_EDIT`, `BLOCK_EDIT`, `INSERT`, and `DELETE` units
+                      and runs a second-pass `SequenceMatcher` (_expand_sub_opcode_to_units) so
+                      unmatched gaps between anchors split cleanly into minimal `SINGLE_EDIT`,
+                      `BLOCK_EDIT`, `INSERT`, and `DELETE` units
             -> Returns Tuple[DiffUnit, ...]
 
     4. Single-Line (`1 <-> 1 <-> 1`) Closed-Interval Token Calculus:
@@ -66,15 +68,17 @@ Pipeline Architecture:
             - Finds all `R` line indices where both `TR` and `RH` have a 1-to-1 `SINGLE_EDIT` unit
             - For each shared `1 <-> 1 <-> 1` line triple `(T_i, R_r, H_j)`, runs
               try_derender_single_line(t_line, r_line, h_line):
-                * Extracts template variable intervals `[c_1, c_2]` on `R_r` (with space-bridge coalescing)
-                  and host edit intervals `[p_1, p_2]` on `R_r`
-                * Closed-Interval Overlap Check: tests `max(p_1, c_1) <= min(p_2, c_2)` on token boundaries
-                  so even zero-width insertions immediately adjacent to a variable slot are caught
+                * Extracts template variable `_TokenSpan`s `[c_1, c_2]` on `R_r` (with space-bridge
+                  coalescing) and host edit `_TokenSpan`s `[p_1, p_2]` on `R_r`
+                * Closed-Interval Overlap Check (`_TokenSpan.overlaps_closed`): tests
+                  `max(p_1, c_1) <= min(p_2, c_2)` on token boundaries so even zero-width insertions
+                  immediately adjacent to a variable slot are caught
                 * Clean Disjoint Edit (Case 1.2): splices both template variable tokens and host static
-                  edits onto `R_r` in a single left-to-right pass -> returns synthesized line `H'`
+                  edits onto `R_r` in a single gap-interleaving pass -> returns newline-stripped line `H'`
                 * Overlapping Edit (Case 1.3): returns `None`
-            - Upgrades clean `RH` units to `DiffUnitType.SINGLE_SKEL_EDIT` with `derendered_lines=(H',)`
-              and marks colliding `TR` and `RH` units with `is_conflict=True`
+            - Partitions results via `partition` to upgrade clean `RH` units to
+              `DiffUnitType.SINGLE_SKEL_EDIT` with `derendered_lines=(H',)` and mark colliding `TR`
+              and `RH` units with `is_conflict=True`
             -> Returns Tuple[Tuple[DiffUnit, ...], Tuple[DiffUnit, ...]]
 
 -------------------------------------------------------------------------------
@@ -83,16 +87,20 @@ Layers (ordered bottom-up by dependency):
         _classify_token
         tokenize_line
     Layer 2: Slot-Normalized Skeleton Similarity & Monotonic 2D DP Line Matching
-        _is_space_only_equal_opcode
+        _TokenOpcode
+        _DpCell
         _coalesce_space_bridged_opcodes
-        _has_non_space_tokens
+        _opcode_signature_tokens
         compute_skeleton_match
         _filter_unique_skeleton_matrix
         find_monotonic_line_matches
     Layer 3: Second-Pass Sentinel Hunk Fission
+        _expand_sub_opcode_to_units
         _fission_replace_block
+        _expand_raw_opcode_to_units
         fission_diff_units
     Layer 4: Single-Line (`1 <-> 1 <-> 1`) Closed-Interval Token Calculus
+        _TokenSpan
         try_derender_single_line
         refine_single_line_units
 ===============================================================================
@@ -101,9 +109,10 @@ Layers (ordered bottom-up by dependency):
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import difflib
 from functools import reduce
+from itertools import chain, compress, product, starmap
 import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -115,16 +124,14 @@ from ..models.adopt_models import (
     TokenizedLine,
     TokenKind,
 )
-from ..utils.func_utils import branch, choose
+from ..utils.func_utils import branch, choose, partition
 
 _TOKEN_RE = re.compile(r"\w+|\s+|[^\w\s]")
-_WORD_Weight = 1.0
+_WORD_WEIGHT = 1.0
 _PUNCT_WEIGHT = 0.25
 _SLOT_PENALTY = 1.0
 _SIMILARITY_THRESHOLD = 0.5
 _INVALID_SKELETON_MATCH = SkeletonMatch(is_valid=False, score=0.0, signature=())
-
-_Opcode = Tuple[str, int, int, int, int]
 
 
 # ==============================================================================
@@ -159,7 +166,7 @@ def tokenize_line(line: str) -> TokenizedLine:
     tokens = tuple(_TOKEN_RE.findall(stripped))
     token_kinds = tuple(map(_classify_token, tokens))
     word_set = frozenset(
-        tok for tok, kind in zip(tokens, token_kinds) if kind == TokenKind.WORD
+        compress(tokens, map(lambda k: k == TokenKind.WORD, token_kinds))
     )
     return TokenizedLine(
         raw_line=line,
@@ -176,19 +183,61 @@ def tokenize_line(line: str) -> TokenizedLine:
 # ==============================================================================
 
 
-def _is_space_only_equal_opcode(op: _Opcode, line_a: TokenizedLine) -> bool:
-    """Returns True if `op` is an `'equal'` token opcode consisting exclusively of `SPACE` tokens."""
-    tag, i1, i2, _, _ = op
-    return tag == "equal" and all(
-        kind == TokenKind.SPACE for kind in line_a.token_kinds[i1:i2]
-    )
+@dataclass(frozen=True)
+class _TokenOpcode:
+    """Structured token-level diff opcode aligning `line_a.tokens[a_start:a_end]` with `line_b.tokens[b_start:b_end]`."""
+    tag: str
+    a_start: int
+    a_end: int
+    b_start: int
+    b_end: int
+
+    @property
+    def is_equal(self) -> bool:
+        """True if this opcode represents an `'equal'` token slice."""
+        return self.tag == "equal"
+
+    def is_space_only_equal(self, line_a: TokenizedLine) -> bool:
+        """True if this opcode is an `'equal'` span consisting exclusively of `SPACE` tokens."""
+        return self.is_equal and all(
+            kind == TokenKind.SPACE
+            for kind in line_a.token_kinds[self.a_start : self.a_end]
+        )
+
+    def has_non_space_tokens(
+        self,
+        line_a: TokenizedLine,
+        line_b: TokenizedLine,
+    ) -> bool:
+        """True if either side's token slice contains at least one non-whitespace (`WORD` or `PUNCT`) token."""
+        return any(
+            k != TokenKind.SPACE for k in line_a.token_kinds[self.a_start : self.a_end]
+        ) or any(
+            k != TokenKind.SPACE for k in line_b.token_kinds[self.b_start : self.b_end]
+        )
+
+    def merge_to(self, end_op: _TokenOpcode) -> _TokenOpcode:
+        """Merges `self` through `end_op` into a single `'replace'` span."""
+        return _TokenOpcode(
+            tag="replace",
+            a_start=self.a_start,
+            a_end=end_op.a_end,
+            b_start=self.b_start,
+            b_end=end_op.b_end,
+        )
+
+
+@dataclass(frozen=True)
+class _DpCell:
+    """2D dynamic programming state storing cumulative skeleton score and matched `(rel_i, rel_j)` pairs."""
+    score: float = 0.0
+    pairs: Tuple[Tuple[int, int], ...] = ()
 
 
 def _coalesce_space_bridged_opcodes(
-    opcodes: Sequence[_Opcode],
+    raw_opcodes: Sequence[Tuple[str, int, int, int, int]],
     line_a: TokenizedLine,
-    line_b: TokenizedLine,
-) -> List[_Opcode]:
+) -> List[_TokenOpcode]:
     """Merges non-equal token opcodes that are separated only by whitespace-only `'equal'` spans.
 
     Why this is needed:
@@ -199,38 +248,42 @@ def _coalesce_space_bridged_opcodes(
         Coalescing across space-only bridges guarantees the entire template expression is
         counted and bounded as one contiguous slot.
     """
-    if not opcodes:
-        return []
+    typed_ops = starmap(_TokenOpcode, raw_opcodes)
 
-    def _step(acc: List[_Opcode], op: _Opcode) -> List[_Opcode]:
+    def _step(acc: List[_TokenOpcode], op: _TokenOpcode) -> List[_TokenOpcode]:
         if not acc:
             return [op]
-        tag, i1, i2, j1, j2 = op
-        if tag != "equal":
+        if not op.is_equal:
             if (
                 len(acc) >= 2
-                and acc[-2][0] != "equal"
-                and _is_space_only_equal_opcode(acc[-1], line_a)
+                and not acc[-2].is_equal
+                and acc[-1].is_space_only_equal(line_a)
             ):
-                prev_non_eq = acc[-2]
-                merged: _Opcode = ("replace", prev_non_eq[1], i2, prev_non_eq[3], j2)
-                return [*acc[:-2], merged]
-            if acc[-1][0] != "equal":
-                prev = acc[-1]
-                return [*acc[:-1], ("replace", prev[1], i2, prev[3], j2)]
+                return [*acc[:-2], acc[-2].merge_to(op)]
+            if not acc[-1].is_equal:
+                return [*acc[:-1], acc[-1].merge_to(op)]
         return [*acc, op]
 
-    return reduce(_step, opcodes, [])
+    return reduce(_step, typed_ops, [])
 
 
-def _has_non_space_tokens(
-    kinds_a: Sequence[TokenKind],
-    kinds_b: Sequence[TokenKind],
-) -> bool:
-    """Returns True if either token-kind slice contains at least one non-whitespace (`WORD` or `PUNCT`) token."""
-    return any(k != TokenKind.SPACE for k in kinds_a) or any(
-        k != TokenKind.SPACE for k in kinds_b
-    )
+def _opcode_signature_tokens(
+    op: _TokenOpcode,
+    line_a: TokenizedLine,
+    line_b: TokenizedLine,
+) -> Tuple[str, ...]:
+    """Extracts the skeleton signature contribution of a single `_TokenOpcode`."""
+    if op.is_equal:
+        return tuple(
+            compress(
+                line_a.tokens[op.a_start : op.a_end],
+                map(
+                    lambda k: k != TokenKind.SPACE,
+                    line_a.token_kinds[op.a_start : op.a_end],
+                ),
+            )
+        )
+    return choose(op.has_non_space_tokens(line_a, line_b), ("\x00",), ())
 
 
 def compute_skeleton_match(
@@ -270,56 +323,33 @@ def compute_skeleton_match(
     raw_opcodes = difflib.SequenceMatcher(
         None, line_a.tokens, line_b.tokens, autojunk=False
     ).get_opcodes()
-    opcodes = _coalesce_space_bridged_opcodes(raw_opcodes, line_a, line_b)
+    opcodes = _coalesce_space_bridged_opcodes(raw_opcodes, line_a)
+    equal_ops, non_equal_ops = partition(lambda op: op.is_equal, opcodes)
 
-    n_word = sum(
-        1
-        for tag, i1, i2, _, _ in opcodes
-        if tag == "equal"
-        for kind in line_a.token_kinds[i1:i2]
-        if kind == TokenKind.WORD
+    equal_kinds = tuple(
+        chain.from_iterable(
+            map(lambda op: line_a.token_kinds[op.a_start : op.a_end], equal_ops)
+        )
     )
-    n_punct = sum(
-        1
-        for tag, i1, i2, _, _ in opcodes
-        if tag == "equal"
-        for kind in line_a.token_kinds[i1:i2]
-        if kind == TokenKind.PUNCT
-    )
+    n_word = sum(1 for kind in equal_kinds if kind == TokenKind.WORD)
+    n_punct = sum(1 for kind in equal_kinds if kind == TokenKind.PUNCT)
 
     gate_passed = choose(both_lack_words, n_punct >= 2, n_word >= 1)
     if not gate_passed:
         return _INVALID_SKELETON_MATCH
 
     n_slots = sum(
-        1
-        for tag, i1, i2, j1, j2 in opcodes
-        if tag != "equal"
-        and _has_non_space_tokens(line_a.token_kinds[i1:i2], line_b.token_kinds[j1:j2])
+        1 for op in non_equal_ops if op.has_non_space_tokens(line_a, line_b)
     )
-    e_skel = _WORD_Weight * n_word + _PUNCT_WEIGHT * n_punct
+    e_skel = _WORD_WEIGHT * n_word + _PUNCT_WEIGHT * n_punct
     denom = e_skel + _SLOT_PENALTY * n_slots
     score = choose(denom > 0.0, e_skel / denom, 0.0)
     if score < _SIMILARITY_THRESHOLD:
         return _INVALID_SKELETON_MATCH
 
     signature = tuple(
-        sig_tok
-        for tag, i1, i2, j1, j2 in opcodes
-        for sig_tok in branch(
-            tag == "equal",
-            lambda i1=i1, i2=i2: [
-                tok
-                for tok, kind in zip(line_a.tokens[i1:i2], line_a.token_kinds[i1:i2])
-                if kind != TokenKind.SPACE
-            ],
-            lambda i1=i1, i2=i2, j1=j1, j2=j2: choose(
-                _has_non_space_tokens(
-                    line_a.token_kinds[i1:i2], line_b.token_kinds[j1:j2]
-                ),
-                ["\x00"],
-                [],
-            ),
+        chain.from_iterable(
+            map(lambda op: _opcode_signature_tokens(op, line_a, line_b), opcodes)
         )
     )
     return SkeletonMatch(is_valid=True, score=score, signature=signature)
@@ -341,17 +371,19 @@ def _filter_unique_skeleton_matrix(
     """
     row_sig_counts: List[Counter[Tuple[str, ...]]] = [
         Counter(
-            raw_matrix[i][j].signature
-            for j in range(n_len)
-            if raw_matrix[i][j].is_valid
+            map(
+                lambda cell: cell.signature,
+                filter(lambda cell: cell.is_valid, raw_matrix[i]),
+            )
         )
         for i in range(m_len)
     ]
     col_sig_counts: List[Counter[Tuple[str, ...]]] = [
         Counter(
-            raw_matrix[i][j].signature
-            for i in range(m_len)
-            if raw_matrix[i][j].is_valid
+            map(
+                lambda i: raw_matrix[i][j].signature,
+                filter(lambda i: raw_matrix[i][j].is_valid, range(m_len)),
+            )
         )
         for j in range(n_len)
     ]
@@ -397,42 +429,99 @@ def find_monotonic_line_matches(
         for i in range(m_len)
     ]
     matrix = _filter_unique_skeleton_matrix(raw_matrix, m_len, n_len)
+    empty_cell = _DpCell()
 
     def _dp_row(
-        prev_row: List[Tuple[float, Tuple[Tuple[int, int], ...]]],
+        prev_row: List[_DpCell],
         i: int,
-    ) -> List[Tuple[float, Tuple[Tuple[int, int], ...]]]:
+    ) -> List[_DpCell]:
         def _dp_cell(
-            cur_row: List[Tuple[float, Tuple[Tuple[int, int], ...]]],
+            cur_row: List[_DpCell],
             j: int,
-        ) -> List[Tuple[float, Tuple[Tuple[int, int], ...]]]:
+        ) -> List[_DpCell]:
             best = choose(
-                prev_row[j][0] >= cur_row[-1][0],
+                prev_row[j].score >= cur_row[-1].score,
                 prev_row[j],
                 cur_row[-1],
             )
             cell = matrix[i - 1][j - 1]
-            diag_score = prev_row[j - 1][0] + cell.score
+            diag_score = prev_row[j - 1].score + cell.score
             next_best = choose(
-                cell.is_valid and diag_score > best[0],
-                (diag_score, (*prev_row[j - 1][1], (i - 1, j - 1))),
+                cell.is_valid and diag_score > best.score,
+                _DpCell(
+                    score=diag_score,
+                    pairs=(*prev_row[j - 1].pairs, (i - 1, j - 1)),
+                ),
                 best,
             )
             return [*cur_row, next_best]
 
-        return reduce(_dp_cell, range(1, n_len + 1), [(0.0, ())])
+        return reduce(_dp_cell, range(1, n_len + 1), [empty_cell])
 
     final_row = reduce(
         _dp_row,
         range(1, m_len + 1),
-        [(0.0, ()) for _ in range(n_len + 1)],
+        [empty_cell for _ in range(n_len + 1)],
     )
-    return list(final_row[n_len][1])
+    return list(final_row[n_len].pairs)
 
 
 # ==============================================================================
 # Layer 3: Second-Pass Sentinel Hunk Fission
 # ==============================================================================
+
+
+def _expand_sub_opcode_to_units(
+    sub_tag: str,
+    si1: int,
+    si2: int,
+    sj1: int,
+    sj2: int,
+    src_tokens: Sequence[TokenizedLine],
+    dst_tokens: Sequence[TokenizedLine],
+    i1: int,
+    j1: int,
+    relation: DiffRelation,
+) -> Tuple[DiffUnit, ...]:
+    """Converts a single second-pass sentinel `SequenceMatcher` opcode into atomic `DiffUnit`s."""
+    if sub_tag == "equal":
+        return tuple(
+            map(
+                lambda offset: DiffUnit(
+                    relation=relation,
+                    unit_type=choose(
+                        src_tokens[i1 + si1 + offset].raw_line
+                        == dst_tokens[j1 + sj1 + offset].raw_line,
+                        DiffUnitType.EQUAL,
+                        DiffUnitType.SINGLE_EDIT,
+                    ),
+                    src_start=i1 + si1 + offset,
+                    src_end=i1 + si1 + offset + 1,
+                    dst_start=j1 + sj1 + offset,
+                    dst_end=j1 + sj1 + offset + 1,
+                ),
+                range(si2 - si1),
+            )
+        )
+    unit_type = choose(
+        sub_tag == "insert",
+        DiffUnitType.INSERT,
+        choose(
+            sub_tag == "delete",
+            DiffUnitType.DELETE,
+            DiffUnitType.BLOCK_EDIT,
+        ),
+    )
+    return (
+        DiffUnit(
+            relation=relation,
+            unit_type=unit_type,
+            src_start=i1 + si1,
+            src_end=i1 + si2,
+            dst_start=j1 + sj1,
+            dst_end=j1 + sj2,
+        ),
+    )
 
 
 def _fission_replace_block(
@@ -491,47 +580,61 @@ def _fission_replace_block(
         None, sub_src, sub_dst, autojunk=False
     ).get_opcodes()
 
-    return [
-        unit
-        for sub_tag, si1, si2, sj1, sj2 in sub_opcodes
-        for unit in branch(
-            sub_tag == "equal",
-            lambda si1=si1, si2=si2, sj1=sj1: [
-                DiffUnit(
-                    relation=relation,
-                    unit_type=choose(
-                        src_tokens[i1 + si1 + offset].raw_line
-                        == dst_tokens[j1 + sj1 + offset].raw_line,
-                        DiffUnitType.EQUAL,
-                        DiffUnitType.SINGLE_EDIT,
-                    ),
-                    src_start=i1 + si1 + offset,
-                    src_end=i1 + si1 + offset + 1,
-                    dst_start=j1 + sj1 + offset,
-                    dst_end=j1 + sj1 + offset + 1,
-                )
-                for offset in range(si2 - si1)
-            ],
-            lambda sub_tag=sub_tag, si1=si1, si2=si2, sj1=sj1, sj2=sj2: [
-                DiffUnit(
-                    relation=relation,
-                    unit_type=choose(
-                        sub_tag == "insert",
-                        DiffUnitType.INSERT,
-                        choose(
-                            sub_tag == "delete",
-                            DiffUnitType.DELETE,
-                            DiffUnitType.BLOCK_EDIT,
-                        ),
-                    ),
-                    src_start=i1 + si1,
-                    src_end=i1 + si2,
-                    dst_start=j1 + sj1,
-                    dst_end=j1 + sj2,
-                )
-            ],
+    return list(
+        chain.from_iterable(
+            starmap(
+                lambda sub_tag, si1, si2, sj1, sj2: _expand_sub_opcode_to_units(
+                    sub_tag, si1, si2, sj1, sj2, src_tokens, dst_tokens, i1, j1, relation
+                ),
+                sub_opcodes,
+            )
         )
-    ]
+    )
+
+
+def _expand_raw_opcode_to_units(
+    tag: str,
+    i1: int,
+    i2: int,
+    j1: int,
+    j2: int,
+    src_tokens: Sequence[TokenizedLine],
+    dst_tokens: Sequence[TokenizedLine],
+    relation: DiffRelation,
+) -> Sequence[DiffUnit]:
+    """Converts a single first-pass line-level `SequenceMatcher` opcode into atomic `DiffUnit`s."""
+    if tag == "equal":
+        return tuple(
+            map(
+                lambda offset: DiffUnit(
+                    relation=relation,
+                    unit_type=DiffUnitType.EQUAL,
+                    src_start=i1 + offset,
+                    src_end=i1 + offset + 1,
+                    dst_start=j1 + offset,
+                    dst_end=j1 + offset + 1,
+                ),
+                range(i2 - i1),
+            )
+        )
+    if tag == "replace":
+        return _fission_replace_block(
+            src_tokens, dst_tokens, i1, i2, j1, j2, relation
+        )
+    return (
+        DiffUnit(
+            relation=relation,
+            unit_type=choose(
+                tag == "insert",
+                DiffUnitType.INSERT,
+                DiffUnitType.DELETE,
+            ),
+            src_start=i1,
+            src_end=i2,
+            dst_start=j1,
+            dst_end=j2,
+        ),
+    )
 
 
 def fission_diff_units(
@@ -560,41 +663,13 @@ def fission_diff_units(
     ).get_opcodes()
 
     return tuple(
-        unit
-        for tag, i1, i2, j1, j2 in raw_opcodes
-        for unit in branch(
-            tag == "equal",
-            lambda i1=i1, i2=i2, j1=j1: [
-                DiffUnit(
-                    relation=relation,
-                    unit_type=DiffUnitType.EQUAL,
-                    src_start=i1 + offset,
-                    src_end=i1 + offset + 1,
-                    dst_start=j1 + offset,
-                    dst_end=j1 + offset + 1,
-                )
-                for offset in range(i2 - i1)
-            ],
-            lambda tag=tag, i1=i1, i2=i2, j1=j1, j2=j2: branch(
-                tag == "replace",
-                lambda: _fission_replace_block(
-                    src_tokens, dst_tokens, i1, i2, j1, j2, relation
+        chain.from_iterable(
+            starmap(
+                lambda tag, i1, i2, j1, j2: _expand_raw_opcode_to_units(
+                    tag, i1, i2, j1, j2, src_tokens, dst_tokens, relation
                 ),
-                lambda: [
-                    DiffUnit(
-                        relation=relation,
-                        unit_type=choose(
-                            tag == "insert",
-                            DiffUnitType.INSERT,
-                            DiffUnitType.DELETE,
-                        ),
-                        src_start=i1,
-                        src_end=i2,
-                        dst_start=j1,
-                        dst_end=j2,
-                    )
-                ],
-            ),
+                raw_opcodes,
+            )
         )
     )
 
@@ -602,6 +677,18 @@ def fission_diff_units(
 # ==============================================================================
 # Layer 4: Single-Line (`1 <-> 1 <-> 1`) Closed-Interval Token Calculus
 # ==============================================================================
+
+
+@dataclass(frozen=True)
+class _TokenSpan:
+    """A token-slice replacement `r_line.tokens[r_start:r_end] -> replacement` on the `R` token axis."""
+    r_start: int
+    r_end: int
+    replacement: Tuple[str, ...]
+
+    def overlaps_closed(self, other: _TokenSpan) -> bool:
+        """True if closed token intervals `[self.r_start, self.r_end]` and `[other.r_start, other.r_end]` touch or overlap."""
+        return max(self.r_start, other.r_start) <= min(self.r_end, other.r_end)
 
 
 def try_derender_single_line(
@@ -619,10 +706,9 @@ def try_derender_single_line(
            edit touching or inserting immediately adjacent to a variable boundary (`p_2 == c_1` or
            `p_1 == c_2`) is conservatively classified as a conflict (Case 1.3 -> returns `None`).
         3. Synthesis (Case 1.2):
-           When all host edits are strictly disjoint from all variable slots, merges both lists
-           of `R`-axis token replacements in sorted order and reconstructs the de-rendered template
-           line `H'` (preserving `t_line`'s variable expressions alongside `h_line`'s static token
-           edits and `h_line.line_ending`).
+           When all host edits are strictly disjoint from all variable slots, splices both sets
+           of `R`-axis token replacements in a single gap-interleaving pass and returns the
+           newline-stripped de-rendered template line `H'`.
 
     Args:
         t_line: Tokenized template line from `T`.
@@ -630,58 +716,73 @@ def try_derender_single_line(
         h_line: Tokenized host-modified line from `H`.
 
     Returns:
-        The synthesized de-rendered template line `H'` (including trailing line ending) if all
-        edits are disjoint (Case 1.2), or `None` if any host edit touches a variable slot (Case 1.3).
+        The synthesized newline-stripped de-rendered template line `H'` if all edits are disjoint
+        (Case 1.2), or `None` if any host edit touches a variable slot (Case 1.3).
     """
     raw_tr_ops = difflib.SequenceMatcher(
         None, t_line.tokens, r_line.tokens, autojunk=False
     ).get_opcodes()
-    tr_ops = _coalesce_space_bridged_opcodes(raw_tr_ops, t_line, r_line)
-    rh_ops = difflib.SequenceMatcher(
-        None, r_line.tokens, h_line.tokens, autojunk=False
-    ).get_opcodes()
+    tr_ops = _coalesce_space_bridged_opcodes(raw_tr_ops, t_line)
+    rh_ops = tuple(
+        starmap(
+            _TokenOpcode,
+            difflib.SequenceMatcher(
+                None, r_line.tokens, h_line.tokens, autojunk=False
+            ).get_opcodes(),
+        )
+    )
 
-    var_intervals: List[Tuple[int, int, Tuple[str, ...]]] = [
-        (r1, r2, t_line.tokens[t1:t2])
-        for tag, t1, t2, r1, r2 in tr_ops
-        if tag != "equal"
-    ]
-    host_edits: List[Tuple[int, int, Tuple[str, ...]]] = [
-        (p1, p2, h_line.tokens[h1:h2])
-        for tag, p1, p2, h1, h2 in rh_ops
-        if tag != "equal"
-    ]
+    var_intervals = tuple(
+        map(
+            lambda op: _TokenSpan(
+                r_start=op.b_start,
+                r_end=op.b_end,
+                replacement=t_line.tokens[op.a_start : op.a_end],
+            ),
+            filter(lambda op: not op.is_equal, tr_ops),
+        )
+    )
+    host_edits = tuple(
+        map(
+            lambda op: _TokenSpan(
+                r_start=op.a_start,
+                r_end=op.a_end,
+                replacement=h_line.tokens[op.b_start : op.b_end],
+            ),
+            filter(lambda op: not op.is_equal, rh_ops),
+        )
+    )
 
     if not var_intervals:
-        return h_line.raw_line
+        return h_line.stripped_line
     if not host_edits:
-        return t_line.raw_line
+        return t_line.stripped_line
 
     has_closed_overlap = any(
-        max(p1, c1) <= min(p2, c2)
-        for p1, p2, _ in host_edits
-        for c1, c2, _ in var_intervals
+        starmap(
+            lambda h_edit, v_slot: h_edit.overlaps_closed(v_slot),
+            product(host_edits, var_intervals),
+        )
     )
     if has_closed_overlap:
         return None
 
-    combined_replacements = sorted(
-        [*var_intervals, *host_edits],
-        key=lambda item: (item[0], item[1]),
+    combined_spans = sorted(
+        (*var_intervals, *host_edits),
+        key=lambda s: (s.r_start, s.r_end),
     )
-
-    def _step_apply(
-        state: Tuple[int, List[str]],
-        rep: Tuple[int, int, Tuple[str, ...]],
-    ) -> Tuple[int, List[str]]:
-        cursor, acc = state
-        start_r, end_r, new_tokens = rep
-        prefix = list(r_line.tokens[cursor:start_r])
-        return (end_r, [*acc, *prefix, *new_tokens])
-
-    final_cursor, out_tokens = reduce(_step_apply, combined_replacements, (0, []))
-    trailing = list(r_line.tokens[final_cursor:])
-    return "".join([*out_tokens, *trailing, h_line.line_ending])
+    prev_ends = (0, *(s.r_end for s in combined_spans))
+    next_starts = (*(s.r_start for s in combined_spans), len(r_line.tokens))
+    gaps = tuple(
+        starmap(lambda start, end: r_line.tokens[start:end], zip(prev_ends, next_starts))
+    )
+    interleaved = chain.from_iterable(
+        starmap(
+            lambda gap, span: (*gap, *span.replacement),
+            zip(gaps[:-1], combined_spans),
+        )
+    )
+    return "".join((*interleaved, *gaps[-1]))
 
 
 def refine_single_line_units(
@@ -696,7 +797,7 @@ def refine_single_line_units(
     Locates every `R` line index `r_idx` where both `tr_units` and `rh_units` have a 1-line
     `SINGLE_EDIT` unit, then runs `try_derender_single_line`:
     - If de-rendering succeeds (Case 1.2): upgrades the `RH` unit to `DiffUnitType.SINGLE_SKEL_EDIT`
-      with `derendered_lines=(res,)`.
+      with newline-stripped `derendered_lines=(res,)`.
     - If de-rendering fails (Case 1.3 overlap): marks both the `TR` unit and the `RH` unit with
       `is_conflict=True`.
 
@@ -706,47 +807,58 @@ def refine_single_line_units(
     tr_single_by_r: Dict[int, int] = {
         u.r_start: idx
         for idx, u in enumerate(tr_units)
-        if u.unit_type == DiffUnitType.SINGLE_EDIT and u.r_end - u.r_start == 1
+        if u.unit_type == DiffUnitType.SINGLE_EDIT
     }
     rh_single_by_r: Dict[int, int] = {
         e.r_start: idx
         for idx, e in enumerate(rh_units)
-        if e.unit_type == DiffUnitType.SINGLE_EDIT and e.r_end - e.r_start == 1
+        if e.unit_type == DiffUnitType.SINGLE_EDIT
     }
 
     shared_r_indices = sorted(tr_single_by_r.keys() & rh_single_by_r.keys())
     if not shared_r_indices:
         return tuple(tr_units), tuple(rh_units)
 
-    derendered_by_r: Dict[int, Optional[str]] = {
-        r_idx: try_derender_single_line(
-            t_tokens[tr_units[tr_single_by_r[r_idx]].src_start],
-            r_tokens[r_idx],
-            h_tokens[rh_units[rh_single_by_r[r_idx]].dst_start],
-        )
-        for r_idx in shared_r_indices
-    }
+    evaluated_pairs = map(
+        lambda r_idx: (
+            r_idx,
+            try_derender_single_line(
+                t_tokens[tr_units[tr_single_by_r[r_idx]].src_start],
+                r_tokens[r_idx],
+                h_tokens[rh_units[rh_single_by_r[r_idx]].dst_start],
+            ),
+        ),
+        shared_r_indices,
+    )
+    clean_pairs, conflict_pairs = partition(
+        lambda pair: pair[1] is not None,
+        evaluated_pairs,
+    )
+
     tr_updates: Dict[int, DiffUnit] = {
         tr_single_by_r[r_idx]: replace(
-            tr_units[tr_single_by_r[r_idx]], is_conflict=True
+            tr_units[tr_single_by_r[r_idx]],
+            is_conflict=True,
         )
-        for r_idx, res in derendered_by_r.items()
-        if res is None
+        for r_idx, _ in conflict_pairs
     }
     rh_updates: Dict[int, DiffUnit] = {
-        rh_single_by_r[r_idx]: branch(
-            res is not None,
-            lambda r_idx=r_idx, res=res: replace(
+        **{
+            rh_single_by_r[r_idx]: replace(
                 rh_units[rh_single_by_r[r_idx]],
                 unit_type=DiffUnitType.SINGLE_SKEL_EDIT,
-                derendered_lines=(res or "",),
-            ),
-            lambda r_idx=r_idx: replace(
+                derendered_lines=(res,),
+            )
+            for r_idx, res in clean_pairs
+            if res is not None
+        },
+        **{
+            rh_single_by_r[r_idx]: replace(
                 rh_units[rh_single_by_r[r_idx]],
                 is_conflict=True,
-            ),
-        )
-        for r_idx, res in derendered_by_r.items()
+            )
+            for r_idx, _ in conflict_pairs
+        },
     }
     return (
         tuple(tr_updates.get(idx, u) for idx, u in enumerate(tr_units)),

@@ -49,7 +49,7 @@
 ### [`adopt_models.py`](adopt_models.py) — `drift adopt` Models
 * `AdoptStatus(str, Enum)`: 5-state adoption status (`UP_TO_DATE`, `SUCCESS`, `PARTIAL`, `SKIPPED`, `FAILED`).
 * `ItemAdoptOutcome(str, Enum)`: 3-state single-item outcome (`ADOPTED`, `SKIPPED`, `CONFLICT`; truthy iff `ADOPTED`).
-* `TokenKind(str, Enum)`, `TokenizedLine`, `SkeletonMatch`: Lossless Neovim-style word tokenization and slot-normalized skeleton similarity models.
+* `TokenKind(str, Enum)`, `TokenizedLine` (with `.has_newline`), `SkeletonMatch`: Lossless Neovim-style word tokenization and slot-normalized skeleton similarity models.
 * `DiffRelation(str, Enum)` (`TR`, `RH`), `DiffUnitType(str, Enum)` (`EQUAL`, `SINGLE_EDIT`, `SINGLE_SKEL_EDIT`, `BLOCK_EDIT`, `INSERT`, `DELETE`), & `DiffUnit`: Unified atomic alignment unit models across $T \to R$ and $R \to H$.
 * `CleanPatchHunk(t_start, t_end, old_lines, new_lines, old_eof_newline=True, new_eof_newline=True)` (with `.is_old_eof_nl_valid`, `.is_new_eof_nl_valid`), `ConflictCluster`, `TwoStepDerenderPlan`, & `AdoptPatch(src_match, patch_from, has_conflict, clean_hunks, conflict_clusters, display_diff)`: Two-step 3-way de-rendering and unified patch/target containers.
 * `AdoptOptions(interactive=False, accept_conflicts=False, force=False, dry_run=False, no_render=False, with_render=False, no_reverse_sync=False, skip_patches=False, flags=None)`.
