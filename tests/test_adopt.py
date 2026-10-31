@@ -4621,7 +4621,15 @@ render_command = "bash -c 'cat %i %s'"
         match_multi = compute_skeleton_match(t_multi, r_multi)
         self.assertTrue(match_multi.is_valid)
         self.assertGreaterEqual(match_multi.score, 0.5)
-        self.assertEqual(match_multi.signature.count("\x00"), 1)
+        self.assertEqual(match_multi.signature, ("greeting", "=", '"', "\x00", '"'))
+
+        # Verify signature strips SPACE tokens while preserving literal word "space"
+        match_space_word = compute_skeleton_match(
+            tokenize_line("space = {{ val }}\n"),
+            tokenize_line("  space   =   100\n"),
+        )
+        self.assertTrue(match_space_word.is_valid)
+        self.assertEqual(match_space_word.signature, ("space", "=", "\x00"))
 
         # Disjoint word sets -> fast O(1) rejection
         self.assertFalse(
@@ -4649,7 +4657,7 @@ render_command = "bash -c 'cat %i %s'"
             tokenize_line("server = node2\n"),
             tokenize_line("server = node3\n"),
         ]
-        self.assertEqual(find_monotonic_line_matches(t_loop, r_loop), [])
+        self.assertEqual(find_monotonic_line_matches(t_loop, r_loop), ())
         loop_units = fission_diff_units(t_loop, r_loop, DiffRelation.TR)
         self.assertEqual(len(loop_units), 1)
         self.assertEqual(loop_units[0].unit_type, DiffUnitType.BLOCK_EDIT)

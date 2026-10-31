@@ -163,7 +163,14 @@ from ..models.adopt_models import (
     TokenizedLine,
     TwoStepDerenderPlan,
 )
-from ..utils.func_utils import branch, choose, partition
+from ..utils.func_utils import (
+    SpliceSpan,
+    branch,
+    choose,
+    partition,
+    splice_spans,
+    star_filter,
+)
 from .adopt_fission import (
     fission_diff_units,
     refine_single_line_units,
@@ -517,6 +524,14 @@ class _DerenderSpan:
             new_eof_newline=self.new_eof_newline,
         )
 
+    def to_splice_span(self) -> SpliceSpan[str]:
+        """Projects this clean span onto the `T` line axis as a `SpliceSpan`."""
+        return SpliceSpan(
+            start=self.t_start,
+            end=self.t_end,
+            replacement=self.replacement,
+        )
+
 
 def _resolve_t_point_at_r(
     r_point: int,
@@ -762,9 +777,9 @@ def _build_clean_edit_spans(
         ),
         zip(candidate_pos_rh, pos_t_ranges),
     )
-    valid_pos_clean = filter(
+    valid_pos_clean = star_filter(
         # None indicates unchanged RH_EQUAL at EOF, which is not a changed span
-        lambda item: item[2] is not None,
+        lambda _e, _t_rng, repl: repl is not None,
         zip(candidate_pos_rh, pos_t_ranges, pos_replacements),
     )
     pos_clean_spans = tuple(starmap(
@@ -909,20 +924,10 @@ def _apply_clean_spans_to_template(
     Conflicting regions in `T` are absent from `clean_spans`, so they fall naturally into the
     unchanged template gaps between consecutive clean spans and remain preserved in `T_clean`.
     """
-    if not clean_spans:
-        return tuple(t_stripped_lines)
-    prev_ends = (0, *(s.t_end for s in clean_spans))
-    next_starts = (*(s.t_start for s in clean_spans), len(t_stripped_lines))
-    gaps = tuple(
-        starmap(lambda start, end: t_stripped_lines[start:end], zip(prev_ends, next_starts))
+    return splice_spans(
+        t_stripped_lines,
+        tuple(map(lambda s: s.to_splice_span(), clean_spans)),
     )
-    interleaved = chain.from_iterable(
-        starmap(
-            lambda gap, span: (*gap, *span.replacement),
-            zip(gaps[:-1], clean_spans),
-        )
-    )
-    return (*interleaved, *gaps[-1])
 
 
 def _anchor_conflict_clusters_to_t_clean(
@@ -947,8 +952,8 @@ def _anchor_conflict_clusters_to_t_clean(
         active_spans,
     )
     cumulative_shifts = accumulate(span_deltas, initial=0)
-    conflict_spans_with_shifts = filter(
-        lambda pair: pair[0].is_conflict,
+    conflict_spans_with_shifts = star_filter(
+        lambda span, _shift: span.is_conflict,
         zip(active_spans, cumulative_shifts),
     )
     return tuple(starmap(

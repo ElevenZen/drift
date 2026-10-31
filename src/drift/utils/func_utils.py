@@ -7,19 +7,46 @@ Architecture & Call Chain Overview
 Zero-dependency functional primitives used across all layers of Drift:
 
     partition(pred, items) — Splits an iterable into (matches, non_matches) in one pass.
-    branch(predicate, lambda1, lambda2) — Lazy conditional evaluation (invokes lambda1() or lambda2()).
-    choose(predicate, value1, value2) — Eager conditional selection (returns value1 or value2 verbatim).
+    star_partition(pred, items) — Splits an iterable of tuples by unpacking each item into pred(*item).
+    star_filter(pred, items) — Filters an iterable of tuples by unpacking each item into pred(*item).
+    SpliceSpan(start, end, replacement) & splice_spans(seq, spans) — Single-pass O(N) gap-interleaving sequence splicer.
+    branch(pred1, fn1, ..., default_fn) — Lazy odd-arity when-then-else conditional evaluation.
+    choose(pred1, val1, ..., default_val) — Eager odd-arity when-then-else conditional selection.
     when_not_none(a, b) — Evaluates/returns b when a is not None, otherwise None.
     when_none(a, b) — Returns a when a is not None, otherwise evaluates/returns fallback b.
 
 ===============================================================================
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 import inspect
-from typing import Any, Callable, Iterable, List, Optional, Tuple, TypeVar, Union, cast, overload
+from itertools import chain, starmap
+from typing import (
+    Any,
+    Callable,
+    Generic,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+    Union,
+    cast,
+    overload,
+)
 
 S = TypeVar("S")
 T = TypeVar("T")
+Predicate = Union[bool, Callable[[], Any]]
+
+
+def _eval_predicate(predicate: Predicate) -> bool:
+    """Evaluates a boolean condition or zero-argument predicate callable."""
+    return bool(predicate() if callable(predicate) else predicate)
 
 
 def partition(
@@ -43,47 +70,195 @@ def partition(
     return trues, falses
 
 
+def star_partition(
+    pred: Callable[..., Any],
+    items: Iterable[T],
+) -> Tuple[List[T], List[T]]:
+    """Partitions an iterable of tuples into `(matches, non_matches)` by unpacking each item into `pred(*item)`."""
+    return partition(lambda item: bool(pred(*cast(Iterable[Any], item))), items)
+
+
+def star_filter(
+    pred: Callable[..., Any],
+    items: Iterable[T],
+) -> Iterator[T]:
+    """Filters an iterable of tuples by unpacking each item into `pred(*item)` (counterpart of `itertools.starmap`)."""
+    return filter(lambda item: bool(pred(*cast(Iterable[Any], item))), items)
+
+
+@overload
 def branch(
-    predicate: Union[bool, Callable[[], Any]],
+    predicate: Predicate,
     lambda1: Callable[[], T],
     lambda2: Callable[[], T],
+    /,
+) -> T: ...
+
+
+@overload
+def branch(
+    pred1: Predicate,
+    fn1: Callable[[], T],
+    pred2: Predicate,
+    fn2: Callable[[], T],
+    default_fn: Callable[[], T],
+    /,
+) -> T: ...
+
+
+@overload
+def branch(
+    pred1: Predicate,
+    fn1: Callable[[], T],
+    pred2: Predicate,
+    fn2: Callable[[], T],
+    pred3: Predicate,
+    fn3: Callable[[], T],
+    default_fn: Callable[[], T],
+    /,
+) -> T: ...
+
+
+@overload
+def branch(
+    pred1: Predicate,
+    fn1: Callable[[], T],
+    pred2: Predicate,
+    fn2: Callable[[], T],
+    pred3: Predicate,
+    fn3: Callable[[], T],
+    pred4: Predicate,
+    fn4: Callable[[], T],
+    default_fn: Callable[[], T],
+    /,
+) -> T: ...
+
+
+@overload
+def branch(
+    predicate: Predicate,
+    lambda1: Callable[[], T],
+    *rest: Any,
+) -> T: ...
+
+
+def branch(
+    predicate: Predicate,
+    lambda1: Callable[[], T],
+    *rest: Any,
 ) -> T:
-    """Evaluates predicate and invokes lambda1() if truthy, otherwise lambda2().
+    """Lazy odd-arity `when-then-...-else` evaluator (`branch(p1, fn1, p2, fn2, ..., default_fn)`).
 
-    Args:
-        predicate: A boolean condition or zero-argument callable returning a truthy/falsy value.
-        lambda1: Zero-argument callable invoked and returned when predicate is truthy.
-        lambda2: Zero-argument callable invoked and returned when predicate is falsy.
-
-    Returns:
-        The result of lambda1() if predicate is truthy, otherwise lambda2().
+    Evaluates predicates from left to right and invokes only the zero-argument callable paired
+    with the first truthy predicate; if all predicates are falsy, invokes the trailing fallback
+    callable. Raises `ValueError` if given an even number of arguments.
     """
-    cond = predicate() if callable(predicate) else bool(predicate)
-    return lambda1() if cond else lambda2()
+    if len(rest) == 1:
+        return lambda1() if _eval_predicate(predicate) else cast(Callable[[], T], rest[0])()
+    if len(rest) == 0 or len(rest) % 2 == 0:
+        raise ValueError(
+            "branch() requires an odd number of arguments: (pred1, fn1, ..., default_fn)"
+        )
+    if _eval_predicate(predicate):
+        return lambda1()
+    matched_fn = next(
+        (
+            cast(Callable[[], T], fn)
+            for pred, fn in zip(rest[:-1:2], rest[1::2])
+            if _eval_predicate(pred)
+        ),
+        cast(Callable[[], T], rest[-1]),
+    )
+    return matched_fn()
+
+
+@overload
+def choose(
+    predicate: Predicate,
+    value1: T,
+    value2: T,
+    /,
+) -> T: ...
+
+
+@overload
+def choose(
+    pred1: Predicate,
+    val1: T,
+    pred2: Predicate,
+    val2: T,
+    default: T,
+    /,
+) -> T: ...
+
+
+@overload
+def choose(
+    pred1: Predicate,
+    val1: T,
+    pred2: Predicate,
+    val2: T,
+    pred3: Predicate,
+    val3: T,
+    default: T,
+    /,
+) -> T: ...
+
+
+@overload
+def choose(
+    pred1: Predicate,
+    val1: T,
+    pred2: Predicate,
+    val2: T,
+    pred3: Predicate,
+    val3: T,
+    pred4: Predicate,
+    val4: T,
+    default: T,
+    /,
+) -> T: ...
+
+
+@overload
+def choose(
+    predicate: Predicate,
+    value1: T,
+    *rest: Any,
+) -> T: ...
 
 
 def choose(
-    predicate: Union[bool, Callable[[], Any]],
+    predicate: Predicate,
     value1: T,
-    value2: T,
+    *rest: Any,
 ) -> T:
-    """Eager counterpart of `branch()`: returns value1 if predicate is truthy, otherwise value2.
+    """Eager odd-arity `when-then-...-else` selector (`choose(p1, v1, p2, v2, ..., default)`).
 
-    Both values are evaluated by the caller before the call and are returned verbatim
-    (callables such as classes or functions are never invoked). Use `branch()` instead
-    when either side is expensive, has side effects, or is only valid under its condition
-    (e.g. file I/O, dict lookups, type conversions that may raise).
+    Evaluates predicates from left to right and returns the value paired with the first truthy
+    predicate verbatim (callable values such as classes or functions are never invoked); if all
+    predicates are falsy, returns the trailing default value. Raises `ValueError` if given an
+    even number of arguments.
 
-    Args:
-        predicate: A boolean condition or zero-argument callable returning a truthy/falsy value.
-        value1: Value returned when predicate is truthy.
-        value2: Value returned when predicate is falsy.
-
-    Returns:
-        value1 if predicate is truthy, otherwise value2.
+    Use `branch()` instead when candidate values are expensive, have side effects, or are only
+    valid under their condition (e.g. file I/O, dict/index lookups, conversions that may raise).
     """
-    cond = predicate() if callable(predicate) else bool(predicate)
-    return value1 if cond else value2
+    if len(rest) == 1:
+        return value1 if _eval_predicate(predicate) else cast(T, rest[0])
+    if len(rest) == 0 or len(rest) % 2 == 0:
+        raise ValueError(
+            "choose() requires an odd number of arguments: (pred1, val1, ..., default)"
+        )
+    if _eval_predicate(predicate):
+        return value1
+    return next(
+        (
+            cast(T, val)
+            for pred, val in zip(rest[:-1:2], rest[1::2])
+            if _eval_predicate(pred)
+        ),
+        cast(T, rest[-1]),
+    )
 
 
 @overload
@@ -176,3 +351,32 @@ def when_none(
     if a is not None:
         return a
     return branch(callable(b), lambda: cast(Callable[[], T], b)(), lambda: cast(T, b))
+
+
+@dataclass(frozen=True)
+class SpliceSpan(Generic[T]):
+    """A slice replacement `seq[start:end] -> replacement` along a 1D sequence axis."""
+
+    start: int
+    end: int
+    replacement: Tuple[T, ...]
+
+    def overlaps_closed(self, other: SpliceSpan[Any]) -> bool:
+        """True if closed intervals `[self.start, self.end]` and `[other.start, other.end]` touch or overlap."""
+        return max(self.start, other.start) <= min(self.end, other.end)
+
+
+def splice_spans(
+    seq: Sequence[T],
+    spans: Sequence[SpliceSpan[T]],
+) -> Tuple[T, ...]:
+    """Splices sorted, non-overlapping `SpliceSpan`s into `seq` in a single O(N) gap-interleaving pass."""
+    if not spans:
+        return tuple(seq)
+    prev_ends = (0, *map(lambda s: s.end, spans))
+    next_starts = (*map(lambda s: s.start, spans), len(seq))
+    gaps = tuple(starmap(lambda start, end: seq[start:end], zip(prev_ends, next_starts)))
+    interleaved = chain.from_iterable(
+        starmap(lambda gap, span: (*gap, *span.replacement), zip(gaps[:-1], spans))
+    )
+    return (*interleaved, *gaps[-1])

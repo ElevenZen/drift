@@ -18,7 +18,11 @@ from drift.core.constants import (
 from drift.utils.toml_utils import parse_toml
 from drift.utils.host_facts import get_cached_system_facts
 from drift.utils.func_utils import (
+    SpliceSpan,
     partition,
+    splice_spans,
+    star_filter,
+    star_partition,
     when_not_none,
     when_none,
 )
@@ -1612,6 +1616,79 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         pred_calls: List[int] = []
         self.assertEqual(choose(lambda: (pred_calls.append(1), True)[1], "a", "b"), "a")
         self.assertEqual(pred_calls, [1])
+
+        # Odd-arity variadic choose() and branch() (5-arg, 7-arg, short-circuiting, and even-arity ValueError)
+        self.assertEqual(choose(False, "a", True, "b", "c"), "b")
+        self.assertEqual(choose(False, "a", False, "b", True, "c", "d"), "c")
+        self.assertEqual(choose(False, "a", False, "b", False, "c", "d"), "d")
+        lazy_pred_trace: List[str] = []
+        self.assertEqual(
+            choose(
+                lambda: (lazy_pred_trace.append("p1"), False)[1],
+                "v1",
+                lambda: (lazy_pred_trace.append("p2"), True)[1],
+                "v2",
+                lambda: (lazy_pred_trace.append("p3"), True)[1],
+                "v3",
+                "default",
+            ),
+            "v2",
+        )
+        self.assertEqual(lazy_pred_trace, ["p1", "p2"])
+        with self.assertRaises(ValueError):
+            choose(True, "a", False, "b")  # type: ignore[call-overload]
+
+        branch_trace: List[str] = []
+        self.assertEqual(
+            branch(
+                False,
+                lambda: (branch_trace.append("fn1"), 1)[1],
+                True,
+                lambda: (branch_trace.append("fn2"), 2)[1],
+                True,
+                lambda: (branch_trace.append("fn3"), 3)[1],
+                lambda: (branch_trace.append("default"), 4)[1],
+            ),
+            2,
+        )
+        self.assertEqual(branch_trace, ["fn2"])
+        self.assertEqual(
+            branch(
+                False,
+                lambda: 1,
+                False,
+                lambda: 2,
+                lambda: 99,
+            ),
+            99,
+        )
+        with self.assertRaises(ValueError):
+            branch(True, lambda: 1, False, lambda: 2)  # type: ignore[call-overload]
+
+        # star_filter(), star_partition(), SpliceSpan, and splice_spans() tests
+        self.assertEqual(
+            tuple(star_filter(lambda a, b: a + b > 5, [(1, 2), (3, 4), (0, 6)])),
+            ((3, 4), (0, 6)),
+        )
+        self.assertEqual(
+            star_partition(lambda k, v: v is not None, [(0, "ok"), (1, None), (2, "done")]),
+            ([(0, "ok"), (2, "done")], [(1, None)]),
+        )
+        span_a = SpliceSpan(start=1, end=2, replacement=("X", "Y"))
+        span_b = SpliceSpan(start=2, end=3, replacement=("Z",))
+        self.assertTrue(span_a.overlaps_closed(span_b))
+        self.assertFalse(span_a.overlaps_closed(SpliceSpan(start=3, end=4, replacement=("W",))))
+        self.assertEqual(
+            splice_spans(
+                ("a", "b", "c", "d"),
+                (
+                    SpliceSpan(start=0, end=0, replacement=("HEAD",)),
+                    SpliceSpan(start=1, end=3, replacement=("BC",)),
+                    SpliceSpan(start=4, end=4, replacement=("TAIL",)),
+                ),
+            ),
+            ("HEAD", "a", "BC", "d", "TAIL"),
+        )
 
         # when_not_none() and when_none() utility tests (values, 0-arg and 1-arg callables, lazy evaluation, falsy non-None)
         side_effects: List[str] = []

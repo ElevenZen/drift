@@ -21,8 +21,6 @@ from drift.adopt.adopt_derender import (
     _classify_orthogonal_units,
     _eval_rh_edit_or_delete_conflicts,
     _eval_rh_insert_conflicts,
-    _eval_rh_unit_conflicts,
-    _extract_clean_pos_replacement,
     _get_interior_cut_points,
     _is_clean_rh_edit_or_delete,
     _merge_positive_conflict_r_ranges,
@@ -44,7 +42,6 @@ from drift.core.exceptions import SafeguardError
 from drift.models.adopt_models import (
     AdoptPatch,
     CleanPatchHunk,
-    ConflictCluster,
     DiffRelation,
     DiffUnit,
     DiffUnitType,

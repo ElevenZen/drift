@@ -19,9 +19,11 @@
 ## 3. Module & Public API Catalog
 
 ### [`func_utils.py`](func_utils.py) — Functional Control-Flow, Null-Safety & Collection Helpers
-* `partition(pred: Callable[[T], bool], items: Iterable[T]) -> Tuple[List[T], List[T]]`: Splits items into `(truthy_list, falsy_list)`.
-* `branch(predicate: Union[bool, Callable[[], Any]], lambda1: Callable[[], T], lambda2: Callable[[], T]) -> T`: Evaluates `predicate` and invokes `lambda1()` if truthy, otherwise `lambda2()`.
-* `choose(predicate: Union[bool, Callable[[], Any]], value1: T, value2: T) -> T`: Eager counterpart of `branch()`; returns `value1` / `value2` verbatim (callable values are never invoked). Use `branch()` when either side is expensive, side-effecting, or only valid under its condition.
+* `partition(pred: Callable[[T], bool], items: Iterable[T]) -> Tuple[List[T], List[T]]` & `star_partition(pred: Callable[..., Any], items: Iterable[T]) -> Tuple[List[T], List[T]]`: Splits items (or unpacked tuple items) into `(truthy_list, falsy_list)`.
+* `star_filter(pred: Callable[..., Any], items: Iterable[T]) -> Iterator[T]`: Filters an iterable of tuples by unpacking each element into `pred(*item)` (`filter` counterpart of `itertools.starmap`).
+* `SpliceSpan(start, end, replacement)` & `splice_spans(seq: Sequence[T], spans: Sequence[SpliceSpan[T]]) -> Tuple[T, ...]`: Generic 1D slice replacement container (with `.overlaps_closed()`) and single-pass $O(N)$ gap-interleaving sequence splicer.
+* `branch(pred1, fn1, ..., default_fn) -> T`: Lazy odd-arity `when-then-...-else` evaluator; evaluates predicates left-to-right and invokes the first matching `fn_k()`, or `default_fn()`.
+* `choose(pred1, val1, ..., default_val) -> T`: Eager counterpart of `branch()`; returns the first matching `val_k` or `default_val` verbatim (callable values are never invoked). Use `branch()` when any candidate is expensive, side-effecting, or only valid under its condition.
 * `when_not_none(a: Optional[S], b: Union[Callable[[S], Optional[T]], Callable[[], Optional[T]], Optional[T]]) -> Optional[T]`: Chooses/invokes `b` when `a is not None`, otherwise returns `None`.
 * `when_none(a: Optional[S], b: Union[Callable[[], T], T]) -> Union[S, T]`: Chooses/invokes fallback `b` when `a is None`, otherwise returns `a`.
 

@@ -101,7 +101,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from functools import reduce
-from itertools import chain, starmap
+from itertools import starmap
 import logging
 from pathlib import Path
 import re
@@ -110,7 +110,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from ..core.exceptions import SafeguardError
 from ..models.adopt_models import AdoptPatch, CleanPatchHunk, ConflictCluster
-from ..utils.func_utils import choose
+from ..utils.func_utils import SpliceSpan, choose, splice_spans
 
 logger = logging.getLogger(__name__)
 
@@ -484,13 +484,9 @@ def _resolve_step1_eof_newline(
         src_has_eof_nl=src_has_eof_nl,
     )
     return choose(
-        hunk_at_eof,
-        choose(
-            last_hunk_active,
-            choose(last_hunk.is_new_eof_nl_valid, last_hunk.new_eof_newline, True),
-            True,  # fallback to True if last hunk conflicted and accept_conflicts=True (cannot determine new EOF state)
-        ),
-        src_has_eof_nl,
+        not hunk_at_eof, src_has_eof_nl,
+        last_hunk_active and last_hunk.is_new_eof_nl_valid, last_hunk.new_eof_newline,
+        True,
     )
 
 
@@ -559,21 +555,15 @@ def splice_conflict_clusters_diff3(
     conflict_clusters: Sequence[ConflictCluster],
 ) -> Tuple[str, ...]:
     """Purely splices Step 2 `diff3` conflict marker blocks onto `t_clean_lines` at `[t_clean_start, t_clean_end)`."""
-    if not conflict_clusters:
-        return tuple(t_clean_lines)
-    prev_ends = (0, *(c.t_clean_end for c in conflict_clusters))
-    next_starts = (*(c.t_clean_start for c in conflict_clusters), len(t_clean_lines))
-    gaps = tuple(starmap(lambda start, end: t_clean_lines[start:end], zip(prev_ends, next_starts)))
-    interleaved = chain.from_iterable(
-        starmap(
-            lambda gap, cluster: (
-                *gap,
-                *_format_conflict_cluster_diff3(cluster),
+    return splice_spans(t_clean_lines,
+        tuple(map(lambda c: SpliceSpan(
+                start=c.t_clean_start,
+                end=c.t_clean_end,
+                replacement=_format_conflict_cluster_diff3(c),
             ),
-            zip(gaps[:-1], conflict_clusters),
-        )
+            conflict_clusters,
+        )),
     )
-    return (*interleaved, *gaps[-1])
 
 
 def _apply_step2_conflict_clusters(
