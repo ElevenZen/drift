@@ -6,8 +6,6 @@
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
 [![Build Status](https://img.shields.io/badge/tests-1550%20passed-brightgreen)](tests/)
 
-> **WARNING: Drift is still very glitchy and in early development stage, it's for experimental usage only. Backward compatibility is not considered. File syntax, deployment rules, function signatures may change at any time.**
-
 ---
 
 ## Binaries don't drift. Configuration does.
