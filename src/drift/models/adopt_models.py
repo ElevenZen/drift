@@ -339,27 +339,25 @@ class PackageAdoptPlan(SerializableModel):
 
     def _format_modification_line(self, file: Path) -> str:
         """Formats a single modification preview line from pre-computed plan metadata."""
+        file_posix = file.as_posix()
         if file.name == DRIFT_KEEP_FILE_NAME:
-            return f"       ~ {file} [Discard corrupt keep file modification]"
+            return f"       ~ {file_posix} [Discard corrupt keep file modification]"
 
-        patch_plan = self.mod_patches.get(file.as_posix())
+        patch_plan = self.mod_patches.get(file_posix)
         src_match = when_not_none(patch_plan, lambda p: p.src_match)
         if src_match is None:
-            return f"       ~ {file} [Static Overwrite]"
+            return f"       ~ {file_posix} [Static Overwrite]"
 
         src_name = src_match.path.name
         has_conflict = bool(patch_plan is not None and patch_plan.has_conflict)
-        if src_match.is_templated:
-            return choose(
-                has_conflict,
-                f"       ~ {file} [CONFLICTS with template: {src_name}]",
-                f"       ~ {file} [Patch applies cleanly to: {src_name}]",
-            )
-
         return choose(
+            src_match.is_templated and has_conflict,
+            f"       ~ {file_posix} [CONFLICTS with template: {src_name}]",
+            src_match.is_templated,
+            f"       ~ {file_posix} [Patch applies cleanly to: {src_name}]",
             has_conflict,
-            f"       ~ {file} [CONFLICTS with source: {src_name}]",
-            f"       ~ {file} [Static Overwrite of: {src_name}]",
+            f"       ~ {file_posix} [CONFLICTS with source: {src_name}]",
+            f"       ~ {file_posix} [Static Overwrite of: {src_name}]",
         )
 
     def format_text(self, verbose: bool = False) -> str:
@@ -371,26 +369,26 @@ class PackageAdoptPlan(SerializableModel):
 
         if self.converged_files:
             lines.append("   [=] Converged (already identical to render/, will be staged directly):")
-            lines.extend(f"       = {item}" for item in self.converged_files)
+            lines.extend(f"       = {item.as_posix()}" for item in self.converged_files)
 
         if self.additions:
             lines.append("   [+] Additions (will be copied to source):")
             lines.extend(
-                f"       + {item}{' (directory)' if (self.install_pkg_dir / item).is_dir() else ''}"
+                f"       + {item.as_posix()}{choose((self.install_pkg_dir / item).is_dir(), ' (directory)', '')}"
                 for item in self.additions
             )
 
         if self.deletions:
             lines.append("   [-] Deletions (will be removed from source):")
             lines.extend(
-                f"       - {item}{' (directory)' if (self.src_dir_to_render / item).is_dir() else ''}"
+                f"       - {item.as_posix()}{choose((self.src_dir_to_render / item).is_dir(), ' (directory)', '')}"
                 for item in self.deletions
             )
 
         if self.renames:
             lines.append("   [R] Renames (will rename the template in source):")
             for old_file, new_file in self.renames:
-                lines.append(f"       R {old_file} -> {new_file}")
+                lines.append(f"       R {old_file.as_posix()} -> {new_file.as_posix()}")
                 if verbose:
                     rename_patch = self.mod_patches.get(get_rename_patch_key(old_file, new_file))
                     patch_str = when_not_none(rename_patch, lambda p: p.display_diff.strip()) or ""

@@ -46,6 +46,7 @@ from drift.models.adopt_models import (
     DiffUnit,
     DiffUnitType,
 )
+from drift.utils.file_inspect import check_can_symlink
 
 set_test_mode(True)
 
@@ -570,10 +571,11 @@ class TestAdoptDerender(unittest.TestCase):
             # Also verify read_rendered_baseline_lines safeguard on missing or symlinked baseline
             with self.assertRaises(SafeguardError):
                 read_rendered_baseline_lines(tmp_path, Path("nonexistent.conf"))
-            sym_path = tmp_path / "sym.conf"
-            sym_path.symlink_to(src_file)
-            with self.assertRaises(SafeguardError):
-                read_rendered_baseline_lines(tmp_path, Path("sym.conf"))
+            if check_can_symlink():
+                sym_path = tmp_path / "sym.conf"
+                sym_path.symlink_to(src_file)
+                with self.assertRaises(SafeguardError):
+                    read_rendered_baseline_lines(tmp_path, Path("sym.conf"))
 
     def test_layer3_zero_conflict_sandwiched_between_two_touching_positive_conflicts(self) -> None:
         """Verifies canonical `(r_start, r_end)` ordering when a zero-length conflict at `R[1:1]` sits

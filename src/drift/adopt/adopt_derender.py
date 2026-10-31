@@ -1080,8 +1080,8 @@ def read_rendered_baseline_lines(
     render_candidate = render_pkg_dir / rel_rendered_path
     if not render_candidate.is_file() or render_candidate.is_symlink():
         raise SafeguardError(
-            f"Cannot plan adoption when the changed file '{rel_rendered_path}' is a template and its "
-            f"rendered baseline '{render_candidate}' does not exist. "
+            f"Cannot plan adoption when the changed file '{rel_rendered_path.as_posix()}' is a template and its "
+            f"rendered baseline '{render_candidate.as_posix()}' does not exist. "
             f"Please run 'drift adopt' with '--with-render'."
         )
     return render_candidate.read_text(encoding="utf-8").splitlines(keepends=True)

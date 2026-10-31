@@ -64,6 +64,7 @@ from drift.primitives.adopt_repo import (
     resolve_and_commit_converged_drifts,
     run_primitive_adopt_drifts,
 )
+from drift.utils.file_inspect import check_can_symlink
 
 set_test_mode(True)
 
@@ -2471,11 +2472,12 @@ render_command = "bash -c 'cat %i %s'"
             encoding="utf-8",
         )
 
-        # Configure pkg_sym with install_method = "symlink"
+        # Configure pkg_sym with install_method = "symlink" (or "copy" if symlinks are disabled)
+        sym_method = "symlink" if check_can_symlink() else "copy"
         (src_sym / "drift_package.toml").write_text(
             '[package]\n'
             f'target_directory = "{target_sym.as_posix()}"\n'
-            'install_method = "symlink"\n',
+            f'install_method = "{sym_method}"\n',
             encoding="utf-8",
         )
         (src_sym / "sym.txt").write_text("sym_v1\n", encoding="utf-8")
@@ -4133,8 +4135,80 @@ render_command = "bash -c 'cat %i %s'"
              patch("drift.adopt.adopt_patch.check_patch_conflicts", side_effect=AssertionError("must not be called")), \
              patch("drift.adopt.adopt_derender.generate_derendered_patch", side_effect=AssertionError("must not be called")):
             formatted = plan.format_text(verbose=True)
+        self.assertIn("= nested/old_cfg.conf", formatted)
         self.assertIn("~ nested/new_cfg.conf", formatted)
         self.assertIn("+ nested/brand_new.txt", formatted)
+
+        # Verify PackageAdoptPlan.format_text() emits POSIX forward-slash paths across all 5 drift categories
+        # and all _format_modification_line() branches (keep file, unmapped static, templated/static clean & conflict)
+        from drift.config.render_engine_config import RenderEngineConfig, RenderSourceMatch
+        from drift.models.adopt_models import PackageDriftFiles
+
+        dummy_engine = RenderEngineConfig(name="envsubst", suffix="envst", render_command=["__drift_internal_envsubst__"])
+        synthetic_plan = PackageAdoptPlan(
+            package="pkg_posix_format",
+            src_dir_to_render=src_pkg,
+            install_pkg_dir=install_pkg,
+            drifts=PackageDriftFiles(
+                converged_files=[Path("sub/conv.txt")],
+                additions=[Path("sub/add.txt")],
+                deletions=[Path("sub/del.txt")],
+                renames=[(Path("sub/old.txt"), Path("sub/new.txt"))],
+                modifications=[
+                    Path("sub/.drift_keep"),
+                    Path("sub/unmapped.txt"),
+                    Path("sub/tmpl_clean.conf"),
+                    Path("sub/tmpl_conflict.conf"),
+                    Path("sub/static_clean.conf"),
+                    Path("sub/static_conflict.conf"),
+                ],
+            ),
+            mod_patches={
+                "sub/tmpl_clean.conf": AdoptPatch(
+                    src_match=RenderSourceMatch(
+                        path=src_pkg / "sub/tmpl_clean.envst.conf",
+                        engine=dummy_engine,
+                        target_name="tmpl_clean.conf",
+                    ),
+                    has_conflict=False,
+                ),
+                "sub/tmpl_conflict.conf": AdoptPatch(
+                    src_match=RenderSourceMatch(
+                        path=src_pkg / "sub/tmpl_conflict.envst.conf",
+                        engine=dummy_engine,
+                        target_name="tmpl_conflict.conf",
+                    ),
+                    has_conflict=True,
+                ),
+                "sub/static_clean.conf": AdoptPatch(
+                    src_match=RenderSourceMatch(
+                        path=src_pkg / "sub/static_clean.conf",
+                        engine=None,
+                        target_name="static_clean.conf",
+                    ),
+                    has_conflict=False,
+                ),
+                "sub/static_conflict.conf": AdoptPatch(
+                    src_match=RenderSourceMatch(
+                        path=src_pkg / "sub/static_conflict.conf",
+                        engine=None,
+                        target_name="static_conflict.conf",
+                    ),
+                    has_conflict=True,
+                ),
+            },
+        )
+        synthetic_text = synthetic_plan.format_text(verbose=False)
+        self.assertIn("= sub/conv.txt", synthetic_text)
+        self.assertIn("+ sub/add.txt", synthetic_text)
+        self.assertIn("- sub/del.txt", synthetic_text)
+        self.assertIn("R sub/old.txt -> sub/new.txt", synthetic_text)
+        self.assertIn("~ sub/.drift_keep [Discard corrupt keep file modification]", synthetic_text)
+        self.assertIn("~ sub/unmapped.txt [Static Overwrite]", synthetic_text)
+        self.assertIn("~ sub/tmpl_clean.conf [Patch applies cleanly to: tmpl_clean.envst.conf]", synthetic_text)
+        self.assertIn("~ sub/tmpl_conflict.conf [CONFLICTS with template: tmpl_conflict.envst.conf]", synthetic_text)
+        self.assertIn("~ sub/static_clean.conf [Static Overwrite of: static_clean.conf]", synthetic_text)
+        self.assertIn("~ sub/static_conflict.conf [CONFLICTS with source: static_conflict.conf]", synthetic_text)
 
         # Pass 1 (Cold): Execute adoption and verify already-moved files and missing-in-src file adopt cleanly
         res1 = execute_package_adopt(self.workspace_config, plan, AdoptOptions(interactive=False))
@@ -5191,7 +5265,8 @@ render_command = "bash -c 'cat %i %s'"
         (src_pkg / "static.txt").write_text("static\n", encoding="utf-8")
         (src_pkg / "tmpl.envst.txt").write_text("tmpl\n", encoding="utf-8")
         (src_pkg / "anc_file.envst").write_text("blocking template\n", encoding="utf-8")
-        (src_pkg / "broken_link.txt").symlink_to(src_pkg / "nonexistent_target.txt")
+        if check_can_symlink():
+            (src_pkg / "broken_link.txt").symlink_to(src_pkg / "nonexistent_target.txt")
 
         engines = self.workspace_config.render_engine_configs
 
@@ -5231,12 +5306,13 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(c_anc.path, src_pkg / "anc_file.envst")
 
         # 5. Broken symlink at leaf -> resolve_source_file_path returns None, find_source_path_conflict returns status="block"
-        self.assertIsNone(resolve_source_file_path(engines, src_pkg, Path("broken_link.txt")))
-        c_sym = find_source_path_conflict(engines, src_pkg, Path("broken_link.txt"))
-        self.assertIsNotNone(c_sym)
-        assert c_sym is not None
-        self.assertEqual(c_sym.status, "block")
-        self.assertEqual(c_sym.path, src_pkg / "broken_link.txt")
+        if check_can_symlink():
+            self.assertIsNone(resolve_source_file_path(engines, src_pkg, Path("broken_link.txt")))
+            c_sym = find_source_path_conflict(engines, src_pkg, Path("broken_link.txt"))
+            self.assertIsNotNone(c_sym)
+            assert c_sym is not None
+            self.assertEqual(c_sym.status, "block")
+            self.assertEqual(c_sym.path, src_pkg / "broken_link.txt")
 
         # 6. Non-existent path -> both return None
         self.assertIsNone(resolve_source_file_path(engines, src_pkg, Path("missing.txt")))

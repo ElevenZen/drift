@@ -211,7 +211,7 @@ def execute_package_adopt(
         rename_patch = plan.mod_patches.get(rename_key)
         if rename_patch is None:
             raise SafeguardError(
-                f"Missing precomputed AdoptPatch for rename '{old_rel_path} -> {new_rel_path}' "
+                f"Missing precomputed AdoptPatch for rename '{old_rel_path.as_posix()} -> {new_rel_path.as_posix()}' "
                 f"in package '{plan.package}'."
             )
         outcome = handle_single_rename(
@@ -239,7 +239,7 @@ def execute_package_adopt(
         mod_patch = plan.mod_patches.get(key)
         if mod_patch is None:
             raise SafeguardError(
-                f"Missing precomputed AdoptPatch for modification '{rel_path}' "
+                f"Missing precomputed AdoptPatch for modification '{rel_path.as_posix()}' "
                 f"in package '{plan.package}'."
             )
         outcome = handle_single_modification(

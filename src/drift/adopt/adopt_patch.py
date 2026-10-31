@@ -616,7 +616,7 @@ def apply_source_patch(
     if patch_content.conflict_clusters:
         if _check_patch_hunks_conflict(src_file, patch_content.clean_hunks):
             raise SafeguardError(
-                f"Step 1 clean hunks failed to match '{src_file}' while Step 2 "
+                f"Step 1 clean hunks failed to match '{src_file.as_posix()}' while Step 2 "
                 "conflict clusters are present."
             )
         if not accept_conflicts:

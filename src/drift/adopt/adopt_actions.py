@@ -46,7 +46,7 @@ def _sync_file_mode(target_file: Path, patch_from: Path) -> None:
         target_file.chmod(patch_from.stat().st_mode)
     except Exception as e:
         logger.warning(
-            f"Failed to synchronize file permissions from '{patch_from}' to '{target_file}': {e}"
+            f"Failed to synchronize file permissions from '{patch_from.as_posix()}' to '{target_file.as_posix()}': {e}"
         )
 
 
@@ -109,7 +109,7 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
     )
     if res_rm.returncode != 0:
         logger.debug(
-            f"git rm --cached exited with code {res_rm.returncode} for '{rel_install_base}': {res_rm.stderr.strip()}"
+            f"git rm --cached exited with code {res_rm.returncode} for '{rel_install_base.as_posix()}': {res_rm.stderr.strip()}"
         )
 
     ignore_file = pkg_dir / DRIFT_IGNORE_FILE_NAME
@@ -177,7 +177,7 @@ def adopt_rename(
     )
     if old_src_match is None or not old_src_match.path.exists():
         logger.error(
-            f"❌ [CONFLICT] Source file for '{old_rel_path}' not found in source directory. Skipping rename."
+            f"❌ [CONFLICT] Source file for '{old_rel_path.as_posix()}' not found in source directory. Skipping rename."
         )
         return None
 

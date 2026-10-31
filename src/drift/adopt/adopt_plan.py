@@ -214,7 +214,7 @@ def _normalize_keep_file_drifts(
     ]
     for rel_mod in keep_mods:
         logger.warning(
-            f"⚠️  [CORRUPT] Unexpected modification of keep file '{rel_mod}'. "
+            f"⚠️  [CORRUPT] Unexpected modification of keep file '{rel_mod.as_posix()}'. "
             f"'.drift_keep' must always be an empty stub file."
         )
 
@@ -227,7 +227,7 @@ def _normalize_keep_file_drifts(
     ]
     for rel_add, size in non_empty_keeps:
         logger.warning(
-            f"⚠️  [CORRUPT] Keep file '{rel_add}' is not empty (size={size} bytes). "
+            f"⚠️  [CORRUPT] Keep file '{rel_add.as_posix()}' is not empty (size={size} bytes). "
             f"'.drift_keep' must always be 0 bytes."
         )
 
@@ -483,7 +483,7 @@ def assert_source_file_clean(
         )
         return
 
-    rel_dirty = to_relative_path(src_file, git_root)
+    rel_dirty = to_relative_path(src_file, git_root).as_posix()
 
     raise DirtySourceFileError(
         f"The source file '{rel_dirty}' has uncommitted local modifications!\n"
@@ -557,8 +557,8 @@ def _precompute_modification_patch(
     src_match = resolve_source_file_path(render_engines, src_dir_to_render, rel_mod)
     if src_match is None:
         raise SafeguardError(
-            f"Cannot precompute modification patch for '{rel_mod}' in package '{pkg}': "
-            f"source file for '{rel_mod}' does not exist."
+            f"Cannot precompute modification patch for '{rel_mod.as_posix()}' in package '{pkg}': "
+            f"source file for '{rel_mod.as_posix()}' does not exist."
         )
     assert_source_file_clean(src_match.path, pkg=pkg, force=force)
     src_rel_path = to_relative_path(src_match.path, src_dir_to_render)
@@ -609,8 +609,8 @@ def _precompute_rename_patch(
     old_src_match = resolve_source_file_path(render_engines, src_dir_to_render, old_rel)
     if old_src_match is None:
         raise SafeguardError(
-            f"Cannot precompute rename patch for '{old_rel} -> {new_rel}' in package '{pkg}': "
-            f"source file for '{old_rel}' does not exist."
+            f"Cannot precompute rename patch for '{old_rel.as_posix()} -> {new_rel.as_posix()}' in package '{pkg}': "
+            f"source file for '{old_rel.as_posix()}' does not exist."
         )
     assert_source_file_clean(old_src_match.path, pkg=pkg, force=force)
     src_rel_path = to_relative_path(old_src_match.path, src_dir_to_render)

@@ -146,7 +146,7 @@ def _prompt_addition_collision_interactive(
     incoming_type = choose(incoming_is_dir, "directory", "file")
     existing_type = choose(incoming_is_dir, "file", "directory")
     return _prompt_target_state_conflict_interactive(
-        conflict_message=f"Cannot adopt {incoming_type} '{rel_path}' because a {existing_type} with the same name exists in source!",
+        conflict_message=f"Cannot adopt {incoming_type} '{rel_path.as_posix()}' because a {existing_type} with the same name exists in source!",
         discard_label=f"Discard addition / Restore (removes {incoming_type} on host next deployment)",
         skip_label=f"Skip {incoming_type}",
     )
@@ -159,7 +159,7 @@ def _prompt_directory_addition_interactive(
     rel_path: Path,
 ) -> ItemAdoptOutcome:
     """Interactive menu for adopting an untracked directory addition."""
-    print(f"\nFound untracked directory addition inside Fully-Controlled Directory: {rel_path}")
+    print(f"\nFound untracked directory addition inside Fully-Controlled Directory: {rel_path.as_posix()}")
     print("Reconciliation options:")
     print("[1] Adopt directory into source package (creates empty directory)")
     print("[2] Ignore directory (appends pattern to package .drift_ignore)")
@@ -184,7 +184,7 @@ def _prompt_file_addition_interactive(
     rel_path: Path,
 ) -> ItemAdoptOutcome:
     """Interactive menu for adopting an untracked file addition."""
-    print(f"\nFound untracked file addition inside Fully-Controlled Directory: {rel_path}")
+    print(f"\nFound untracked file addition inside Fully-Controlled Directory: {rel_path.as_posix()}")
     print("Reconciliation options:")
     print("[1] Adopt and copy into source package")
     print("[2] Ignore file (appends pattern to package .drift_ignore)")
@@ -219,13 +219,13 @@ def _handle_single_directory_addition(
     )
     if (src_dir_to_render / target_rel).is_dir():
         ensure_empty_keep_file(keep_file)
-        logger.info(f"Directory '{target_rel}' already exists in source. Skipping addition.")
+        logger.info(f"Directory '{target_rel.as_posix()}' already exists in source. Skipping addition.")
         return ItemAdoptOutcome.ADOPTED
 
     if find_source_path_conflict(render_engines, src_dir_to_render, target_rel) is not None:
         if not interactive:
             logger.error(
-                f"❌ [CONFLICT] Cannot adopt directory '{target_rel}' because a file already exists at that path in source. Skipping."
+                f"❌ [CONFLICT] Cannot adopt directory '{target_rel.as_posix()}' because a file already exists at that path in source. Skipping."
             )
             return ItemAdoptOutcome.CONFLICT
         outcome = _prompt_addition_collision_interactive(target_rel, incoming_is_dir=True)
@@ -258,11 +258,11 @@ def _handle_single_file_addition(
         if not interactive:
             if conflict_match.path.is_dir():
                 logger.error(
-                    f"❌ [CONFLICT] Cannot adopt file '{rel_path}' because a directory already exists at that path in source. Skipping."
+                    f"❌ [CONFLICT] Cannot adopt file '{rel_path.as_posix()}' because a directory already exists at that path in source. Skipping."
                 )
             else:
                 logger.error(
-                    f"❌ [CONFLICT] Cannot adopt addition '{rel_path}' because the target already exists in source. Skipping."
+                    f"❌ [CONFLICT] Cannot adopt addition '{rel_path.as_posix()}' because the target already exists in source. Skipping."
                 )
             return ItemAdoptOutcome.CONFLICT
         return _prompt_addition_collision_interactive(rel_path, incoming_is_dir=False)
@@ -311,7 +311,7 @@ def _prompt_empty_directory_deletion_interactive(
     rel_path: Path,
 ) -> ItemAdoptOutcome:
     """Interactive menu for adopting an empty directory deletion."""
-    print(f"\nFound host empty directory deletion: {rel_path}")
+    print(f"\nFound host empty directory deletion: {rel_path.as_posix()}")
     print("Reconciliation options:")
     print("[1] Adopt deletion (removes empty directory from source)")
     print("[2] Discard deletion / Restore (restores directory in next deployment)")
@@ -333,7 +333,7 @@ def _prompt_non_empty_directory_deletion_interactive(
     """Interactive menu for handling a non-empty directory deletion."""
     src_dir = src_dir_to_render / rel_path
     print(
-        f"\n⚠️  [NON-EMPTY] Host deleted directory '{rel_path}', but source directory contains files!"
+        f"\n⚠️  [NON-EMPTY] Host deleted directory '{rel_path.as_posix()}', but source directory contains files!"
     )
     contained_items = branch(
         src_dir.is_dir(),
@@ -364,7 +364,7 @@ def _prompt_non_empty_directory_deletion_interactive(
     if choice == "2":
         confirm = (
             input(
-                f"⚠️  DANGER: Are you sure you want to permanently delete source directory '{rel_path}' and all {len(contained_items)} item(s)? [y/N]: "
+                f"⚠️  DANGER: Are you sure you want to permanently delete source directory '{rel_path.as_posix()}' and all {len(contained_items)} item(s)? [y/N]: "
             )
             .strip()
             .lower()
@@ -383,7 +383,7 @@ def _prompt_file_deletion_interactive(
     rel_path: Path,
 ) -> ItemAdoptOutcome:
     """Interactive menu for adopting a file deletion."""
-    print(f"\nFound host file deletion: {rel_path}")
+    print(f"\nFound host file deletion: {rel_path.as_posix()}")
     print("Reconciliation options:")
     print("[1] Adopt deletion (deletes source file/template)")
     print("[2] Discard deletion / Restore (restores file in next deployment)")
@@ -410,7 +410,7 @@ def _handle_single_directory_deletion(
             adopt_deletion(render_engines, src_dir_to_render, rel_path)
             return ItemAdoptOutcome.ADOPTED
         logger.warning(
-            f"⚠️  [DISCARD] Cannot adopt directory deletion '{rel_path}' because the source directory is not empty. "
+            f"⚠️  [DISCARD] Cannot adopt directory deletion '{rel_path.as_posix()}' because the source directory is not empty. "
             f"Discarding deletion (will restore directory on next deploy)."
         )
         return ItemAdoptOutcome.ADOPTED
@@ -437,11 +437,11 @@ def _handle_single_file_deletion(
     if target_existing_src is None:
         if not interactive:
             logger.warning(
-                f"⚠️  [SKIP] Cannot adopt deletion '{rel_path}' because the target does not exist in source. Skipping."
+                f"⚠️  [SKIP] Cannot adopt deletion '{rel_path.as_posix()}' because the target does not exist in source. Skipping."
             )
         else:
             print(
-                f"\n⚠️  [SKIP] Cannot adopt deletion '{rel_path}' because the target does not exist in source. Skipping."
+                f"\n⚠️  [SKIP] Cannot adopt deletion '{rel_path.as_posix()}' because the target does not exist in source. Skipping."
             )
         return ItemAdoptOutcome.ADOPTED
 
@@ -495,7 +495,7 @@ def handle_rename_non_interactive(
     display_diff = _extract_display_diff(patch_content)
     if display_diff:
         logger.debug(
-            f"Diff for rename '{old_rel_path}' -> '{new_rel_path}':\n{display_diff}"
+            f"Diff for rename '{old_rel_path.as_posix()}' -> '{new_rel_path.as_posix()}':\n{display_diff}"
         )
     new_src_file = adopt_rename(
         render_engines,
@@ -641,7 +641,7 @@ def handle_rename_interactive(
             old_rel_path.name,
         ),
     )
-    print(f"\nFound host file rename: {old_rel_path} -> {new_rel_path}")
+    print(f"\nFound host file rename: {old_rel_path.as_posix()} -> {new_rel_path.as_posix()}")
     display_diff = _extract_display_diff(patch_content)
     if display_diff:
         print(f"{display_diff}\n")
@@ -682,11 +682,11 @@ def handle_single_rename(
     if old_src_match is None or not old_src_match.path.exists():
         if not interactive:
             logger.error(
-                f"❌ [CONFLICT] Cannot rename '{old_rel_path}' to '{new_rel_path}' because source file for '{old_rel_path}' was not found. Skipping."
+                f"❌ [CONFLICT] Cannot rename '{old_rel_path.as_posix()}' to '{new_rel_path.as_posix()}' because source file for '{old_rel_path.as_posix()}' was not found. Skipping."
             )
             return ItemAdoptOutcome.CONFLICT
         return _prompt_target_state_conflict_interactive(
-            conflict_message=f"Source file for '{old_rel_path}' was not found in source!",
+            conflict_message=f"Source file for '{old_rel_path.as_posix()}' was not found in source!",
             discard_label="Discard rename / Restore (restores original on host next deployment)",
         )
 
@@ -696,11 +696,11 @@ def handle_single_rename(
     if target_conflict is not None:
         if not interactive:
             logger.error(
-                f"❌ [CONFLICT] Cannot rename '{old_rel_path}' to '{new_rel_path}' because the target already exists in source. Skipping."
+                f"❌ [CONFLICT] Cannot rename '{old_rel_path.as_posix()}' to '{new_rel_path.as_posix()}' because the target already exists in source. Skipping."
             )
             return ItemAdoptOutcome.CONFLICT
         return _prompt_target_state_conflict_interactive(
-            conflict_message=f"Target file '{new_rel_path}' already exists in source!",
+            conflict_message=f"Target file '{new_rel_path.as_posix()}' already exists in source!",
             discard_label="Discard rename / Restore (restores original on host next deployment)",
         )
 
@@ -777,7 +777,7 @@ def _prompt_templated_modification_clean_interactive(
 ) -> ItemAdoptOutcome:
     """Interactive menu for a templated modification whose patch applies cleanly."""
     display_diff = _extract_display_diff(patch_content)
-    print(f"\nFound modified templated file (Patch applies cleanly): {rel_path}")
+    print(f"\nFound modified templated file (Patch applies cleanly): {rel_path.as_posix()}")
     if display_diff:
         print(f"{display_diff}\n")
     print("Reconciliation options:")
@@ -820,7 +820,7 @@ def _prompt_static_modification_clean_interactive(
 ) -> ItemAdoptOutcome:
     """Interactive menu for a static file modification whose patch applies cleanly."""
     display_diff = _extract_display_diff(patch_content)
-    print(f"\nFound modified static config file (Patch applies cleanly): {rel_path}")
+    print(f"\nFound modified static config file (Patch applies cleanly): {rel_path.as_posix()}")
     if display_diff:
         print(f"{display_diff}\n")
     print("Reconciliation options:")
@@ -925,7 +925,7 @@ def handle_single_modification(
 ) -> ItemAdoptOutcome:
     """Handles drift reconciliation for a single file/template modification."""
     if rel_path.name == DRIFT_KEEP_FILE_NAME:
-        logger.info(f"Discarding unexpected modification to keep file '{rel_path}'.")
+        logger.info(f"Discarding unexpected modification to keep file '{rel_path.as_posix()}'.")
         ensure_empty_keep_file(install_pkg_dir / rel_path)
         return ItemAdoptOutcome.ADOPTED
 
@@ -936,11 +936,11 @@ def handle_single_modification(
     if resolved_match is None or not resolved_match.path.exists():
         if not interactive:
             logger.error(
-                f"❌ [CONFLICT] Source file for modification '{rel_path}' not found in source directory. Skipping."
+                f"❌ [CONFLICT] Source file for modification '{rel_path.as_posix()}' not found in source directory. Skipping."
             )
             return ItemAdoptOutcome.CONFLICT
         return _prompt_target_state_conflict_interactive(
-            conflict_message=f"Source file for modification '{rel_path}' was not found in source!",
+            conflict_message=f"Source file for modification '{rel_path.as_posix()}' was not found in source!",
             discard_label="Discard modifications / Restore (restores file on host next deployment)",
         )
 
