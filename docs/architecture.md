@@ -205,7 +205,8 @@ The codebase under `src/drift/` is organized into 9 subpackages ordered strictly
 | **WAL, Rollback & GC** | [`rollback_and_wal.md`](features/rollback_and_wal.md) | `state.toml`, `wal/actions.json` & `stash/`, `RollbackPolicy`, `drift gc` |
 | **Config, Hooks & Deps** | [`configuration_and_hooks.md`](features/configuration_and_hooks.md) | Workspace/package TOML, engines, hooks, DAG, `.drift_ignore`, 3-state paths |
 | **Drift Adoption & FCDs** | [`drift_adoption_and_fcd.md`](features/drift_adoption_and_fcd.md) | `reverse-sync`, convergent drift, `drift adopt`, `fully_controlled_dirs` |
-| **3-Way Template De-Rendering** | [`template_adopt_derendering.md`](features/template_adopt_derendering.md) | 3-way hunk-map de-rendering (`T <-> R <-> H`), `git merge-file`, `src/drift/adopt/` |
+| **3-Way Template De-Rendering (Math & Algos)** | [`template_adopt_derendering.md`](features/template_adopt_derendering.md) | Orthogonal `T <-> R <-> H` matrix (`0.1`–`4.2`), hunk fission, token calculus |
+| **3-Way Template De-Rendering (Architecture)** | [`template_adopt_architecture.md`](features/template_adopt_architecture.md) | `DiffUnit`, `AdoptPatch`, `SpliceSpan`, pure-Python Two-Step `diff3` pipeline |
 | **Dry-Run (`drift plan`)** | [`plan_engine.md`](features/plan_engine.md) | Ephemeral sandbox, `source_dir_mask`, fault isolation |
 | **Environment Precedence** | [`env_modeling.md`](features/env_modeling.md) | 6-tier precedence, `SystemFacts`, Kahn's DAG, secret masking |
 | **Empty Folders** | [`empty_folder_dataflow.md`](features/empty_folder_dataflow.md) | `.drift_keep` synthesis, `CREATE_DIR`, FCD & `adopt` handling |

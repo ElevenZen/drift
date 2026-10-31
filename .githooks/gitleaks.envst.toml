@@ -6,7 +6,7 @@ useDefault = true
 
 [[allowlists]]
 description = "Sample llm key"
-regexes = ['sk-live-12345']
+regexes = ['sk-live-12345', 'sk-proj-100']
 
 [[allowlists]]
 description = "Sample github key"

@@ -279,7 +279,7 @@ def _is_clean_rh_edit_or_delete(
 ) -> bool:
     """Returns True if a positive-`R`-span `RH` edit or delete (`d_2 > d_1`) is clean under the Orthogonal Matrix.
 
-    Clean Positive-Span Cases (reference: `docs/features/template_adopt_derendering_draft.md` §3.4):
+    Clean Positive-Span Cases (reference: `docs/features/template_adopt_derendering.md` §3):
         - **Cases 1.1, 2.1 (on `TR_EQUAL`), & 4.1**: All overlapped positive-length `TR` units are
           `TR_EQUAL` (static lines in `T`), and no `TR_DELETE` is strictly enclosed inside `[d_1, d_2)`.
         - **Case 1.2**: `rh_unit` is a `SINGLE_SKEL_EDIT` whose `R`-span matches a single
