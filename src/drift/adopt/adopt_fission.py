@@ -72,8 +72,8 @@ Pipeline Architecture:
             - Finds all `R` line indices where both `TR` and `RH` have a 1-to-1 `SINGLE_EDIT` unit
             - For each shared `1 <-> 1 <-> 1` line triple `(T_i, R_r, H_j)`, runs
               try_derender_single_line(t_line, r_line, h_line):
-                * Extracts template variable `SpliceSpan`s `[c_1, c_2]` on `R_r` (with space-bridge
-                  coalescing) and host edit `SpliceSpan`s `[p_1, p_2]` on `R_r`
+                * Extracts template variable `SpliceSpan`s `[c_1, c_2]` on `R_r` and host edit
+                  `SpliceSpan`s `[p_1, p_2]` on `R_r` directly from `_extract_token_opcodes`
                 * Closed-Interval Overlap Check (`SpliceSpan.overlaps_closed`): tests
                   `max(p_1, c_1) <= min(p_2, c_2)` on token boundaries so even zero-width insertions
                   immediately adjacent to a variable slot are caught
@@ -138,6 +138,7 @@ from ..utils.func_utils import (
     splice_spans,
     star_filter,
     star_partition,
+    when_none,
 )
 
 _TOKEN_RE = re.compile(r"\w+|\s+|[^\w\s]")
@@ -721,8 +722,8 @@ def try_derender_single_line(
     """Performs `1 <-> 1 <-> 1` closed token-interval calculus on an aligned `(T, R, H)` line triple.
 
     Algorithm:
-        1. Projects both `T <-> R` variable slots `[c_1, c_2]` (coalesced across internal spaces)
-           and `R <-> H` host edits `[p_1, p_2]` onto the token index axis of `r_line`.
+        1. Projects both `T <-> R` variable slots `[c_1, c_2]` and `R <-> H` host edits
+           `[p_1, p_2]` onto the token index axis of `r_line`.
         2. Closed-Interval Overlap Check (`max(p_1, c_1) <= min(p_2, c_2)`):
            Treats both intervals as closed `[start, end]` in token-boundary space so that a host
            edit touching or inserting immediately adjacent to a variable boundary (`p_2 == c_1` or
@@ -741,10 +742,11 @@ def try_derender_single_line(
         The synthesized newline-stripped de-rendered template line `H'` if all edits are disjoint
         (Case 1.2), or `None` if any host edit touches a variable slot (Case 1.3).
     """
-    # Coalesce space-bridged opcodes on TR so internal spaces inside template tags (e.g. `{{ var }}`
-    # rendering to `"hello world"`) stay unified as one slot; keep RH opcodes uncoalesced so separate
-    # word edits in H remain tightly bounded to their exact modified tokens.
-    tr_ops = _coalesce_space_bridged_opcodes(_extract_token_opcodes(t_line, r_line))
+    # Note: `_coalesce_space_bridged_opcodes` is not needed here because `_TOKEN_RE` greedy-matches
+    # maximal `\s+` into a single `SPACE` token `[k, k+1]`. On the integer lattice, the closed-interval
+    # union `[b_1, k] U [k+1, b_2]` equals `[b_1, b_2]`, so `overlaps_closed` catches any host edit
+    # touching the space bridge, and `splice_spans` preserves `R[k:k+1] == T[a_k:a_k+1]` identically.
+    tr_ops = _extract_token_opcodes(t_line, r_line)
     rh_ops = _extract_token_opcodes(r_line, h_line)
 
     # Both `var_intervals` (R -> T tag restoration) and `host_edits` (R -> H static token edits)
@@ -836,17 +838,14 @@ def refine_single_line_units(
         derendered_row_map,
     )
 
-    tr_conflicts: Dict[int, DiffUnit] = dict(
-        starmap(
+    tr_conflicts: Dict[int, DiffUnit] = dict(starmap(
             lambda r_idx, _: (
                 tr_single_by_r[r_idx],
                 replace(tr_units[tr_single_by_r[r_idx]], is_conflict=True),
             ),
             conflict_pairs,
-        )
-    )
-    rh_skeletons: Dict[int, DiffUnit] = dict(
-        starmap(
+        ))
+    rh_skeletons: Dict[int, DiffUnit] = dict(starmap(
             lambda r_idx, derendered_line: (
                 rh_single_by_r[r_idx],
                 replace(
@@ -856,19 +855,16 @@ def refine_single_line_units(
                 ),
             ),
             clean_pairs,
-        )
-    )
-    rh_conflicts: Dict[int, DiffUnit] = dict(
-        starmap(
+        ))
+    rh_conflicts: Dict[int, DiffUnit] = dict(starmap(
             lambda r_idx, _: (
                 rh_single_by_r[r_idx],
                 replace(rh_units[rh_single_by_r[r_idx]], is_conflict=True),
             ),
             conflict_pairs,
-        )
-    )
+        ))
     rh_updates: Dict[int, DiffUnit] = {**rh_skeletons, **rh_conflicts}
     return (
-        tuple(starmap(lambda idx, u: tr_conflicts.get(idx, u), enumerate(tr_units))),
-        tuple(starmap(lambda idx, e: rh_updates.get(idx, e), enumerate(rh_units))),
+        tuple(starmap(lambda idx, u: when_none(tr_conflicts.get(idx), u), enumerate(tr_units))),
+        tuple(starmap(lambda idx, e: when_none(rh_updates.get(idx), e), enumerate(rh_units))),
     )

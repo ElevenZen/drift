@@ -280,8 +280,8 @@ For each matched relative index pair $(i_k, j_k)$ returned by the 2D DP, both `s
 ### 4.3 Single-Line (`1 <-> 1 <-> 1`) Closed Token-Interval Calculus
 
 When line $r$ is aligned as both `TR_SINGLE_EDIT` ($t_i \leftrightarrow r$) and `RH_SINGLE_EDIT` ($r \leftrightarrow h_j$) (**Cases 1.2 & 1.3**), [`try_derender_single_line`](../../src/drift/adopt/adopt_fission.py) projects both relations onto the token index axis $[0, |r.\text{tokens}|]$ of $r$:
-1. **Variable Slots ($\mathcal{C}_{\text{var}}$)**: Extracted from space-bridge-coalesced `T <-> R` opcodes as `SpliceSpan(start=op.b_start, end=op.b_end, replacement=op.a_tokens)` for all `not op.is_equal`.
-2. **Host Edits ($\mathcal{P}_{\text{host}}$)**: Extracted from uncoalesced `R <-> H` opcodes as `SpliceSpan(start=op.a_start, end=op.a_end, replacement=op.b_tokens)` for all `not op.is_equal`.
+1. **Variable Slots ($\mathcal{C}_{\text{var}}$)**: Extracted from `T <-> R` token opcodes (`_extract_token_opcodes`) as `SpliceSpan(start=op.b_start, end=op.b_end, replacement=op.a_tokens)` for all `not op.is_equal`. (Unlike Layer 2 skeleton scoring, space-bridge coalescing is unnecessary here because greedy `\s+` tokenization ensures any bridging whitespace is a single 1-token `"equal"` span $[k, k+1]$ whose integer endpoints touch $[b_1, k]$ and $[k+1, b_2]$ and whose gap preserves the identical whitespace token in `splice_spans`.)
+2. **Host Edits ($\mathcal{P}_{\text{host}}$)**: Extracted from `R <-> H` token opcodes (`_extract_token_opcodes`) as `SpliceSpan(start=op.a_start, end=op.a_end, replacement=op.b_tokens)` for all `not op.is_equal`.
 3. **Closed-Interval Overlap Check (`SpliceSpan.overlaps_closed`)**:
    Two intervals $[p_1, p_2]$ and $[c_1, c_2]$ touch or overlap in closed token-boundary space if and only if:
    $$\max(p_1, c_1) \le \min(p_2, c_2)$$

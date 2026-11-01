@@ -240,7 +240,7 @@ Organized bottom-up into 4 internal layers:
    * `_fission_replace_block` & `_fission_multiline_replace_block`: Handles $1 \leftrightarrow 1$ replace blocks directly via `compute_skeleton_match`, and decomposes $M \leftrightarrow N$ blocks by substituting matched lines with `"\x00__DRIFT_MATCH_k__\n"` sentinels and delegating to `_diff_sequences_to_units` + `_expand_sub_opcode_to_units`.
    * `fission_diff_units(src_tokens, dst_tokens, relation) -> Tuple[DiffUnit, ...]`: Top-level fission entry point for both `DiffRelation.TR` and `DiffRelation.RH`.
 4. **Layer 4 — Single-Line (`1 <-> 1 <-> 1`) Closed-Interval Token Calculus**:
-   * `try_derender_single_line(t_line, r_line, h_line) -> Optional[str]`: Projects space-bridge-coalesced `TR` variable slots and uncoalesced `RH` host edits onto `r_line` as `SpliceSpan`s, checks `any(starmap(lambda h_edit, v_slot: h_edit.overlaps_closed(v_slot), product(host_edits, var_intervals)))`, and splices clean edits via `splice_spans`.
+   * `try_derender_single_line(t_line, r_line, h_line) -> Optional[str]`: Projects `TR` variable slots and `RH` host edits from `_extract_token_opcodes` onto `r_line` as `SpliceSpan`s, checks `any(starmap(lambda h_edit, v_slot: h_edit.overlaps_closed(v_slot), product(host_edits, var_intervals)))`, and splices clean edits via `splice_spans`.
    * `refine_single_line_units(tr_units, rh_units, t_tokens, r_tokens, h_tokens) -> Tuple[Tuple[DiffUnit, ...], Tuple[DiffUnit, ...]]`: Indexes `SINGLE_EDIT` units on $R$ via `star_filter`, partitions results with `star_partition`, upgrades clean `RH` units to `SINGLE_SKEL_EDIT`, and marks colliding `TR` and `RH` units with `is_conflict=True`.
 
 ---

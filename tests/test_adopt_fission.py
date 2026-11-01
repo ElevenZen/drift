@@ -524,6 +524,24 @@ class TestAdoptFission(unittest.TestCase):
             )
         )
 
+        # 8. Host edit touching only the internal bridging whitespace of a multi-word variable (Case 1.3 -> None)
+        #    Even without _coalesce_space_bridged_opcodes, the single bridging whitespace token [k, k+1]
+        #    shares integer boundary k with [b_1, k] and k+1 with [k+1, b_2], so editing/deleting it collides.
+        self.assertIsNone(
+            try_derender_single_line(
+                tokenize_line('greeting = "{{ hello_msg }}" # v1\n'),
+                tokenize_line('greeting = "hello world" # v1\n'),
+                tokenize_line('greeting = "hello  world" # v1\n'),
+            )
+        )
+        self.assertIsNone(
+            try_derender_single_line(
+                tokenize_line('greeting = "{{ hello_msg }}" # v1\n'),
+                tokenize_line('greeting = "hello world" # v1\n'),
+                tokenize_line('greeting = "helloworld" # v1\n'),
+            )
+        )
+
     def test_layer4_refine_single_line_units_upgrades_clean_and_flags_conflicts(self) -> None:
         """Verifies `refine_single_line_units` across no-op, clean `SINGLE_SKEL_EDIT`, and colliding `SINGLE_EDIT`."""
         t_tokens = (
