@@ -126,9 +126,11 @@ Understanding these core concepts establishes the mental model:
 *   `drift help drift_workspace.toml`  Complete workspace global configuration reference, merging, and engine DAGs.
 *   `drift help src`                   Learn about the declarative source directory (`src/`).
 *   `drift help render`                Understand sandbox template compilation (`render/`).
-*   `drift help install`               Understand the state database and deployment (`install/`).
+*   `drift help install`               Understand the state database (`install/`) and `drift apply`.
+*   `drift help deploy`                Understand the 5-step composite `drift deploy` workflow and flags.
 *   `drift help fcd`                   Understand Fully-Controlled Directories (FCDs) and untracked file auditing.
 *   `drift help ignore`                Understand `.drift_ignore` syntax, install ignore logic, and FCD ignore mechanics.
 *   `drift help health`                Learn about package runtime health check probes and lifecycle hooks.
+*   `drift help rollback`              Understand transactional WAL recovery, `drift rollback`, and auto-rollback policies.
 *   `drift help clone`                 Learn about cloning Drift repositories and bootstrapping new machines.
 *   `drift help faq`                   Troubleshooting recipes and frequently asked questions.

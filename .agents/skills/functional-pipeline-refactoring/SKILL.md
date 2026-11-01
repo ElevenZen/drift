@@ -238,4 +238,4 @@ Before finalizing any pipeline module, verify:
 - [ ] Are any intermediate records represented as positional tuples with index lookups (`item[0]`, `item[3]`) instead of a context-bound `@dataclass(frozen=True)` with semantic `@property` methods?
 - [ ] Do all pure internal pipeline functions return immutable `Tuple[...]` instead of `List[...]`?
 - [ ] Are string/path representations normalized once at the ingestion boundary so internal helpers never call `.rstrip("\r\n")` defensively?
-- [ ] Have all `AGENT_MODULE.md` and `docs/features/*.md` files been synchronized with any signature or model changes?
+- [ ] Have all `AGENT_MODULE.md` and `docs/internals/*.md` files been synchronized with any signature or model changes?

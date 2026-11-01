@@ -49,7 +49,7 @@ enable_install = true
 
 # Automatically roll back the entire deployment batch if installing/updating this package fails.
 # Useful for critical services that should not be left in a broken state.
-# Respects workspace [settings] rollback and CLI --rollback overrides.
+# Respects workspace [settings] rollback and CLI --rollback overrides (run 'drift help rollback' for details).
 auto_rollback = false
 
 # Fully-Controlled Directories (FCDs). Drift will audit and reverse-sync

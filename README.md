@@ -336,13 +336,35 @@ Standalone `zipapp` binaries, wheels, `pipx` / `uv tool`, and manual completion 
 
 ## 📚 Documentation
 
+### Guides & Project Reference
 * **[Feature Guide](docs/features.md)**: everything Drift can do, organized by pillar, plus end-to-end workflows.
 * **[Installation & Packaging](docs/installation.md)**: all install methods and shell completions.
 * **[CLI Reference](docs/cli.md)**: every command and flag.
 * **[Troubleshooting & FAQ](docs/troubleshooting.md)**: recovering from common situations.
-* **[Architecture](docs/architecture.md)**: the 4-tier model, primitives, invariants, and subsystem specs.
-* **[Roadmap](docs/roadmap.md)**: what's next.
-* **Built-in manual**: `drift help` or `drift help <topic>` (`package`, `workspace`, `drift_package.toml`, `faq`, …).
+* **[Architecture & Internals](docs/architecture.md)**: the 4-tier model, 17 primitives, invariants, and [`docs/internals/`](docs/internals/) subsystem specifications.
+* **[Roadmap](docs/roadmap.md)**: project review and what's next.
+* **[Engineering Changelog](docs/changes.md)**: completed engineering milestones and feature history.
+
+### User Manual (`drift help <topic>` / `docs/manual/`)
+Every manual page below is available offline in the terminal via `drift help <topic>` or directly in Markdown:
+
+| CLI Command | Manual Page | What It Covers |
+| :--- | :--- | :--- |
+| `drift help` | **[Overall Overview](src/drift/cli/help_docs/overall.md)** | 4-zone architecture, data-flow loop, and core concepts |
+| `drift help package` | **[Packages](src/drift/cli/help_docs/package.md)** | Package anatomy, capabilities, dependencies, and requirements |
+| `drift help workspace` | **[Workspaces](src/drift/cli/help_docs/workspace.md)** | Directory layout, `.local.toml` overrides, and secret vaults |
+| `drift help drift_package.toml` | **[`drift_package.toml`](src/drift/cli/help_docs/drift_package_toml.md)** | Complete package configuration reference & hooks matrix |
+| `drift help drift_workspace.toml` | **[`drift_workspace.toml`](src/drift/cli/help_docs/drift_workspace_toml.md)** | Complete workspace configuration reference & 6-tier env model |
+| `drift help deploy` | **[Deploy Pipeline](src/drift/cli/help_docs/deploy.md)** | 5-step composite `drift deploy` workflow, flags, and safeguards |
+| `drift help src` | **[Source Zone (`src/`)](src/drift/cli/help_docs/src.md)** | Authoring templates, `dot-` prefixes, and `drift_hooks/` |
+| `drift help render` | **[Render Zone (`render/`)](src/drift/cli/help_docs/render.md)** | Sandbox template compilation, custom engines, and DAG piping |
+| `drift help install` | **[Install Zone (`install/`)](src/drift/cli/help_docs/install.md)** | State database (`state.toml`), `drift apply`, and `symlink` vs `copy` |
+| `drift help fcd` | **[Fully-Controlled Dirs](src/drift/cli/help_docs/fcd.md)** | Tracking and adopting newly created runtime files (`drift adopt`) |
+| `drift help ignore` | **[Ignore Rules](src/drift/cli/help_docs/ignore.md)** | `.drift_ignore` PCRE regex syntax and FCD filtering |
+| `drift help rollback` | **[Rollback & WAL](src/drift/cli/help_docs/rollback.md)** | `drift rollback`, Write-Ahead Log recovery, and `auto_rollback` policy |
+| `drift help health` | **[Health Probes](src/drift/cli/help_docs/health.md)** | Runtime service/tool health checks (`drift health`) |
+| `drift help clone` | **[Clone & Bootstrap](src/drift/cli/help_docs/clone.md)** | Cloning a workspace (`drift clone`) and new-machine setup |
+| `drift help faq` | **[FAQ & Recipes](src/drift/cli/help_docs/faq.md)** | Battle-tested troubleshooting recipes |
 
 ---
 

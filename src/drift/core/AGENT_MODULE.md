@@ -90,7 +90,7 @@
 ---
 
 ## 5. Related Feature Docs & Targeted Tests
-* **Feature Specifications**: [`docs/features/delivery_engine.md`](../../../docs/features/delivery_engine.md), [`docs/features/rollback_and_wal.md`](../../../docs/features/rollback_and_wal.md), [`docs/features/empty_folder_dataflow.md`](../../../docs/features/empty_folder_dataflow.md)
+* **Feature Specifications**: [`docs/internals/delivery_engine.md`](../../../docs/internals/delivery_engine.md), [`docs/internals/rollback_and_wal.md`](../../../docs/internals/rollback_and_wal.md), [`docs/internals/empty_folder_dataflow.md`](../../../docs/internals/empty_folder_dataflow.md)
 * **Targeted Unit Tests**:
   ```bash
   PYTHONPATH=src python3 -m unittest tests/test_folder_delivery.py

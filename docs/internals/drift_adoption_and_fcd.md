@@ -3,9 +3,9 @@
 This document specifies how Drift detects live host configuration modifications via **Primitive 1 (`drift reverse-sync`)**, automatically resolves converged drifts during `drift deploy`, reconciles divergent changes back into declarative source templates via **`drift adopt`**, and manages **Fully-Controlled Directories (`fully_controlled_dirs`)**.
 
 * **Core Architectural Overview**: [`docs/architecture.md`](../architecture.md)
-* **3-Way Template De-Rendering (Math & Algorithms)**: [`docs/features/template_adopt_derendering.md`](template_adopt_derendering.md)
-* **3-Way Template De-Rendering (Models & Architecture)**: [`docs/features/template_adopt_architecture.md`](template_adopt_architecture.md)
-* **Empty Folder & `.drift_keep` Dataflow**: [`docs/features/empty_folder_dataflow.md`](empty_folder_dataflow.md)
+* **3-Way Template De-Rendering (Math & Algorithms)**: [`docs/internals/template_adopt_derendering.md`](template_adopt_derendering.md)
+* **3-Way Template De-Rendering (Models & Architecture)**: [`docs/internals/template_adopt_architecture.md`](template_adopt_architecture.md)
+* **Empty Folder & `.drift_keep` Dataflow**: [`docs/internals/empty_folder_dataflow.md`](empty_folder_dataflow.md)
 * **Related Subpackage Maps**: [`src/drift/adopt/AGENT_MODULE.md`](../../src/drift/adopt/AGENT_MODULE.md), [`src/drift/primitives/AGENT_MODULE.md`](../../src/drift/primitives/AGENT_MODULE.md), [`src/drift/models/AGENT_MODULE.md`](../../src/drift/models/AGENT_MODULE.md)
 
 ---

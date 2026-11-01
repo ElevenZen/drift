@@ -84,7 +84,7 @@
 ---
 
 ## 5. Related Feature Docs & Targeted Tests
-* **Feature Specifications**: [`docs/features/template_adopt_derendering.md`](../../../docs/features/template_adopt_derendering.md), [`docs/features/template_adopt_architecture.md`](../../../docs/features/template_adopt_architecture.md), [`docs/features/drift_adoption_and_fcd.md`](../../../docs/features/drift_adoption_and_fcd.md)
+* **Feature Specifications**: [`docs/internals/template_adopt_derendering.md`](../../../docs/internals/template_adopt_derendering.md), [`docs/internals/template_adopt_architecture.md`](../../../docs/internals/template_adopt_architecture.md), [`docs/internals/drift_adoption_and_fcd.md`](../../../docs/internals/drift_adoption_and_fcd.md)
 * **Targeted Unit Tests**:
   ```bash
   PYTHONPATH=src python3 -m unittest tests/test_adopt_fission.py tests/test_adopt_derender.py

@@ -703,7 +703,7 @@ Hooks across both directories are executed in **alphanumeric sorting order** bas
 
 While distribution package managers operate on binary archives and system root directories, **Drift** operates on a **declarative, host-adaptive configuration lifecycle**.
 
-Hooks in Drift reside strictly within [`drift_hooks/`](../features/configuration_and_hooks.md) and participate across the entire compilation, staging, and deployment pipeline.
+Hooks in Drift reside strictly within [`drift_hooks/`](../internals/configuration_and_hooks.md) and participate across the entire compilation, staging, and deployment pipeline.
 
 ### A. Taxonomy & Hook Classification
 

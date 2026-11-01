@@ -3,8 +3,8 @@
 This document specifies Drift's global workspace and package configuration schemas, `.local.toml` / `.envst.toml` layering, custom render engine pipelines, dynamic Python preprocessor hooks, subprocess lifecycle hooks, inter-package topological dependencies, `.drift_ignore` PCRE regex rules, and 3-state cross-platform path validation.
 
 * **Core Architectural Overview**: [`docs/architecture.md`](../architecture.md)
-* **Environment Variable Precedence & DAG Resolution**: [`docs/features/env_modeling.md`](env_modeling.md)
-* **Render DAG & Merkle Compilation**: [`docs/features/render_dag.md`](render_dag.md)
+* **Environment Variable Precedence & DAG Resolution**: [`docs/internals/env_modeling.md`](env_modeling.md)
+* **Render DAG & Merkle Compilation**: [`docs/internals/render_dag.md`](render_dag.md)
 * **Related Subpackage Maps**: [`src/drift/config/AGENT_MODULE.md`](../../src/drift/config/AGENT_MODULE.md), [`src/drift/hooks/AGENT_MODULE.md`](../../src/drift/hooks/AGENT_MODULE.md)
 
 ---

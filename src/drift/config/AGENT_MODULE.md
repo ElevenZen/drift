@@ -86,7 +86,7 @@
 ---
 
 ## 5. Related Feature Docs & Targeted Tests
-* **Feature Specifications**: [`docs/features/configuration_and_hooks.md`](../../../docs/features/configuration_and_hooks.md), [`docs/features/env_modeling.md`](../../../docs/features/env_modeling.md)
+* **Feature Specifications**: [`docs/internals/configuration_and_hooks.md`](../../../docs/internals/configuration_and_hooks.md), [`docs/internals/env_modeling.md`](../../../docs/internals/env_modeling.md)
 * **Targeted Unit Tests**:
   ```bash
   PYTHONPATH=src python3 -m unittest tests/test_config.py

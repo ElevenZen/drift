@@ -73,7 +73,7 @@
 ---
 
 ## 5. Related Feature Docs & Targeted Tests
-* **Feature Specifications**: [`docs/features/render_dag.md`](../../../docs/features/render_dag.md), [`docs/features/empty_folder_dataflow.md`](../../../docs/features/empty_folder_dataflow.md)
+* **Feature Specifications**: [`docs/internals/render_dag.md`](../../../docs/internals/render_dag.md), [`docs/internals/empty_folder_dataflow.md`](../../../docs/internals/empty_folder_dataflow.md)
 * **Targeted Unit Tests**:
   ```bash
   PYTHONPATH=src python3 -m unittest tests/test_render.py

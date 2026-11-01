@@ -48,6 +48,7 @@ drift deploy <pkg>
 **Solution**: Run **`drift rollback <pkg>`** (or `drift rollback`).
 *   Drift resets `install/` to the last committed clean HEAD, removes half-written untracked files, and redeploys the last known stable state to your active host.
 *   If hook scripts themselves are broken or crashing during rollback, append **`--no-hooks`** (or **`--no-hook`**) to perform pure file-level recovery.
+*   👉 Run `drift help rollback` for complete WAL recovery mechanics and `auto_rollback` policy configuration.
 
 ---
 

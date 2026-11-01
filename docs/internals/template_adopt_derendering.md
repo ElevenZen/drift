@@ -3,8 +3,8 @@
 > [!NOTE]
 > This document specifies the formal mathematical model, orthogonal classification calculus, and symbolic reasoning algorithms behind Drift's **3-Way Template De-Rendering Engine (`T <-> R <-> H`)**. For domain dataclasses, module boundaries, and pipeline implementation details, see the companion specification **[3-Way Template De-Rendering: Domain Models & Pipeline Architecture](template_adopt_architecture.md)**.
 
-* **Companion Implementation Architecture**: [`docs/features/template_adopt_architecture.md`](template_adopt_architecture.md)
-* **Bidirectional Drift Adoption Overview**: [`docs/features/drift_adoption_and_fcd.md`](drift_adoption_and_fcd.md)
+* **Companion Implementation Architecture**: [`docs/internals/template_adopt_architecture.md`](template_adopt_architecture.md)
+* **Bidirectional Drift Adoption Overview**: [`docs/internals/drift_adoption_and_fcd.md`](drift_adoption_and_fcd.md)
 * **Core Implementation Modules**: [`src/drift/adopt/adopt_fission.py`](../../src/drift/adopt/adopt_fission.py), [`src/drift/adopt/adopt_derender.py`](../../src/drift/adopt/adopt_derender.py), [`src/drift/adopt/adopt_patch.py`](../../src/drift/adopt/adopt_patch.py), [`src/drift/models/adopt_models.py`](../../src/drift/models/adopt_models.py)
 
 ---

@@ -195,7 +195,7 @@ Simulates the entire multi-stage deployment pipeline end-to-end in an ephemeral 
 
 *   **Command Signature**: `drift plan [packages...] [-a / --all] [-f / --force] [--adhoc] [-r / --reinstall] [-c / --clean] [--with-hooks] [--no-hooks] [--no-deps] [--json]`
 *   **Transparent Deploy Alias**: Running `drift deploy -n` or `drift deploy --dry-run` transparently routes to `drift plan`.
-*   **Architectural Specification**: For mathematical modeling, path masking algebra, and fault isolation proofs, consult [`docs/features/plan_engine.md`](features/plan_engine.md).
+*   **Architectural Specification**: For mathematical modeling, path masking algebra, and fault isolation proofs, consult [`docs/internals/plan_engine.md`](internals/plan_engine.md).
 
 #### Four-Phase Simulation Pipeline
 1.  **Phase 0: Non-Destructive Host Drift Audit**:

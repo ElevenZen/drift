@@ -8,7 +8,7 @@ This guide is the long-form companion to the [README](../README.md). It is organ
 * **[Part IV — Reconcile Drift](#part-iv--reconcile-drift)**: reverse-sync, the Sentinel guard, `drift adopt`
 * **[Part V — Workflows](#part-v--workflows)**: new config, adopting GUI changes, rollback, bootstrapping a machine
 
-For internals (primitives, invariants, call chains), see [architecture.md](architecture.md) and the subsystem specs in [`features/`](features/).
+For internals (primitives, invariants, call chains), see [architecture.md](architecture.md) and the subsystem specs in [`internals/`](internals/).
 
 ---
 
@@ -365,7 +365,7 @@ Drift eliminates blind deployments through an end-to-end, multi-stage dry-run en
 *   **Safe Hook Execution (`--with-hooks`)**: In pure dry-run, lifecycle hooks are bypassed by default for zero-mutation safety. Pass `--with-hooks` (`drift plan --with-hooks`) to execute pre-flight requirement probes (`probe`) and dynamic source generators (`pre_source`) in isolated scratch directories for 100% accurate dynamic template planning.
 *   **Automated Tooling (`--json`)**: Serializes typed `WorkspaceDeployPreview` models containing global errors, per-package plans, and drift flags for CI/CD pipelines.
 
-For full mathematical proofs, path mask algebra, and call chain specifications, consult the [Dry-Run Architecture Specification](features/plan_engine.md).
+For full mathematical proofs, path mask algebra, and call chain specifications, consult the [Dry-Run Architecture Specification](internals/plan_engine.md).
 
 ### 🛑 Proactive Collision Guard & Safeguards
 Drift values your data integrity. Before any physical stage or deployment execution, the **Collision Guard** runs a multi-category safety audit:

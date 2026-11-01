@@ -1,6 +1,6 @@
 # 🏛️ Drift Architecture Model & Big-Picture Reference
 
-This document is the primary architectural entry point for both human developers and AI coding agents. It defines Drift's 4-tier Git-backed mental model, core workflows, the 17 atomic primitives, codebase package layering, cross-cutting domain invariants, and the routing index to subsystem specifications (`docs/features/`) and co-located module maps (`src/drift/*/AGENT_MODULE.md`).
+This document is the primary architectural entry point for both human developers and AI coding agents. It defines Drift's 4-tier Git-backed mental model, core workflows, the 17 atomic primitives, codebase package layering, cross-cutting domain invariants, and the routing index to internal subsystem specifications (`docs/internals/`) and co-located module maps (`src/drift/*/AGENT_MODULE.md`).
 
 ---
 
@@ -194,31 +194,33 @@ The codebase under `src/drift/` is organized into 9 subpackages ordered strictly
 
 ---
 
-## 6. Documentation Navigation & Feature Index
+## 6. Documentation Navigation & Subsystem Index
 
-### 6.1 Feature & Subsystem Deep-Dive Specifications (`docs/features/`)
+### 6.1 Internal Subsystem Deep-Dive Specifications (`docs/internals/`)
 
 | Topic / Subsystem | Specification Document | Key Concepts Covered |
 | :--- | :--- | :--- |
-| **Render DAG & Merkle Cache** | [`render_dag.md`](features/render_dag.md) | AST nodes, 3-phase compilation, `render_lock.json`, `RenderCache` |
-| **Folder Delivery Engine** | [`delivery_engine.md`](features/delivery_engine.md) | `plan_folder_delivery`, `FileAction` algebra, collision guards |
-| **WAL, Rollback & GC** | [`rollback_and_wal.md`](features/rollback_and_wal.md) | `state.toml`, `wal/actions.json` & `stash/`, `RollbackPolicy`, `drift gc` |
-| **Config, Hooks & Deps** | [`configuration_and_hooks.md`](features/configuration_and_hooks.md) | Workspace/package TOML, engines, hooks, DAG, `.drift_ignore`, 3-state paths |
-| **Drift Adoption & FCDs** | [`drift_adoption_and_fcd.md`](features/drift_adoption_and_fcd.md) | `reverse-sync`, convergent drift, `drift adopt`, `fully_controlled_dirs` |
-| **3-Way Template De-Rendering (Math & Algos)** | [`template_adopt_derendering.md`](features/template_adopt_derendering.md) | Orthogonal `T <-> R <-> H` matrix (`0.1`–`4.2`), hunk fission, token calculus |
-| **3-Way Template De-Rendering (Architecture)** | [`template_adopt_architecture.md`](features/template_adopt_architecture.md) | `DiffUnit`, `AdoptPatch`, `SpliceSpan`, pure-Python Two-Step `diff3` pipeline |
-| **Dry-Run (`drift plan`)** | [`plan_engine.md`](features/plan_engine.md) | Ephemeral sandbox, `source_dir_mask`, fault isolation |
-| **Environment Precedence** | [`env_modeling.md`](features/env_modeling.md) | 6-tier precedence, `SystemFacts`, Kahn's DAG, secret masking |
-| **Empty Folders** | [`empty_folder_dataflow.md`](features/empty_folder_dataflow.md) | `.drift_keep` synthesis, `CREATE_DIR`, FCD & `adopt` handling |
-| **CLI & Tab-Completion** | [`tab_completion.md`](features/tab_completion.md) | Declarative `schema.py`, Argparse/Typer backends, shell compilers |
+| **Render DAG & Merkle Cache** | [`render_dag.md`](internals/render_dag.md) | AST nodes, 3-phase compilation, `render_lock.json`, `RenderCache` |
+| **Folder Delivery Engine** | [`delivery_engine.md`](internals/delivery_engine.md) | `plan_folder_delivery`, `FileAction` algebra, collision guards |
+| **WAL, Rollback & GC** | [`rollback_and_wal.md`](internals/rollback_and_wal.md) | `state.toml`, `wal/actions.json` & `stash/`, `RollbackPolicy`, `drift gc` |
+| **Config, Hooks & Deps** | [`configuration_and_hooks.md`](internals/configuration_and_hooks.md) | Workspace/package TOML, engines, hooks, DAG, `.drift_ignore`, 3-state paths |
+| **Drift Adoption & FCDs** | [`drift_adoption_and_fcd.md`](internals/drift_adoption_and_fcd.md) | `reverse-sync`, convergent drift, `drift adopt`, `fully_controlled_dirs` |
+| **3-Way Template De-Rendering (Math & Algos)** | [`template_adopt_derendering.md`](internals/template_adopt_derendering.md) | Orthogonal `T <-> R <-> H` matrix (`0.1`–`4.2`), hunk fission, token calculus |
+| **3-Way Template De-Rendering (Architecture)** | [`template_adopt_architecture.md`](internals/template_adopt_architecture.md) | `DiffUnit`, `AdoptPatch`, `SpliceSpan`, pure-Python Two-Step `diff3` pipeline |
+| **Dry-Run (`drift plan`)** | [`plan_engine.md`](internals/plan_engine.md) | Ephemeral sandbox, `source_dir_mask`, fault isolation |
+| **Environment Precedence** | [`env_modeling.md`](internals/env_modeling.md) | 6-tier precedence, `SystemFacts`, Kahn's DAG, secret masking |
+| **Empty Folders** | [`empty_folder_dataflow.md`](internals/empty_folder_dataflow.md) | `.drift_keep` synthesis, `CREATE_DIR`, FCD & `adopt` handling |
+| **CLI & Tab-Completion** | [`tab_completion.md`](internals/tab_completion.md) | Declarative `schema.py`, Argparse/Typer backends, shell compilers |
 
 ### 6.2 Top-Level Reference & Project Documents (`docs/`)
 * **Product Overview & Five-Minute Tour**: [`README.md`](../README.md)
 * **User Feature Guide (by pillar, with workflows)**: [`docs/features.md`](features.md)
+* **Built-In User Manuals (`drift help <topic>`)**: [`src/drift/cli/help_docs/`](../src/drift/cli/help_docs/) (symlinked at `docs/manual/`)
 * **Installation & Packaging**: [`docs/installation.md`](installation.md)
 * **CLI Command & Flag Manual**: [`docs/cli.md`](cli.md)
 * **Troubleshooting & FAQ**: [`docs/troubleshooting.md`](troubleshooting.md)
 * **Strategic Roadmap & Project Review**: [`docs/roadmap.md`](roadmap.md)
+* **Engineering Changelog & Milestones**: [`docs/changes.md`](changes.md)
 * **Domain Knowledge Base**: `docs/knowledge/` (OS packaging mechanisms, file permissions, hook designs, cloud config studies)
 
 ### 6.3 Development & Testing Quick Reference

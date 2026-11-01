@@ -36,12 +36,15 @@ HELP_TOPIC_ALIASES = {
     "engines": "render",
     "sandbox": "render",
 
-    # install state database
+    # install state database & apply primitive
     "install": "install",
     "staging": "install",
-    "deploy": "install",
-    "deployment": "install",
+    "apply": "install",
     "state": "install",
+
+    # composite deployment pipeline
+    "deploy": "deploy",
+    "deployment": "deploy",
 
     # fully controlled directories
     "fcd": "fcd",
@@ -102,6 +105,13 @@ HELP_TOPIC_ALIASES = {
     "hooks": "health",
     "lifecycle": "health",
 
+    # transactional rollback recovery and auto-rollback policy
+    "rollback": "rollback",
+    "auto_rollback": "rollback",
+    "auto-rollback": "rollback",
+    "wal": "rollback",
+    "recovery": "rollback",
+
     # repository cloning and bootstrapping
     "clone": "clone",
     "cloning": "clone",
@@ -128,7 +138,7 @@ def get_help_page(topic: Optional[str]) -> str:
         if not topic_file_name:
             raise ValueError(
                 f"Unknown help topic: '{topic}'.\n"
-                "Available topics are: 'overall', 'package', 'src', 'render', 'install', 'fcd', 'ignore', 'drift_package.toml' (or 'package_config'), 'drift_workspace.toml' (or 'workspace_config'), 'workspace', 'health', 'clone', 'faq'."
+                "Available topics are: 'overall', 'package', 'src', 'render', 'install', 'deploy', 'fcd', 'ignore', 'drift_package.toml' (or 'package_config'), 'drift_workspace.toml' (or 'workspace_config'), 'workspace', 'health', 'rollback', 'clone', 'faq'."
             )
 
     # Try pkgutil first (supports zipapp and installed packages)

@@ -3,6 +3,8 @@ from io import StringIO
 import sys
 from unittest.mock import patch
 
+from drift.cli import main
+from drift.cli.argparse_backend import run_argparse_cli
 from drift.cli.help_docs import get_help_page, print_help_document
 from drift.core.constants import CONFIG_DIR_NAME, SECRETS_ENV_FILE_NAME
 
@@ -36,6 +38,11 @@ class TestHelpDocs(unittest.TestCase):
         install = get_help_page("install")
         self.assertIn("Local State Database & Installation: `install/`", install)
 
+        # deploy
+        deploy = get_help_page("deploy")
+        self.assertIn("Composite Deployment Pipeline (`drift deploy`)", deploy)
+        self.assertIn("The 5-Step Composite Execution Pipeline", deploy)
+
         # drift_package.toml
         pkg_toml = get_help_page("drift_package.toml")
         self.assertIn("drift_package.toml Complete Configuration Reference", pkg_toml)
@@ -68,6 +75,12 @@ class TestHelpDocs(unittest.TestCase):
         health_doc = get_help_page("health")
         self.assertIn("Drift Package Runtime Health Checks", health_doc)
 
+        # rollback
+        rollback_doc = get_help_page("rollback")
+        self.assertIn("Transactional Rollback & Auto-Rollback Configuration (`drift rollback`)", rollback_doc)
+        self.assertIn("auto_rollback", rollback_doc)
+        self.assertIn("Write-Ahead Log", rollback_doc)
+
         # clone
         clone_doc = get_help_page("clone")
         self.assertIn("Drift Repository Cloning & Bootstrapping", clone_doc)
@@ -83,8 +96,11 @@ class TestHelpDocs(unittest.TestCase):
         pkg_toml = get_help_page("drift_package.toml")
         ws_toml = get_help_page("drift_workspace.toml")
         overall = get_help_page("overall")
+        install = get_help_page("install")
+        deploy = get_help_page("deploy")
         workspace = get_help_page("workspace")
         health = get_help_page("health")
+        rollback = get_help_page("rollback")
         clone = get_help_page("clone")
         faq = get_help_page("faq")
         fcd = get_help_page("fcd")
@@ -101,10 +117,15 @@ class TestHelpDocs(unittest.TestCase):
         # other topic aliases
         self.assertEqual(get_help_page("arch"), overall)
         self.assertEqual(get_help_page("intro"), overall)
+        self.assertEqual(get_help_page("apply"), install)
+        self.assertEqual(get_help_page("staging"), install)
+        self.assertEqual(get_help_page("deployment"), deploy)
         self.assertEqual(get_help_page("ws"), workspace)
         self.assertEqual(get_help_page("secrets"), workspace)
         self.assertEqual(get_help_page("check"), health)
         self.assertEqual(get_help_page("hooks"), health)
+        for alias in ("auto_rollback", "auto-rollback", "wal", "recovery"):
+            self.assertEqual(get_help_page(alias), rollback, f"Alias '{alias}' failed to resolve to rollback")
         self.assertEqual(get_help_page("migrate"), clone)
         self.assertEqual(get_help_page("troubleshooting"), faq)
         self.assertEqual(get_help_page("controlled_dirs"), fcd)
@@ -118,6 +139,8 @@ class TestHelpDocs(unittest.TestCase):
         self.assertIn("'fcd'", str(context.exception))
         self.assertIn("'ignore'", str(context.exception))
         self.assertIn("'workspace'", str(context.exception))
+        self.assertIn("'deploy'", str(context.exception))
+        self.assertIn("'rollback'", str(context.exception))
 
     @patch("sys.stdout.isatty")
     def test_print_help_document_falls_back_to_print_when_not_tty(self, mock_isatty) -> None:
@@ -135,6 +158,17 @@ class TestHelpDocs(unittest.TestCase):
 
         output = stdout_capture.getvalue()
         self.assertIn("The 'Package' Concept in Drift", output)
+
+    @patch("sys.stdout.isatty", return_value=False)
+    def test_cli_help_rollback_dual_backends(self, _mock_isatty) -> None:
+        """Verifies `drift help rollback` across both Typer (`main`) and Argparse (`run_argparse_cli`) backends."""
+        with patch("sys.stdout", StringIO()) as out_typer:
+            main(["help", "rollback"])
+            self.assertIn("Transactional Rollback & Auto-Rollback Configuration", out_typer.getvalue())
+
+        with patch("sys.stdout", StringIO()) as out_argparse:
+            run_argparse_cli(["help", "rollback"])
+            self.assertIn("Transactional Rollback & Auto-Rollback Configuration", out_argparse.getvalue())
 
 
 if __name__ == "__main__":

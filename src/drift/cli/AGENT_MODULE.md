@@ -39,7 +39,7 @@
 
 ### [`error_boundary.py`](error_boundary.py) & [`help_docs.py`](help_docs.py) — Error Handling & Built-in Manual
 * `cli_error_boundary(json_mode: bool = False, use_rich: bool = False, raw_errors: bool = False)`: Context manager catching `DriftError` subclasses, formatting structured error panels or JSON payloads, and raising `SystemExit(exc.exit_code)`.
-* `get_help_page(topic: Optional[str]) -> str` & `print_help_document(topic: Optional[str] = None) -> None`: Loads and renders markdown manuals from [`help_docs/`](help_docs/) (`overall.md`, `package.md`, `src.md`, `render.md`, `install.md`, `fcd.md`, `ignore.md`, `drift_package_toml.md`, `drift_workspace_toml.md`, `workspace.md`, `health.md`, `clone.md`, `faq.md`).
+* `get_help_page(topic: Optional[str]) -> str` & `print_help_document(topic: Optional[str] = None) -> None`: Loads and renders markdown manuals from [`help_docs/`](help_docs/) (`overall.md`, `package.md`, `src.md`, `render.md`, `install.md`, `deploy.md`, `fcd.md`, `ignore.md`, `drift_package_toml.md`, `drift_workspace_toml.md`, `workspace.md`, `health.md`, `rollback.md`, `clone.md`, `faq.md`).
 
 ### [`completion/`](completion/) — Shell Tab-Completion Generators (`drift complete`)
 * `generate_completion_script(shell: str, schema: Optional[CompletionSchema] = None) -> str`: Compiles native tab-completion scripts for `bash` (`BashGenerator`), `zsh` (`ZshGenerator`), `fish` (`FishGenerator`), and `nu` / `nushell` (`NushellGenerator`).
@@ -54,7 +54,7 @@
 ---
 
 ## 5. Related Feature Docs & Targeted Tests
-* **Feature Specifications**: [`docs/cli.md`](../../../docs/cli.md), [`docs/features/tab_completion.md`](../../../docs/features/tab_completion.md)
+* **Feature Specifications**: [`docs/cli.md`](../../../docs/cli.md), [`docs/internals/tab_completion.md`](../../../docs/internals/tab_completion.md)
 * **Targeted Unit Tests**:
   ```bash
   PYTHONPATH=src python3 -m unittest tests/test_cli.py

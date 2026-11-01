@@ -3,7 +3,7 @@
 This document specifies Drift's transactional state registry (`install/state.toml`), Write-Ahead Log (`backup/<pkg>/wal/`), pre-overwrite backup stashing, 3-state `RollbackPolicy` resolution ladder, uncommitted `"installed"` rollback eligibility, 3-step WAL recovery pipeline (`drift rollback`), and workspace garbage collection (`drift gc`).
 
 * **Core Architectural Overview**: [`docs/architecture.md`](../architecture.md)
-* **Folder Delivery Planning Engine**: [`docs/features/delivery_engine.md`](delivery_engine.md)
+* **Folder Delivery Planning Engine**: [`docs/internals/delivery_engine.md`](delivery_engine.md)
 * **Related Subpackage Maps**: [`src/drift/core/AGENT_MODULE.md`](../../src/drift/core/AGENT_MODULE.md), [`src/drift/primitives/AGENT_MODULE.md`](../../src/drift/primitives/AGENT_MODULE.md)
 
 ---

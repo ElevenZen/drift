@@ -140,7 +140,7 @@ render_command = "mustache %i %s"
 
 # Control workspace-wide automatic rollback behavior when 'deploy' or 'apply' fails midway.
 # Options: "auto" (respect per-package auto_rollback in drift_package.toml), "always"/"yes", or "never"/"no".
-# Defaults to "auto". Can be overridden per invocation via CLI '--rollback'.
+# Defaults to "auto". Can be overridden per invocation via CLI '--rollback' (run 'drift help rollback' for details).
 # rollback = "auto"
 
 

@@ -105,7 +105,7 @@
 ---
 
 ## 5. Related Feature Docs & Targeted Tests
-* **Feature Specifications**: [`docs/architecture.md`](../../../docs/architecture.md), [`docs/features/rollback_and_wal.md`](../../../docs/features/rollback_and_wal.md), [`docs/features/drift_adoption_and_fcd.md`](../../../docs/features/drift_adoption_and_fcd.md), [`docs/features/template_adopt_derendering.md`](../../../docs/features/template_adopt_derendering.md), [`docs/features/plan_engine.md`](../../../docs/features/plan_engine.md)
+* **Feature Specifications**: [`docs/architecture.md`](../../../docs/architecture.md), [`docs/internals/rollback_and_wal.md`](../../../docs/internals/rollback_and_wal.md), [`docs/internals/drift_adoption_and_fcd.md`](../../../docs/internals/drift_adoption_and_fcd.md), [`docs/internals/template_adopt_derendering.md`](../../../docs/internals/template_adopt_derendering.md), [`docs/internals/plan_engine.md`](../../../docs/internals/plan_engine.md)
 * **Targeted Unit Tests**:
   ```bash
   PYTHONPATH=src python3 -m unittest tests/test_deploy.py

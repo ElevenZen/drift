@@ -3,8 +3,8 @@
 > [!NOTE]
 > This document specifies the domain dataclasses, context-bound pipeline records, module boundaries, and end-to-end functional codeflow implementing Drift's 3-Way Template De-Rendering Engine in `src/drift/`. For the underlying mathematical derivations, orthogonal classification matrix (`Cases 0.1–4.2`), and complexity proofs, see the companion specification **[3-Way Template De-Rendering: Mathematical Model & Symbolic Algorithms](template_adopt_derendering.md)**.
 
-* **Companion Mathematical Specification**: [`docs/features/template_adopt_derendering.md`](template_adopt_derendering.md)
-* **Bidirectional Drift Adoption Overview**: [`docs/features/drift_adoption_and_fcd.md`](drift_adoption_and_fcd.md)
+* **Companion Mathematical Specification**: [`docs/internals/template_adopt_derendering.md`](template_adopt_derendering.md)
+* **Bidirectional Drift Adoption Overview**: [`docs/internals/drift_adoption_and_fcd.md`](drift_adoption_and_fcd.md)
 * **Target Subpackages**: [`src/drift/models/adopt_models.py`](../../src/drift/models/adopt_models.py), [`src/drift/adopt/`](../../src/drift/adopt/AGENT_MODULE.md), [`src/drift/utils/func_utils.py`](../../src/drift/utils/func_utils.py)
 
 ---

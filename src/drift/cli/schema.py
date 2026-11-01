@@ -92,12 +92,14 @@ HELP_TOPICS: List[Choice] = [
     Choice("src", "Declarative source templates and dot-prefix rules"),
     Choice("render", "Sandbox rendering zone, compilers, and DAG pipelines"),
     Choice("install", "State database mechanics, delta staging, and collision guards"),
+    Choice("deploy", "End-to-end composite deployment pipeline, flags, and safeguards"),
     Choice("fcd", "Fully-Controlled Directories, wild file tracking, and adoption"),
     Choice("ignore", "PCRE ignore pattern rules and .drift_ignore mechanics"),
     Choice("drift_package.toml", "Package-level configuration reference"),
     Choice("drift_workspace.toml", "Workspace-level configuration reference"),
     Choice("workspace", "Multi-machine workflows, host profiling, and local overrides"),
     Choice("health", "Package runtime health check probes and hooks"),
+    Choice("rollback", "Transactional WAL rollback recovery and auto-rollback configuration"),
     Choice("clone", "Workspace cloning, bootstrap self-healing, and legacy migration"),
     Choice("faq", "Frequently asked questions and troubleshooting guides"),
 ]
@@ -684,7 +686,7 @@ def build_completion_schema() -> CompletionSchema:
                 positionals=[
                     PositionalSpec(
                         name="topic",
-                        description="Specific topic to display (package, src, render, install, drift_package.toml, drift_workspace.toml, workspace, health, clone)",
+                        description="Specific topic to display (package, src, render, install, deploy, drift_package.toml, drift_workspace.toml, workspace, health, rollback, clone)",
                         source_type=SourceType.FIXED_CHOICES,
                         choices=HELP_TOPICS,
                         nargs="?",
